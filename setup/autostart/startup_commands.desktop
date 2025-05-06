@@ -1,0 +1,6 @@
+ [Desktop Entry]
+ Type=Application
+ Name=Startup Commands
+ Exec=/home/pst/scripts/startup_commands.sh
+ Hidden=false
+ X-GNOME-Autostart-enabled=true

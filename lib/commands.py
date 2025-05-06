@@ -1,0 +1,568 @@
+"""
+commands.py
+
+This module defines the set of commands that can be sent between the GUI
+and the backend application. Each command corresponds to an operation
+that the backend can perform.
+
+Author: Milan Stubljar <info@stubljar.com>
+Date: 2024-11-03
+"""
+# Standard imports
+from enum import Enum
+import datetime
+import logging
+
+# Custom imports
+from lib.common import convert_to_timestamp
+
+
+class Commands(Enum):
+    """
+        Available Commands:
+        camera_take_image
+        resume_operation
+        pause_operation
+        run_autofocus:
+           run_autofocus_sequence_contrast <start_position> <stop_position> <stepcount>
+           run_autofocus_sequence_diameter <start_position> <stop_position> <stepcount>
+             start_position: int (0..9000)
+             stop_position: int (0..9000)
+             stepcount: int (2..15)
+           run_autofocus_sequence_twostep <position1> <position2> <focus_coefficient>
+              focus_coefficient:float (0.0 .. 100.0)
+
+        set_gain <gain>
+           gain: int (0 .. 512)
+        set_aperture <aperture_position>
+           aperture_position: int (0 .. 28)
+        set_focus_position <focus_position>
+           focus_position: int (0 .. 9000)
+
+        delta_focus_position <focus_delta>
+           focus_delta: int (-100 .. 100)
+
+        run_autogain <mix_pixel_value>
+           mix_pixel_value : int (0 .. 65535)
+        set_exposure_time <exposure_time>
+           exposure_time: int (32 .. 5s~5000000) (1, 2, 4, 1/250, 1/500, 1/1000) microseconds
+           100*1000 ~ 100 milliseconds
+        enable_distortion_correction
+        disable_distortion_correction <distortion_parameter1> <distortion_parameter2>
+          fov: float (0..100), distortion_parameter1, distortion_parameter2: float (-1.0 .. 1.0), precision 2 decimals
+        input_gyro_rates <omega_x> <omega_y> <omega_z>
+          omega_x: float (-5.0 .. 5.0) degree per second
+          Flight computer -
+        update_time <new_time>
+          new_time: timestamp : '2024-10-29 10:12:23.123456'
+            """
+
+    CHECK_STATUS = 0
+
+    TAKE_IMAGE = 1
+    RESUME_OPERATION = 2
+    PAUSE_OPERATION = 3
+    RUN_AUTOFOCUS = 4
+
+    SET_GAIN = 5
+    SET_APERTURE_POSITION = 6
+    SET_FOCUS_POSITION = 7
+    DELTA_FOCUS_POSITION = 8
+
+    RUN_AUTOGAIN = 9
+    SET_EXPOSURE_TIME = 10
+    ENABLE_DISTORTION_CORRECTION = 11
+    DISABLE_DISTORTION_CORRECTION = 12
+    INPUT_GYRO_RATES = 13
+    UPDATE_TIME = 14
+
+    POWER_CYCLE = 15
+    HOME_LENS = 16
+
+    FLIGHT_TELEMETRY = 100
+
+    @classmethod
+    def from_string(cls, string: str):
+        for member in cls:
+            if member.name.lower() == string:
+                return member
+        raise ValueError(f"Invalid Suit string: {string}")
+
+
+class Command:
+    focus_method = None
+    start_position = None
+    stop_position = None
+    step_count = None
+    focus_coefficient = None
+    gain = None
+    aperture_position = None
+    focus_position = None
+    focus_delta = None
+    mix_pixel_value = None
+    exposure_time = None
+    fov = None
+    distortion_parameter1 = None
+    distortion_parameter2 = None
+    omega_x = None
+    omega_y = None
+    omega_z = None
+    new_time = None
+    limit = 0
+
+    settings = {
+        Commands.CHECK_STATUS.value: {
+            'params': {}
+        },
+        Commands.TAKE_IMAGE.value: {
+            'params': {
+                'mode': {
+                    'type': 'list',
+                    'values': ['raw', 'solver1', 'solver2']
+                },
+                'focus_position': {
+                    'type': 'int',
+                    'min': 0,
+                    'max': 9000
+                },
+                'aperture_position': {
+                    'type': 'list',
+                    'values': ['open', 'close']
+                },
+                'exposure_time': {
+                    'type': 'int',
+                    'min': 0,
+                    'max': 5000000
+                },
+
+            }
+        },
+        Commands.RESUME_OPERATION.value: {
+            'params': {
+                'solver': {
+                    'type': 'list',
+                    'values': ['solver1', 'solver2']
+                },
+                'cadence': {
+                    'type': 'float',
+                    'min': 0,
+                    'max': 3600*24 # like one day
+                },
+            }
+        },
+        Commands.PAUSE_OPERATION.value: {
+            'params': {}
+        },
+        Commands.RUN_AUTOFOCUS.value: {
+            'params': {
+                'focus_method': {
+                    'type': 'list',
+                    'values': ['sequence_contrast', 'sequence_diameter', 'sequence_twostep']
+                },
+                'start_position': {
+                    'type': 'int',
+                    'min': 0,
+                    'max': 9000
+                },
+                'stop_position': {
+                    'type': 'int',
+                    'min': 0,
+                    'max': 9000
+                },
+                'step_count': {
+                    'type': 'int',
+                    'min': 0,
+                    'max': 9000
+                },
+                'focus_coefficient': {
+                    'type': 'float',
+                    'min': 0.0,
+                    'max': 100.0
+                },
+            }
+        },
+        Commands.SET_GAIN.value: {
+            'params': {
+                'gain': {
+                    'type': 'int',
+                    'min': 0,
+                    'max': 570
+                }
+            }
+        },
+        Commands.SET_APERTURE_POSITION.value: {
+            'params': {
+                'aperture_position': {
+                    'type': 'int',
+                    'min': 0,
+                    'max': 28
+                }
+            }
+        },
+        Commands.SET_FOCUS_POSITION.value: {
+            'params': {
+                'focus_position': {
+                    'type': 'int',
+                    'min': 0,
+                    'max': 9000
+                }
+            }
+        },
+        Commands.DELTA_FOCUS_POSITION.value: {
+            'params': {
+                'focus_delta': {
+                    'type': 'int',
+                    'min': -100,
+                    'max': 100
+                }
+            }
+        },
+        Commands.RUN_AUTOGAIN.value: {
+            'params': {
+                'mix_pixel_value': {
+                    'type': 'int',
+                    'min': 0,
+                    'max': 65535
+                }
+            }
+        },
+        Commands.SET_EXPOSURE_TIME.value: {
+            'params': {
+                'exposure_time': {
+                    'type': 'int',
+                    'min': 0,
+                    'max': 5000000
+                }
+            }
+        },
+        Commands.ENABLE_DISTORTION_CORRECTION.value: {
+            'params': {
+                # TODO: Check with Windell the FOV param
+                'fov': {
+                    'type': 'float',
+                    'min': 0.0,
+                    'max': 100.0
+                },
+                'distortion_parameter1': {
+                    'type': 'float',
+                    'min': -1.0,
+                    'max': 1.0
+                },
+                'distortion_parameter2': {
+                    'type': 'float',
+                    'min': -1.0,
+                    'max': 1.0
+                }
+            }
+        },
+        Commands.DISABLE_DISTORTION_CORRECTION.value: {
+            'params': {}
+        },
+        Commands.INPUT_GYRO_RATES.value: {
+            'params': {
+                'omega_x': {
+                    'type': 'float',
+                    'min': -5.0,
+                    'max': 5.0
+                },
+                'omega_y': {
+                    'type': 'float',
+                    'min': -5.0,
+                    'max': 5.0
+                },
+                'omega_z': {
+                    'type': 'float',
+                    'min': -5.0,
+                    'max': 5.0
+                }
+            }
+        },
+        Commands.UPDATE_TIME.value: {
+            'params': {
+                'new_time': {
+                    'type': 'timestamp',
+                }
+            }
+        },
+        Commands.POWER_CYCLE.value: {
+            'params': {}
+        },
+        Commands.HOME_LENS.value: {
+            'params': {}
+        },
+        Commands.FLIGHT_TELEMETRY.value: {
+            'params': {
+                'limit': {
+                    'type': 'int',
+                    'min': 0,
+                    'max': 100,
+                    'default': 0
+                }
+            }
+        }
+    }
+
+    def __init__(self, command_data=None):
+        self.log = logging.getLogger('root')
+        self.command_data = command_data
+        self.command_name = None
+        self.command = None
+        self.data = None
+        self.define(command_data)
+
+    def define(self, command_data):
+        if command_data:
+            self.command_data = command_data
+            self.command_name = command_data.get('command')
+            self.command = Commands.from_string(self.command_name)
+            self.data = command_data.get('data')  # get('data')
+
+            self.add_attributes()
+
+    def add_attributes(self):
+        """
+        Validations are only applicable for commands that have parameters.
+        :return:
+        :rtype:
+        """
+        validation = self.settings[self.command.value]
+        if self.command == Commands.TAKE_IMAGE:
+            self.add_attribute('mode', self.data['mode'], validation['params'])
+        elif self.command == Commands.RESUME_OPERATION:
+            self.add_attribute('solver', self.data['solver'], validation['params'])
+            self.add_attribute('cadence', self.data['cadence'], validation['params'])
+        elif self.command == Commands.RUN_AUTOFOCUS:
+            self.add_attribute('focus_method', self.data['focus_method'], validation['params'])
+            self.add_attribute('start_position', self.data['start_position'], validation['params'])
+            self.add_attribute('stop_position', self.data['stop_position'], validation['params'])
+            if self.focus_method == 'sequence_twostep':
+                self.add_attribute('focus_coefficient', self.data['focus_coefficient'], validation['params'])
+            else:
+                self.add_attribute('step_count', self.data['step_count'], validation['params'])
+
+        elif self.command == Commands.SET_GAIN:
+            self.add_attribute('gain', self.data['gain'], validation['params'])
+        elif self.command == Commands.SET_APERTURE_POSITION:
+            self.add_attribute('aperture_position', self.data['aperture_position'], validation['params'])
+        elif self.command == Commands.SET_FOCUS_POSITION:
+            self.add_attribute('focus_position', self.data['focus_position'], validation['params'])
+
+        elif self.command == Commands.DELTA_FOCUS_POSITION:
+            self.add_attribute('focus_delta', self.data['focus_delta'], validation['params'])
+
+        elif self.command == Commands.RUN_AUTOGAIN:
+            self.add_attribute('mix_pixel_value', self.data['mix_pixel_value'], validation['params'])
+        elif self.command == Commands.SET_EXPOSURE_TIME:
+            self.add_attribute('exposure_time', self.data['exposure_time'], validation['params'])
+        elif self.command == Commands.ENABLE_DISTORTION_CORRECTION:
+            self.add_attribute('fov', self.data['fov'], validation['params'])
+            self.add_attribute('distortion_parameter1', self.data['distortion_parameter1'], validation['params'])
+            self.add_attribute('distortion_parameter2', self.data['distortion_parameter2'], validation['params'])
+        elif self.command == Commands.INPUT_GYRO_RATES:
+            self.add_attribute('omega_x', self.data['omega_x'], validation['params'])
+            self.add_attribute('omega_y', self.data['omega_y'], validation['params'])
+            self.add_attribute('omega_z', self.data['omega_z'], validation['params'])
+        elif self.command == Commands.UPDATE_TIME:
+            self.add_attribute('new_time', self.data['new_time'], validation['params'])
+        # ...
+        # FLIGHT_TELEMETRY ~ id 100
+        elif self.command == Commands.FLIGHT_TELEMETRY:
+            if self.data is None:
+                self.data = {}
+            if 'limit' not in self.data:
+                self.data['limit'] = validation['params']['limit']['default']
+            self.add_attribute('limit', self.data['limit'], validation['params'])
+
+    def add_attribute(self, name, value, validation=None):
+        if validation is not None:
+            rules = validation[name]
+            var_type = rules['type']
+            if var_type == 'list' and value not in rules['values']:
+                raise ValueError(f'Invalid value: name: {name}: {value} allowed values: {rules["values"]}')
+            elif var_type == 'int' and (int(value) < rules['min'] or rules['max'] < int(value)):
+                raise ValueError(f'Invalid value: name: {name}: {value} range: {rules["min"]} .. {rules["max"]}')
+            elif var_type == 'float' and (float(value) < rules['min'] or rules['max'] < float(value)):
+                raise ValueError(f'Invalid value: name: {name}: {value} range: {rules["min"]} .. {rules["max"]}')
+            elif var_type == 'timestamp':
+                value = convert_to_timestamp(value)
+
+            setattr(self, name, value)
+            # if var_type == 'int':
+            #     self.__annotations__[name] = int
+            # if var_type == 'float':
+            #     self.__annotations__[name] = float
+
+    def __setattr__(self, name, value):
+        if name in self.__dict__:
+            super().__setattr__(name, value)
+        else:
+            # print(f"Adding new attribute: {name}")
+            super().__setattr__(name, value)
+
+    def check_status(self):
+        command_data = {'command': Commands.CHECK_STATUS.name.lower(), 'data': {}}
+        self.define(command_data)
+        return self.command_data
+
+    def take_image(self, mode: str):
+        command_data = {
+            'command': Commands.TAKE_IMAGE.name.lower(),
+            'data': {
+                'mode': mode
+                # TODO: Include other
+            }
+        }
+        self.define(command_data)
+        return self.command_data
+
+    def resume_operation(self, solver: str, cadence: float):
+        command_data = {
+            'command': Commands.RESUME_OPERATION.name.lower(),
+            'data': {
+                'solver': solver,
+                'cadence': cadence
+            }
+        }
+        self.define(command_data)
+        return self.command_data
+
+    def pause_operation(self):
+        command_data = {'command': Commands.PAUSE_OPERATION.name.lower(), 'data': {}}
+        self.define(command_data)
+        return self.command_data
+
+    def run_autofocus(self, focus_method: str, start_position: int, stop_position: int, step_count: int = 5,
+                      focus_coefficient: float = 1.0):
+        command_data = {
+            'command': Commands.RUN_AUTOFOCUS.name.lower(),
+            'data': {
+                'focus_method': focus_method,
+                'start_position': start_position,
+                'stop_position': stop_position,
+            }
+        }
+        if focus_method == 'sequence_twostep':
+            command_data['data']['focus_coefficient'] = focus_coefficient
+        else:
+            command_data['data']['step_count'] = step_count
+        self.define(command_data)
+        return self.command_data
+
+    def set_gain(self, gain: int):
+        command_data = {'command': Commands.SET_GAIN.name.lower(), 'data': {'gain': gain}}
+        self.define(command_data)
+        return self.command_data
+
+    def set_aperture_position(self, aperture_position: int):
+        command_data = {'command': Commands.SET_APERTURE_POSITION.name.lower(), 'data': {'aperture_position': aperture_position}}
+        self.define(command_data)
+        return self.command_data
+
+    def set_focus_position(self, focus_position: int):
+        command_data = {'command': Commands.SET_FOCUS_POSITION.name.lower(), 'data': {'focus_position': focus_position}}
+        self.define(command_data)
+        return self.command_data
+
+    def delta_focus_position(self, focus_delta: int):
+        command_data = {'command': Commands.DELTA_FOCUS_POSITION.name.lower(), 'data': {'focus_delta': focus_delta}}
+        self.define(command_data)
+        return self.command_data
+
+    def run_autogain(self, mix_pixel_value: int):
+        command_data = {'command': Commands.RUN_AUTOGAIN.name.lower(), 'data': {'mix_pixel_value': mix_pixel_value}}
+        self.define(command_data)
+        return self.command_data
+
+    def set_exposure_time(self, exposure_time: int):
+        command_data = {'command': Commands.SET_EXPOSURE_TIME.name.lower(), 'data': {'exposure_time': exposure_time}}
+        self.define(command_data)
+        return self.command_data
+
+    def enable_distortion_correction(self, fov: float, distortion_parameter1: float, distortion_parameter2: float):
+        command_data = {'command': Commands.ENABLE_DISTORTION_CORRECTION.name.lower(),
+                        'data': {'fov': fov, 'distortion_parameter1': distortion_parameter1,
+                                 'distortion_parameter2': distortion_parameter2}}
+        self.define(command_data)
+        return self.command_data
+
+    def disable_distortion_correction(self):
+        command_data = {'command': Commands.DISABLE_DISTORTION_CORRECTION.name.lower(), 'data': {}}
+        self.define(command_data)
+        return self.command_data
+
+    def input_gyro_rates(self, omega_x: float, omega_y: float, omega_z: float):
+        command_data = {'command': Commands.INPUT_GYRO_RATES.name.lower(),
+                        'data': {'omega_x': omega_x,
+                                 'omega_y': omega_y,
+                                 'omega_z': omega_z}}
+        self.define(command_data)
+        return self.command_data
+
+    def update_time(self, new_time: datetime):
+        new_time_ts = convert_to_timestamp(new_time)
+        command_data = {'command': Commands.UPDATE_TIME.name.lower(), 'data': {'new_time': new_time_ts}}
+        self.define(command_data)
+        return self.command_data
+
+    def power_cycle(self):
+        command_data = {'command': Commands.POWER_CYCLE.name.lower(), 'data': {}}
+        self.define(command_data)
+        return self.command_data
+
+    def home_lens(self):
+        command_data = {'command': Commands.HOME_LENS.name.lower(), 'data': {}}
+        self.define(command_data)
+        return self.command_data
+
+    def flight_telemetry(self, limit: int = 0):
+        command_data = {'command': Commands.FLIGHT_TELEMETRY.name.lower(), 'data': {'limit': limit}}
+        self.define(command_data)
+        return self.command_data
+
+if __name__ == "__main__":
+    print(Commands.TAKE_IMAGE.value)
+    print(Commands.TAKE_IMAGE)
+
+    cmd = Command()
+    command_data1 = cmd.run_autofocus('sequence_twostep', 300, 400, focus_coefficient=25.2)
+    command_data1_raw = {
+        'command': 'run_autofocus',
+        'data': {
+            'focus_method': 'sequence_diameter',
+            'start_position': 300,
+            'stop_position': 400,
+            'step_count': 5
+        }
+    }
+
+    cmds = [
+        command_data1, command_data1_raw,
+        cmd.update_time(datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S.%f')),
+        {
+            'command': 'update_time',
+            'data': {
+                'new_time': '2024-10-29 10:12:23.123456'
+            }
+        },
+        cmd.flight_telemetry(),
+        {
+            'command': 'flight_telemetry',
+        }
+    ]
+    for cmd_dict in cmds:
+        cmd = Command(cmd_dict)
+        print(cmd_dict)
+        if cmd.command == Commands.RUN_AUTOFOCUS:
+            print(cmd.focus_method)
+            print(cmd.start_position)
+            print(cmd.stop_position)
+            if cmd.focus_method == 'sequence_twostep':
+                print(cmd.focus_coefficient)
+            else:
+                print(cmd.step_count)
+        elif cmd.command == Commands.UPDATE_TIME:
+            print(cmd.new_time)
+        elif cmd.command == Commands.FLIGHT_TELEMETRY:
+            print(f'{cmd.limit}, {cmd.command_name}, {cmd.data}')
+        # cmd.add_attribute('exposure_time', 1)
+        # print(cmd.exposure_time)

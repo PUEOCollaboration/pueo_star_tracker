@@ -1,0 +1,36 @@
+opencv-python
+scipy
+astropy
+imageio
+matplotlib
+numpy
+zwoasi
+pyserial
+pillow
+# Not required on windows/ubuntu
+# python3-tk
+pyusb
+tqdm
+termcolor
+
+# source_finder.py
+scikit-image
+PyWavelets
+
+# skimage
+photutils
+
+# compute_star_centroids.py
+lmfit
+
+# Cedar Tetra3
+grpcio
+grpcio-tools
+protobuf
+
+# Test
+pandas
+openpyxl
+
+# Telemetry
+psutil

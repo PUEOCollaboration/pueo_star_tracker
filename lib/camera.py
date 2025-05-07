@@ -28,12 +28,41 @@ with suppress(FileNotFoundError, OSError):
     asi.init(lib_asi)
 
 class DummyCamera:
+    """A mock camera interface for testing and development purposes.
+
+    This class simulates the behavior of a real camera by returning fixed, hardcoded
+    values and test images. It was created to enable testing and development of
+    camera-related functionality without requiring access to physical hardware.
+
+    Typical use cases include:
+    - Running/debugging code on development workstations
+    - Automated testing in CI pipelines
+    - Prototyping camera-related features
+
+    The test images are loaded from the directory specified by `images_dir`.
+
+    Note: This is a testing utility - for production use, replace with a real camera
+    implementation.
+    Use at your own discretion.
+
+    Attributes:
+        images_dir (str): Path to the directory containing test images. Defaults to 'test_images'.
+        image_idx (int): Index of the current image being served.
+        image_cnt (int): Total count of available test images.
+        filename (str): Path to the currently loaded image file.
+    """
     images_dir = 'test_images'
     image_idx = 0
     image_cnt = 0
     filename = None
 
     def __init__(self, camera=None):
+        """Initialize the dummy camera instance.
+
+        Args:
+            camera (object, optional): If provided, replaces the camera's methods with
+                dummy implementations. Defaults to None.
+        """
         self.log = logging.getLogger('pueo')
         self.log.warning(f'Initializing DUMMY Camera')
         self.camera = camera
@@ -51,14 +80,10 @@ class DummyCamera:
 
     @property
     def file_size(self):
-        """
-        Returns the size of a file in bytes.
-
-        Parameters:
-        filename (str): The path to the file.
+        """Get the size of the current image file in bytes.
 
         Returns:
-        int: The size of the file in bytes. If the file does not exist, returns -1.
+            int: Size of the file in bytes, or -1 if the file doesn't exist.
         """
         if os.path.exists(self.filename):
             return os.path.getsize(self.filename)
@@ -66,27 +91,49 @@ class DummyCamera:
             return -1
 
     def set_control_value(self, control_type, value, auto=False):
+        """Dummy implementation of setting a camera control value.
+
+        Args:
+            control_type: Type of the control to set.
+            value: Value to set for the control.
+            auto (bool): Whether to use auto mode for this control. Defaults to False.
+        """
         self.log.debug(f'Dummy set_control_value: control_type: {control_type} value: {value} auto: {auto}')
 
     def set_roi(self, bins: int):
+        """Dummy implementation of setting the region of interest.
+
+        Args:
+            bins (int): Binning value to set.
+        """
         self.log.debug(f'Dummy set_roi: {bins}')
 
     def set_image_type(self, image_type):
+        """Dummy implementation of setting the image type.
+
+        Args:
+            image_type: Type of image to set.
+        """
         self.log.debug(f'Dummy set_image_type: {image_type}')
 
     def get_control_values(self):
-#         controls = self.get_controls()
-#         r = {}
-#         for k in controls:
-#             r[k] = self.get_control_value(controls[k]['ControlType'])[0]
+        """Get dummy control values for camera settings.
 
+        Returns:
+            dict: Dictionary of current control values with their settings.
+        """
         controls = {'Gain': 120, 'Exposure': 30000, 'Offset': 0, 'BandWidth': 100, 'Flip': 0, 'AutoExpMaxGain': 285,
                     'AutoExpMaxExpMS': 30000, 'AutoExpTargetBrightness': 100, 'HighSpeedMode': 1, 'Temperature': 228,
                     'GPS': 0}
         return controls
 
     def get_controls(self):
+        """Get dummy camera controls configuration.
 
+        Returns:
+            dict: Dictionary containing all available camera controls with their metadata,
+                including min/max values, defaults, and capabilities.
+        """
         controls = {'Gain': {'Name': 'Gain', 'Description': 'Gain', 'MaxValue': 570, 'MinValue': 0, 'DefaultValue': 200,
                              'IsAutoSupported': True, 'IsWritable': True, 'ControlType': 0},
                     'Exposure': {'Name': 'Exposure', 'Description': 'Exposure Time(us)', 'MaxValue': 2000000000,
@@ -123,12 +170,29 @@ class DummyCamera:
         return controls
 
     def set_camera_defaults(self):
+        """Dummy implementation of setting camera defaults (no operation)."""
         pass
 
     def get_camera_property(self):
+        """Get dummy camera properties.
+
+        Returns:
+            dict: Empty dictionary as this is a dummy implementation.
+        """
         return {}
 
     def capture(self, initial_sleep=0.01, poll=0.01, buffer_=None, filename=None):
+        """Simulate capturing an image from the dummy camera.
+
+        Args:
+            initial_sleep (float): Initial sleep time (simulated). Defaults to 0.01.
+            poll (float): Poll interval (simulated). Defaults to 0.01.
+            buffer_: Unused buffer parameter (for API compatibility).
+            filename (str, optional): Output filename (unused in dummy implementation).
+
+        Returns:
+            numpy.ndarray: Grayscale image in 16-bit format (uint16).
+        """
         self.log.debug(f'Dummy capture: initial_sleep: {initial_sleep} poll: {poll} buffer_: {buffer_} filename: {filename}')
         self.filename = self.get_next_image()
         # cprint(f'  Dummy images served: {filename}', 'yellow')
@@ -159,6 +223,11 @@ class DummyCamera:
         return grayscale_img
 
     def get_images(self):
+        """Get list of available test images.
+
+        Returns:
+            list: Paths to all PNG images in the images directory.
+        """
         images = []
         # Find .png images
         for filename in os.listdir(self.images_dir):
@@ -169,6 +238,11 @@ class DummyCamera:
         return images
 
     def get_next_image(self):
+        """Get the next image in the sequence, cycling back to the first after the last.
+
+        Returns:
+            str: Path to the next image file.
+        """
         images = self.get_images()
 
         image = images[self.image_idx]
@@ -213,7 +287,7 @@ class PueoStarCamera(Camera):
                 self.simulated = False
                 super().__init__(self.camera_id or self.cameras_found[0])
         except Exception as e:
-            print(f"Error initializing camera: {e}")
+            logit(f"Error initializing camera: {e}", color='red')
             self.simulated = True
 
         # self.camera = asi.Camera(self.camera_id)

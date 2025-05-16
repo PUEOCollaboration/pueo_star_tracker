@@ -1,17 +1,9 @@
 # PUEO Star Camera Server Installation Procedure
 _Compiled by **Milan Štubljar** of [stubljar.com](https://stubljar.com) on 2025-01-08 v1.0_
-# Installation procedure
 
-## Environments
-```
-sbc01: anydesk id: 1776221156/password## pst01/pst/password
-sbc02: anydesk id: 1090653904/password## pst02/pst/password
-sbc03: anydesk id: 1541833116/password## pst03/pst/password
-
-laptop: anydesk id: 482431038/jones747
+# Installation Procedure
 
 ```
-
 ## Install Essentials (Optional)
 ```bash
 

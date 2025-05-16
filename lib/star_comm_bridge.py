@@ -92,7 +92,7 @@ class StarCommBridge:
         role = 'client' if self.is_client else 'server'
         self.log.debug(f'StarCommBridge initialized as {role}.')
 
-        self.messages = MessageHandler(fq_max_size=self.config.fq_max_size)
+        self.messages = MessageHandler(msg_max_size=self.config.msg_max_size)
         self.server = None # link to the PueoStarCameraOperation instance
         self.is_running = False
         self.client_threads = []  # Store client threads for cleanup
@@ -240,7 +240,7 @@ class StarCommBridge:
             # Remove leading/trailing quotes if any
             if cmd_json and (cmd_json.startswith("'") or cmd_json.startswith('"')):
                 cmd_json = cmd_json[1:-1]
-            self.log.debug(f"Received command from client: {cmd_json}")
+            self.log.debug(f"Received command from client: {cmd_json} mode: {self.server.flight_mode} queues: msg: {self.messages.message_queue.qsize()} telemetry: {self.server.telemetry_queue.qsize()} positions: {self.server.positions_queue.qsize()}")
             # logit(f"Received command from client: {cmd_json}", color='magenta')
             try:
                 command_data = json.loads(cmd_json)
@@ -308,8 +308,8 @@ class StarCommBridge:
             elif not self.server.is_running:
                 message = f'Server not running.'
             # self.log.debug(f'Status check response: {message}')
-
-            res = Status.get_status(Status.SUCCESS, message)
+            data = {'mode': self.server.flight_mode}
+            res = Status.get_status(Status.SUCCESS, message, data)
             res['messages'] = self.messages.get_messages()
             return res
 
@@ -323,13 +323,13 @@ class StarCommBridge:
             elif not self.server.is_running:
                 message = f'Server not running.'
             # self.log.debug(f'Status check response: {message}')
-
-            res = Status.get_status(Status.SUCCESS, message)
+            # res = Status.get_status(Status.SUCCESS, message)
             limit = cmd.limit
             position_elements = self.server.positions_queue.get_all(limit)
             telemetry_elements = self.server.telemetry_queue.get_all(limit)
             ts = datetime.now().isoformat()
-            res['messages'] = {
+            data = {
+                'mode': self.server.flight_mode,
                 'position': {
                     'timestamp': ts,
                     'size': len(position_elements),
@@ -341,9 +341,7 @@ class StarCommBridge:
                     'data': telemetry_elements
                 }
             }
-
-            # res['messages'] = {'telemetry': 'TODO'}
-            return res
+            return Status.success(data, message)
 
         if not self.server.is_running:
             return None
@@ -407,9 +405,13 @@ class StarCommBridge:
             elif commands == Commands.HOME_LENS:
                 self.server.camera_home_lens(cmd)
                 ret = Status.get_status(Status.SUCCESS, "Camera Home lens completed.")
+            elif commands == Commands.FLIGHT_MODE:
+                if cmd.method == 'set':
+                    self.server.flight_mode = cmd.mode
+                ret = Status.success({'data': {'mode': self.server.flight_mode}}, f"Flight mode {cmd.method}.")
             else:
                 self.log.warning("Unknown command received: %s", commands)
-                ret = Status.get_status(Status.ERROR, f"Unknown command: {commands}")
+                return Status.get_status(Status.ERROR, f"Unknown command: {commands}")
         except Exception as e:
             ret = Status.get_status(Status.ERROR, f"Error running command: {commands}")
             for line in traceback.format_exception(e):
@@ -420,6 +422,8 @@ class StarCommBridge:
         self.server.server.messages.write(f'Command {commands} status: {ret}')
         # Command completed
         self.is_processing = False
+        if commands in [Commands.FLIGHT_MODE]:
+            return ret
         return None
 
     def start_server(self, pueo_server):
@@ -531,9 +535,14 @@ class StarCommBridge:
         """
         if self.connected:
             self.messages.write(item, level, data_type, dst_filename)
-        else:
-            pass
-            # self.log.warning('Not connected.')
+
+        # If not connected to the client, delete images in preflight mode.
+        if data_type.endswith('_file') and not self.server.is_flight:
+            with suppress(FileNotFoundError, PermissionError, Exception):
+                file_path = item
+                os.remove(file_path)
+                self.log.warning(f"File {file_path} deleted successfully. flight_mode: {self.server.flight_mode}")
+        # self.log.warning('Not connected.')
 
     def close(self):
         """Close the socket connection gracefully."""

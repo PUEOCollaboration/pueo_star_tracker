@@ -237,7 +237,7 @@ def overlay_raw(img, downscale_factors, message):
     return overlay_image
 
 
-def display_overlay_info(img, timestamp_string, astrometry, omega, display=True, image_filename=None, partial_results_path="./partial_results", scale_factors=(8, 8), resize_mode='downscale'):
+def display_overlay_info(img, timestamp_string, astrometry, omega, display=True, image_filename=None, final_path='./output', partial_results_path="./partial_results", scale_factors=(8, 8), resize_mode='downscale', png_compression=0, is_save=True):
     """Displays text overlay information about astrometry on output image.
     """
 
@@ -331,12 +331,17 @@ def display_overlay_info(img, timestamp_string, astrometry, omega, display=True,
     foi_scaled_shape = None
     if image_filename is not None:
         path, filename, extension = split_path(image_filename)
-        foi_filename = f"./output/Final_overlay_image_{filename}_{timestamp_string}.png"
-        log.debug(f'  Saving: {foi_filename}')
-        cv2.imwrite(foi_filename, overlay_image)
+        foi_filename = f"{final_path}/Final_overlay_image_{filename}_{timestamp_string}.png"
+        if is_save:
+            t0 = time.perf_counter()
+            # Save using png compression
+            cv2.imwrite(foi_filename, overlay_image, [int(cv2.IMWRITE_PNG_COMPRESSION), png_compression])
+            # Get file size in MB (converted from bytes)
+            file_size = os.path.getsize(foi_filename) / (1024 * 1024)  # bytes to MB conversion
+            log.debug(f'Saved: {foi_filename} compression: {png_compression} file_size: {file_size:.2f} Mb in {get_dt(t0)}.')
 
         # TODO: An overlay image, do we use this image for showing on the GUI?
-        foi_scaled_filename = f"./output/Final_overlay_image_{filename}_{timestamp_string}_downscaled.png"
+        foi_scaled_filename = f"{final_path}/Final_overlay_image_{filename}_{timestamp_string}_downscaled.png"
         foi_scaled_shape = image_resize(overlay_image, scale_factors, foi_scaled_filename, resize_mode=resize_mode)
 
     # Display image
@@ -407,7 +412,7 @@ def image_downscale_orig(img, downscale_factors, image_filename, overlay=None, d
     log.debug(f'Saved downscaled image to sd path: {image_filename} in {get_dt(t0)}.')
 
 
-def image_resize(img, scale_factors, image_filename, overlay=None, resize_mode='downscale'):
+def image_resize(img, scale_factors, image_filename, overlay=None, resize_mode='downscale', png_compression=0):
     """
     Resize an image using either downscaling (with interpolation or local mean) or downsampling.
 
@@ -480,17 +485,24 @@ def image_resize(img, scale_factors, image_filename, overlay=None, resize_mode='
         resized_img = overlay_raw(resized_img, scale_factors, overlay)
 
     print_img_info(resized_img, 'resized')
-    cv2.imwrite(image_filename, resized_img)
-    log.debug(f'Saved resized image to sd path: {image_filename} in {get_dt(t0)}.')
+
+
+    cv2.imwrite(image_filename, resized_img, [int(cv2.IMWRITE_PNG_COMPRESSION), png_compression])
+    # Get file size in MB (converted from bytes)
+    file_size = os.path.getsize(image_filename) / (1024 * 1024)  # bytes to MB conversion
+    log.debug(f'Saved resized image to sd path: {image_filename} compression: {png_compression} file_size: {file_size:.2f} Mb in {get_dt(t0)}.')
 
     return resized_img.shape
 
-def save_raws(img, ssd_path="", sd_card_path="", image_name="", scale_factors=(8, 8), resize_mode='downscale'):
+def save_raws(img, ssd_path="", sd_card_path="", image_name="", scale_factors=(8, 8), resize_mode='downscale', png_compression=0, is_save=True):
     # Save original image to ssd
     img1 = img  # .copy()
     image_filename = f"{ssd_path}/{image_name}-raw.png"
     t0 = time.monotonic()
-    cv2.imwrite(image_filename, img1, [int(cv2.IMWRITE_PNG_COMPRESSION), 0])
+    # The IMWRITE_PNG_COMPRESSION - 0: The compression level (0 = no compression, 9 = maximum compression), see config.ini
+    # Only save files in flight mode
+    if is_save:
+        cv2.imwrite(image_filename, img1, [int(cv2.IMWRITE_PNG_COMPRESSION), png_compression])
     log.debug(f'Saved original image to ssd path: {image_filename} in {get_dt(t0)}.')
 
     # Save downscaled image to sd card

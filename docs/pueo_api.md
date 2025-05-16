@@ -89,7 +89,8 @@ fq_max_size = 1
 {
   "error_code": 0,
   "error_message": "Idle",
-  "messages": {
+  "data": {
+    "mode": "flight",
     "position": {
       "timestamp": "2025-04-22T16:45:43.617632",
       "size": 1,
@@ -187,5 +188,66 @@ fq_max_size = 1
 - Error codes:  
   - `0`: Success.  
   - Non-zero: Error (details in `error_message`).  
+
+---
+
+### **Command Specification**  
+**Command:** `flight_mode`  
+**Purpose:** Get or set the current flight mode (e.g., `preflight` or `flight`).  
+
+#### **Parameters**  
+| Name     | Type    | Description                                                                 | Required For  | Constraints                     |  
+|----------|---------|-----------------------------------------------------------------------------|---------------|---------------------------------|  
+| `method` | `str`   | Operation to perform: `"get"` (retrieve current mode) or `"set"` (change mode). | Always        | Must be `"get"` or `"set"`.     |  
+| `mode`   | `str`   | Target flight mode (only required if `method = "set"`).                     | `method=set`  | Must be `"preflight"` or `"flight"`. |  
+
+**Notes:**  
+1. **Mode Handling**  
+   - Input is case-insensitive (e.g., `"PreFlight"` → normalized to `"preflight"`).  
+   - Invalid modes raise an error (see **Example Error Response**).  
+
+2. **State Persistence**  
+   - The mode persists until explicitly changed or system reset.  
+
+#### **Example Request (Get Current Mode)**  
+```json
+{
+  "command": "flight_mode",
+  "data": {
+    "method": "get"
+  }
+}
+
+//Simplified:
+
+{
+  "command": "flight_mode",
+}
+```
+
+#### **Example Request (Set Mode to Flight)**  
+```json
+{
+  "command": "flight_mode",
+  "data": {
+    "method": "set",
+    "mode": "flight"
+  }
+}
+```
+
+#### **Example Response (Success)**  
+```json
+{
+  "error_code": 0,
+  "error_message": "Flight mode set.",
+  "data": {
+    "mode": "flight"  // Returned for both get/set
+  }
+}
+```
+
+
+---
 
 Let us know if you need any adjustments! 🚀

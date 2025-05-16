@@ -159,6 +159,7 @@ class Config:
     cedar_downscale = 3.0
 
     # [IMAGES]
+    png_compression = 0
     save_raw = True
     min_count = 10
     sigma_error_value = 9999
@@ -170,6 +171,7 @@ class Config:
     scale_factors = (scale_factor_x, scale_factor_y)
 
     # [GENERAL]
+    flight_mode = 'flight'
     solver = 'solver1'
     time_interval = 1000000  # Microseconds
     max_processes = 4
@@ -193,7 +195,7 @@ class Config:
     ssd_path = 'ssd_path/'
     sd_card_path = 'sd_card_path/'
 
-    final_path = 'ssd_path/final/'
+    final_path = 'output/'
 
     calibration_params_file = 'calibration_params_best.txt'
     gui_images_path = 'images'
@@ -212,6 +214,7 @@ class Config:
     max_retry = 5               # Maximum number of retries for connection attempts
     retry_delay = 2             # Delay in seconds between retries
     fq_max_size = 12            # Max number of solutions available/to keep for flight computer API exchange
+    msg_max_size = 128          # Max number of messages in message queue
 
     # [GUI]
     images_keep = 5  # Number of images to keep
@@ -469,6 +472,7 @@ class Config:
         self.cedar_downscale = self.config.getfloat('CEDAR', 'cedar_downscale', fallback=self.cedar_downscale)
 
         # [IMAGES]
+        self.png_compression = self.config.getint('IMAGES', 'png_compression', fallback=self.png_compression)
         self.save_raw = self.config.getboolean('IMAGES', 'save_raw', fallback=self.save_raw)
         self.min_count = self.config.getint('IMAGES', 'min_count', fallback=self.min_count)
         self.sigma_error_value = self.config.getint('IMAGES', 'sigma_error_value', fallback=self.sigma_error_value)
@@ -481,6 +485,7 @@ class Config:
         self.scale_factors = (self.scale_factor_x, self.scale_factor_y)
 
         # [GENERAL]
+        self.flight_mode = self.config.get('GENERAL', 'flight_mode', fallback=self.flight_mode)
         self.solver = self.config.get('GENERAL', 'solver', fallback=self.solver)
         self.time_interval = self.config.getint('GENERAL', 'time_interval', fallback=self.time_interval)
         self.max_processes = self.config.getint('GENERAL', 'max_processes', fallback=self.max_processes)
@@ -528,6 +533,7 @@ class Config:
         self.max_retry = self.config.getint('STAR_COMM_BRIDGE', 'max_retry', fallback=self.max_retry)
         self.retry_delay = self.config.getint('STAR_COMM_BRIDGE', 'retry_delay', fallback=self.retry_delay)
         self.fq_max_size = self.config.getint('STAR_COMM_BRIDGE', 'fq_max_size', fallback=self.fq_max_size)
+        self.msg_max_size = self.config.getint('STAR_COMM_BRIDGE', 'msg_max_size', fallback=self.msg_max_size)
 
         # [GUI]
         self.images_keep = self.config.getint('GUI', 'images_keep', fallback=self.images_keep)
@@ -654,6 +660,7 @@ class Config:
         }
 
         config['IMAGES'] = {
+            'png_compression': self.png_compression,
             'save_raw': self.save_raw,
             'min_count': self.min_count,
             'sigma_error_value': self.sigma_error_value,
@@ -677,6 +684,7 @@ class Config:
         }
 
         config['GENERAL'] = {
+            'flight_mode': self.flight_mode,
             'solver': self.solver,
             'time_interval': self.time_interval,
             'max_processes': self.max_processes,
@@ -703,7 +711,8 @@ class Config:
             'port': self.port,
             'max_retry': self.max_retry,
             'retry_delay': self.retry_delay,
-            'fq_max_size': self.fq_max_size
+            'fq_max_size': self.fq_max_size,
+            'msg_max_size': self.msg_max_size
         }
 
         config['GUI'] = {

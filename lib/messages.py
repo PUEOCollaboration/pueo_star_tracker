@@ -48,14 +48,12 @@ class MessageHandler:
 
     Attributes:
         message_queue (Queue): Queue to store messages or file data.
-        flight_queue (Queue): Queue to store Solutions Telemetry data.
     """
 
-    def __init__(self, fq_max_size=12):
-        self.fq_max_size = fq_max_size
+    def __init__(self, msg_max_size=12):
+        self.msg_max_size = msg_max_size
         self.file_lock = Lock()
-        self.message_queue = Queue()                        # Message Queue for GUI
-        self.flight_queue = Queue(maxsize=self.fq_max_size) # Message Queue for Flight Computer (Solutions Telemetry)
+        self.message_queue = Queue(maxsize=self.msg_max_size)  # Message Queue for GUI
         self.timestamp_fmt = '%Y-%m-%d %H:%M:%S.%f'
         self.log = logging.getLogger('pueo')
 
@@ -144,9 +142,11 @@ class MessageHandler:
                 'content': file_content
             }
             as_file = '' if dst_filename is None else f' as {dst_filename}'
-
-        self.log.debug(f'{data_type}: {item}{as_file}')
+        # Note if the QUEUE is full, drop oldest message
+        if self.message_queue.full():
+            self.message_queue.get()
         self.message_queue.put(data_item)
+        self.log.debug(f'Queue: size: {self.message_queue.qsize()} added: {data_type}: {item}{as_file}')
 
     def write_file(self, dst_path, metadata, content):
         """
@@ -176,7 +176,7 @@ class MessageHandler:
 
         return file_path
 
-    def get_messages(self) -> list:
+    def get_messages(self, is_delete=False) -> list:
         """
         Serialize all items in the message queue to a list of dictionaries.
 
@@ -188,7 +188,7 @@ class MessageHandler:
             item = self.message_queue.get()
             serialized_data.append(item)
         if serialized_data:
-            self.log.debug(f'Serialising messages: {len(serialized_data)}')
+            self.log.debug(f'Serialised messages cnt: {len(serialized_data)} queue size: {self.message_queue.qsize()}')
         return serialized_data
 
     def process_messages(self, serialized_data: list):
@@ -227,13 +227,5 @@ class MessageHandler:
                     self.log.debug(f"[{timestamp}] File recreated at: {file_path}")
                 except Exception as e:
                     self.log.error(f"[{timestamp}] Failed to recreate file: {e}")
-
-    def save_flight_telemetry(self, ):
-        """
-
-        """
-
-
-        pass
 
     # Last line

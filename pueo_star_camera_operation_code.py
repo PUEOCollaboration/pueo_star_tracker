@@ -108,6 +108,7 @@ class PueoStarCameraOperation:
         # Params
         self.operation_enabled = self.cfg.run_autonomous
         self.solver = self.cfg.solver
+        self._flight_mode = self.cfg.flight_mode
 
         self.time_interval: int = self.cfg.time_interval
         self.cadence: float = self.time_interval / 1e6
@@ -229,7 +230,7 @@ class PueoStarCameraOperation:
             'port': self.cfg.port,
             'retry_delay': self.cfg.retry_delay,
             'max_retry': self.cfg.max_retry,
-            'fq_max_size': self.cfg.fq_max_size
+            'msg_max_size': self.cfg.msg_max_size
         }
         config = SimpleNamespace(**config)
         self.server = StarCommBridge(is_client=False, config=config)
@@ -258,6 +259,34 @@ class PueoStarCameraOperation:
         logit(msg, color=color)
         with suppress(Exception):
             self.server.write(msg, level)
+
+    @staticmethod
+    def get_daily_path(path: str,
+                       fmt: str = '%Y-%m-%d',
+                       create_if_missing: bool = True) -> str:
+        """
+        Appends current date to path and optionally creates directory.
+
+        Args:
+            path: Base directory path
+            fmt: Date format string (default: YYYY-MM-DD)
+            create_if_missing: Create directory if it doesn't exist (default: True)
+
+        Returns:
+            str: Full path with date appended
+
+        Raises:
+            OSError: If directory creation fails
+        """
+        # Generate dated path
+        date_str = datetime.datetime.now().strftime(fmt)
+        full_path = os.path.join(path.rstrip(os.sep), date_str)
+
+        # Create directory if requested and doesn't exist
+        if create_if_missing and not os.path.exists(full_path):
+            os.makedirs(full_path, exist_ok=True)
+
+        return full_path
 
     def save_capture_properties(self, filename, timestamp_string):
         settings = self.camera.get_control_values()
@@ -1316,9 +1345,9 @@ class PueoStarCameraOperation:
 
         dt = datetime.datetime.now().isoformat()  # Get current ISO timestamp
         if is_raw:
-            self.logit(f"Taking photo: raw: {is_raw} @{dt}", color='cyan')  # Timestamp at END
+            self.logit(f"Taking photo: raw: {is_raw} mode: {self.flight_mode} @{dt}", color='cyan')  # Timestamp at END
         else:
-            self.logit(f"Taking photo: operation: {is_operation} solver: {self.solver} @{dt}", color='cyan')  # Timestamp at END
+            self.logit(f"Taking photo: operation: {is_operation} solver: {self.solver} mode: {self.flight_mode} @{dt}", color='cyan')  # Timestamp at END
 
         self.curr_time = time.monotonic()
         dt = datetime.datetime.now(timezone.utc)
@@ -1326,7 +1355,8 @@ class PueoStarCameraOperation:
         curr_utc_timestamp = utc_time.timestamp()
         curr_serial_utc_timestamp = self.serial_utc_update + time.monotonic() - self.serial_time_datum
         timestamp_string = dt.strftime(self.timestamp_fmt)  # Used for filename, ':' should not be used.
-        self.info_file = f"log/log_{timestamp_string}.txt"
+
+        self.info_file = f"{self.get_daily_path(self.cfg.final_path)}/log_{timestamp_string}.txt"
 
         if self.focuser.aperture_position == 'closed':
             self.focuser.open_aperture()
@@ -1392,13 +1422,13 @@ class PueoStarCameraOperation:
             # Save image to SSD & SD card
             save_raws_result = self.pool.apply_async(
                 save_raws,
-                args=(self.curr_img, self.cfg.ssd_path, self.cfg.sd_card_path,
-                      image_file, self.cfg.scale_factors, self.cfg.resize_mode
+                args=(self.curr_img, self.get_daily_path(self.cfg.ssd_path), self.get_daily_path(self.cfg.sd_card_path),
+                      image_file, self.cfg.scale_factors, self.cfg.resize_mode, self.cfg.png_compression, self.is_flight
                       )
             )
 
             # Perform astrometry
-            # TODO: Cleanup, the RAWs should be done in a thread
+            # TODO: Future Performance Enhancement and Cleanup, the RAWs should be done in a thread
             if False:
                 self.logit(f'Fetching Astrometry (multiprocessing) @{get_dt(t0)}.', color='green')
                 astrometry_result = None if is_raw else self.do_astrometry()
@@ -1444,12 +1474,14 @@ class PueoStarCameraOperation:
                 self.contours_img, timestamp_string,
                 self.astrometry, self.omega, False,
                 self.curr_image_name,
+                self.get_daily_path(self.cfg.final_path),
                 self.cfg.partial_results_path,
                 self.cfg.scale_factors,
-                self.cfg.resize_mode)
+                self.cfg.resize_mode,
+                self.cfg.png_compression,
+                self.is_flight)
             if self.foi_scaled_name is not None:
-                self.server.write(self.foi_scaled_name, data_type='image_file',
-                                  dst_filename=self.curr_scaled_name)
+                self.server.write(self.foi_scaled_name, data_type='image_file', dst_filename=self.curr_scaled_name)
             else:
                 cprint('Error no scaled image', color='red')
                 self.log.error('foi_scaled_name was None, no downscaled image generated.')
@@ -1487,6 +1519,11 @@ class PueoStarCameraOperation:
         self.curr_scaled_name = self.curr_scaled_name or self.foi_scaled_name
         info_filename = f'{self.curr_scaled_name[:-4]}.txt'  # .png -> .txt
         self.server.write(self.info_file, data_type='info_file', dst_filename=info_filename)
+        # Copy to sd_card and ssd_path
+        if self.is_flight:
+            shutil.copy2(self.info_file, self.get_daily_path(self.cfg.sd_card_path))
+            shutil.copy2(self.info_file, self.get_daily_path(self.cfg.ssd_path))
+
         self.logit(f'camera_take_image completed in {get_dt(t0)}.', color='green')
 
     def calc_angular_velocity(self, curr_utc_timestamp):
@@ -1760,47 +1797,31 @@ class PueoStarCameraOperation:
         self.logit(
             f'Home Lens completed: new min/max positions: {self.min_focus_position}/{self.max_focus_position} old: {c_min}/{c_max}')
 
-    def process_command_obsolete(self, cmd):
-        # TODO: Obsolete, remove function process_command_obsolete
-        cmd_pt0 = 'take_image'
-        new_command_flag = True
-        if new_command_flag:
-            if cmd_pt0 == 'take_image':  # 'camera_take_image':
-                self.camera_take_image()
-            elif cmd_pt0 == 'resume':
-                self.camera_resume()
-            elif cmd_pt0 == 'pause':
-                self.camera_pause()
-            elif cmd_pt0 == 'run_autofocus':
-                self.camera_run_autofocus(cmd)
-            elif cmd_pt0 == 'set_aperture':
-                self.camera_set_aperture(cmd)
-            elif cmd_pt0 == 'set_exposure':
-                self.camera_set_exposure_time(cmd)
-            elif cmd_pt0 == 'set_gain':
-                self.camera_set_gain(cmd)
-            elif cmd_pt0 == 'set_focus':
-                self.camera_set_focus_position(cmd)
-            elif cmd_pt0 == 'delta_focus':
-                self.camera_delta_focus_position(cmd)
-            elif cmd_pt0 == 'run_autogain':
-                self.camera_run_autogain(cmd)
-            elif cmd_pt0 == 'change_exposure_time':
-                # TODO: What is the difference with camera_set_exposure_time
-                # self.camera_change_exposure_time(cmd)
-                pass
-            elif cmd_pt0 == 'sample_distortion':
-                self.camera_sample_distortion()
-            elif cmd_pt0 == 'enable_distortion_correction':
-                self.camera_enable_distortion_correction(cmd)
-            elif cmd_pt0 == 'disable_distortion_correction':
-                distortion = None
-            elif cmd_pt0 == 'gyro_rates':
-                self.camera_gyro_rates(cmd)
-            elif cmd_pt0 == 'time_update':
-                self.camera_update_time(cmd)
-            else:
-                self.logit(f'Command not recognized. {cmd.command}. Ignoring.')
+    @property
+    def flight_mode(self):
+        """Getter for flight_mode (no arguments allowed)."""
+        return self._flight_mode
+
+    @flight_mode.setter
+    def flight_mode(self, value):
+        """Setter for flight_mode (validates input)."""
+        allowed_modes = {'preflight', 'flight'}  # Use lowercase for consistency
+        if value.lower() not in allowed_modes:
+            raise ValueError(f"Invalid flight mode: {value}. Must be one of {allowed_modes}")
+        self._flight_mode = value.lower()  # Normalize to lowercase
+
+    @property
+    def is_flight(self) -> bool:
+        """Determine if the Pueo is in flight mode.
+
+        Returns:
+            bool: True if the current mode is 'flight', False otherwise.
+
+        Example:
+            >>> if self.is_flight:
+            ...     print("PUEO is in flight mode")
+        """
+        return self.flight_mode == 'flight'
 
     def wrapup_profiler(self, profiler):
         """Save profiling results"""

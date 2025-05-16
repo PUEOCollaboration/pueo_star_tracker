@@ -42,8 +42,19 @@ class Commands(Enum):
         delta_focus_position <focus_delta>
            focus_delta: int (-100 .. 100)
 
-        run_autogain <mix_pixel_value>
-           mix_pixel_value : int (0 .. 65535)
+        run_autogain <max_pixel_value>
+        # TODO
+           ## Note mix_pixel_value is a TYPO shall be max_pixel_value
+           ## mix_pixel_value : int (0 .. 65535)
+
+           ##NEXT ARE TO BE CHECKED!!!!
+           init_gain_value : int (120..570)        config: best_gain_value
+             -> This value should be used only on startup but then previous (last) value used.
+           best_exposure_time :     config: best_exposure_time
+           desired_max_pix_value    config: desired_max_pix_value
+           pixel_saturated_value    config: pixel_saturated_value
+           pixel_count_tolerance    config; pixel_count_tolerance
+
         set_exposure_time <exposure_time>
            exposure_time: int (32 .. 5s~5000000) (1, 2, 4, 1/250, 1/500, 1/1000) microseconds
            100*1000 ~ 100 milliseconds
@@ -79,6 +90,7 @@ class Commands(Enum):
     POWER_CYCLE = 15
     HOME_LENS = 16
 
+    FLIGHT_MODE = 99
     FLIGHT_TELEMETRY = 100
 
     @classmethod
@@ -109,6 +121,8 @@ class Command:
     omega_z = None
     new_time = None
     limit = 0
+    method = None
+    mode = None
 
     settings = {
         Commands.CHECK_STATUS.value: {
@@ -290,6 +304,21 @@ class Command:
         Commands.HOME_LENS.value: {
             'params': {}
         },
+
+        Commands.FLIGHT_MODE.value: {
+            'params': {
+                'method': {
+                    'type': 'list',
+                    'values': ['get', 'set'],
+                    'default': 'get'
+                },
+                'mode': {
+                    'type': 'list',
+                    'values': ['flight', 'preflight']
+                },
+            },
+        },
+
         Commands.FLIGHT_TELEMETRY.value: {
             'params': {
                 'limit': {
@@ -365,6 +394,18 @@ class Command:
         elif self.command == Commands.UPDATE_TIME:
             self.add_attribute('new_time', self.data['new_time'], validation['params'])
         # ...
+        # FLIGHT_MODE ~ id 99
+        elif self.command == Commands.FLIGHT_MODE:
+            if self.data is None:
+                self.data = {}
+
+            if 'method' not in self.data:
+                self.data['method'] = validation['params']['method']['default']
+            self.add_attribute('method', self.data['method'], validation['params'])
+            # The flight_mode is applicable for the set method
+            if self.method == 'set':
+                self.add_attribute('mode', self.data['mode'], validation['params'])
+
         # FLIGHT_TELEMETRY ~ id 100
         elif self.command == Commands.FLIGHT_TELEMETRY:
             if self.data is None:
@@ -514,6 +555,13 @@ class Command:
         self.define(command_data)
         return self.command_data
 
+    def flight_mode(self, method:str, mode:str=None):
+        command_data = {'command': Commands.FLIGHT_MODE.name.lower(), 'data': {'method': method}}
+        if method == 'set':
+            command_data = {'command': Commands.FLIGHT_MODE.name.lower(), 'data': {'method': method, 'mode': mode}}
+        self.define(command_data)
+        return self.command_data
+
     def flight_telemetry(self, limit: int = 0):
         command_data = {'command': Commands.FLIGHT_TELEMETRY.name.lower(), 'data': {'limit': limit}}
         self.define(command_data)
@@ -547,7 +595,9 @@ if __name__ == "__main__":
         cmd.flight_telemetry(),
         {
             'command': 'flight_telemetry',
-        }
+        },
+        cmd.flight_mode('get'),
+        cmd.flight_mode('set', 'preflight')
     ]
     for cmd_dict in cmds:
         cmd = Command(cmd_dict)
@@ -564,5 +614,9 @@ if __name__ == "__main__":
             print(cmd.new_time)
         elif cmd.command == Commands.FLIGHT_TELEMETRY:
             print(f'{cmd.limit}, {cmd.command_name}, {cmd.data}')
+
+        elif cmd.command == Commands.FLIGHT_MODE:
+            print(f'{cmd.method}, {cmd.command_name}, {cmd.data}')
+
         # cmd.add_attribute('exposure_time', 1)
         # print(cmd.exposure_time)

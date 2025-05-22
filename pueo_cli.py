@@ -10,8 +10,8 @@ Available commands:
   stop                      Stop autonomous mode
   home_lens                 Perform focuser homing
   power_cycle               Powercycle and initialize camera and focuser
-  auto_focus                Run autofocus routine
-  auto_gain <start> <end> <steps> Run autogain routine
+  auto_focus <start> <end> <steps> Run autofocus routine
+  auto_gain                 Run autogain routine
   auto_exposure             Run autoexposure routine
   take_image [type]         Take image (raw, solver1, solver2 - default from config)
   get_flight_mode           Get current flight mode

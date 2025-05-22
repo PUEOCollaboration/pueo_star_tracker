@@ -36,6 +36,7 @@ class Focuser:
         # baud = # baud_rate = 115200
 
         self.ser = None
+        self.f_stops = []
         max_retry = 5
         retry = 0
         status = False
@@ -50,7 +51,7 @@ class Focuser:
                 self.f_min = None
                 self.num_stops: int = 0
                 self.f_max = None
-                self.f_stops = []
+                # self.f_stops = []
                 self.define_aperture()
                 self.initialize_aperture()
                 self.move_aperture_absolute(0)

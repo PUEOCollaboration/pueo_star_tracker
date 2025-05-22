@@ -107,6 +107,7 @@ class PueoStarCameraOperation:
 
         # Params
         self.operation_enabled = self.cfg.run_autonomous
+        self.img_cnt = 0
         self.solver = self.cfg.solver
         self._flight_mode = self.cfg.flight_mode
 
@@ -134,7 +135,10 @@ class PueoStarCameraOperation:
 
         self.online_auto_gain_enabled = None
         self.update_calibration = None
-        self.pixel_saturated_value = None
+
+        self.pixel_saturated_value = self.cfg.pixel_saturated_value_raw16
+        self.desired_max_pix_value = int(0.85 * self.pixel_saturated_value)
+        self.pixel_count_tolerance = int(0.5 * (self.pixel_saturated_value - self.desired_max_pix_value))
 
         # Raw Image
         self.curr_image_name = None
@@ -166,14 +170,12 @@ class PueoStarCameraOperation:
         self.is_array = None
         self.include_angular_velocity = self.cfg.include_angular_velocity
 
-        self.best_exposure_time = None
-        self.best_gain_value = None
+        self.best_exposure_time = self.cfg.lab_best_exposure
+        self.best_gain_value = self.cfg.lab_best_gain
 
         self.distortion = None
         self.stdev = None
         self.best_focus = None
-        self.pixel_count_tolerance = None
-        self.desired_max_pix_value = None
 
         self.timestamp_fmt = "%y%m%d_%H%M%S.%f"  # File name timestamp friendly format
 
@@ -366,7 +368,7 @@ class PueoStarCameraOperation:
             plt.plot(fit_points, self.gauss(fit_points, *popt), 'r--', label='Gaussian fit')
             plt.legend()
             plt.xlabel('Focus Position, counts')
-            plt.ylabel('Covariance')
+            plt.ylabel('Sequence Contrast/Covariance')
             plt.title(f'mean: {round(mean, 2)}, stdev: {round(sigma, 2)}, height: {round(height, 2)}')
             # TODO: Remove old commented out code
             # plt.savefig(focus_image_path + 'focus_score.png')
@@ -383,8 +385,8 @@ class PueoStarCameraOperation:
                 trial_best_focus_pos = self.cfg.trial_focus_pos
                 self.logit(f'Focus set to out of limits. So defaulting to {self.cfg.trial_focus_pos}.')
             else:
-                focus_dict['covariance']['best_focus_pos'] = trial_best_focus_pos
-                focus_dict['covariance']['status'] = True
+                focus_dict['sequence_contrast']['best_focus_pos'] = trial_best_focus_pos
+                focus_dict['sequence_contrast']['status'] = True
         except Exception as e:
             self.log.error(f'Fitting Error: {e}')
             self.logit(f"There was an error with fitting: {e}")
@@ -486,9 +488,9 @@ class PueoStarCameraOperation:
         self.log.debug(f'Image properties filename: {filename}')
         self.save_capture_properties(filename, timestamp_string)
 
-    def check_gain_exposure_routine(self, curr_img, desired_max_pix_value, pixel_saturated_value,
-                                    pixel_count_tolerance) -> bool:
-        bins = np.linspace(0, pixel_saturated_value, self.cfg.autoexposuregain_num_bins)
+    def check_gain_routine(self, curr_img, desired_max_pix_value, pixel_saturated_value,
+                           pixel_count_tolerance) -> bool:
+        bins = np.linspace(0, pixel_saturated_value, self.cfg.autogain_num_bins)
         arr = curr_img.flatten()
         counts, bins = np.histogram(arr, bins=bins)
         n = len(bins)
@@ -535,37 +537,82 @@ class PueoStarCameraOperation:
             self.logit(f"Pixel count difference: {desired_max_pix_value - high_pix_value}")
             return False
 
-    def do_auto_gain_exposure_routine(self, auto_gain_exposure_image_path, initial_gain_value, desired_exposure_time,
-                                      desired_max_pix_value, pixel_saturated_value, pixel_count_tolerance):
+    def check_gain_exposure_routine(self, curr_img, desired_max_pix_value, pixel_saturated_value,
+                                    pixel_count_tolerance) -> bool:
+        bins = np.linspace(0, pixel_saturated_value, self.cfg.autogain_num_bins)
+        arr = curr_img.flatten()
+        counts, bins = np.histogram(arr, bins=bins)
+        n = len(bins)
+        high_pix_value = max(arr)
+        min_count = 10  # min_count
+        # find the next largest pixel value
+        second_largest_pix_value = int(bins[0])
+        for i in range(n - 1, -1, -1):
+            # if arr[i] < high_pix_value:
+            if bins[i] < high_pix_value and counts[i] >= min_count:
+                second_largest_pix_value = int(bins[i])
+                break
+            else:
+                second_largest_pix_value = high_pix_value
+
+        plt.figure()
+        plt.hist(bins[:-1], bins, weights=counts)
+        plt.xlabel('Brightness, counts')
+        plt.ylabel('Frequency, pixels')
+        plt.title(f'hpv: {high_pix_value}, slp: {second_largest_pix_value}, lpv: {min(arr)}')
+        plt.grid()
+        # TODO: Showing only for TESTING purposes!
+        # plt.show()
+
+        if high_pix_value == pixel_saturated_value:
+            if second_largest_pix_value >= (desired_max_pix_value + pixel_count_tolerance):
+                self.logit("Image is saturated.")
+            elif second_largest_pix_value < (desired_max_pix_value - pixel_count_tolerance):
+                self.logit("Image has hot pixels. Image not saturated.")
+            return True
+        else:
+            self.logit("Image has no hot pixels.")
+        if high_pix_value > desired_max_pix_value + pixel_count_tolerance:
+            self.logit("Counts too high.")
+            self.logit(f"Pixel count difference: {desired_max_pix_value - high_pix_value}")
+            return True
+        elif high_pix_value < desired_max_pix_value - pixel_count_tolerance:
+            self.logit("Counts too low.")
+            self.logit(f"Pixel count difference: {desired_max_pix_value - high_pix_value}")
+            return True
+        else:
+            # highest value is high enough.
+            self.logit("Pixels counts are in range. Ending iterations.")
+            self.logit(f"Pixel count difference: {desired_max_pix_value - high_pix_value}")
+            return False
+
+    def do_auto_gain_routine(self, auto_gain_image_path, initial_gain_value,
+                             desired_max_pix_value, pixel_saturated_value, pixel_count_tolerance):
         t0 = time.monotonic()
         is_done = False
         loop_counts = 1
         new_gain_value = initial_gain_value
-        new_exposure_time = desired_exposure_time
         # take image using these settings.
         self.camera.set_control_value(asi.ASI_GAIN, new_gain_value)
-        self.camera.set_control_value(asi.ASI_EXPOSURE, new_exposure_time)
-        self.logit(f'New Exposure Time: {new_exposure_time}')
         self.logit(f'New Gain Value: {new_gain_value}')
         if self.focuser.aperture_position == 'closed':
             self.logit('Opening Aperture.')
             self.focuser.open_aperture()
-        self.logit("Starting autogain/autofocus routine.")
+        self.logit("Starting autogain routine.")
         high_pix_value = 0
         while not is_done:
             self.logit("#" * 104)
-            self.logit(f"Autogain/Autofocus Iteration: {loop_counts}")
+            self.logit(f"Autogain Iteration: {loop_counts}")
 
-            if loop_counts > self.cfg.max_autoexposuregain_iterations:
+            if loop_counts > self.cfg.max_autogain_iterations:
                 is_done = True
                 self.logit("Maximum iterations reached. Can't find solution. Ending cycle.")
                 break
 
             self.logit('Capturing image.')
-            inserted_string = 'e' + str(new_exposure_time) + 'g' + str(new_gain_value)
-            # img,p=capture_timestamp_save(auto_gain_exposure_image_path,inserted_string)
-            img = self.capture_timestamp_save(auto_gain_exposure_image_path, inserted_string)
-            bins = np.linspace(0, pixel_saturated_value, self.cfg.autoexposuregain_num_bins)
+            inserted_string = 'e'  + 'g' + str(new_gain_value)
+            img = self.capture_timestamp_save(auto_gain_image_path, inserted_string)
+            bins = np.linspace(0, pixel_saturated_value, self.cfg.autogain_num_bins)
             arr = img.flatten()
             counts, bins = np.histogram(arr, bins=bins)
             # There is one counts less than bins, therefore we iterate over counts, not bins
@@ -622,73 +669,195 @@ class PueoStarCameraOperation:
             old_gain_value = new_gain_value
 
             if not image_saturated:
-                # calculate & make gain adjustment
-                old_electrons_per_ADU_gain = 6.0037 * math.exp(-0.013 * old_gain_value)
-                old_ADU_per_electrons_gain = 1 / old_electrons_per_ADU_gain
-                self.logit(f"old_electrons_per_ADU_gain {old_electrons_per_ADU_gain}")
-                self.logit(f"old_ADU_electrons_gain {old_ADU_per_electrons_gain}")
-                gain_multiplier = (desired_max_pix_value - self.cfg.pixel_bias) / (high_pix_value - self.cfg.pixel_bias)
-                self.logit(f"gain_multiplier: {gain_multiplier}")
-                new_ADU_per_electrons_gain = gain_multiplier * old_ADU_per_electrons_gain
-                new_electrons_per_ADU_gain = 1 / new_ADU_per_electrons_gain
-                self.logit(f"new_electrons_per_ADU_gain {new_electrons_per_ADU_gain}")
-                # TODO: Empty Image or no image will yield an error here. ValueError: math domain error
-                new_gain_value = -76.9230769 * math.log(0.16656395 * new_electrons_per_ADU_gain)
-                new_gain_value = int(round(new_gain_value))
-                if new_gain_value < self.cfg.min_gain_setting:
-                    self.logit(f"New gain too low. Setting gain={self.cfg.min_gain_setting}. Decreasing exposure time.")
-                    new_gain_value = self.cfg.min_gain_setting
-                    old_exposure_time = new_exposure_time
-                    new_exposure_time = int(
-                        0.75 * ((old_exposure_time) / (high_pix_value - self.cfg.pixel_bias) * desired_max_pix_value))
-                    self.logit(f'Old Exposure Time: {old_exposure_time}')
-                    self.logit(f'New Exposure Time: {new_exposure_time}')
-                    self.logit(f'Old Gain Value: {old_gain_value}')
-                    self.logit(f'New Gain Value: {new_gain_value}')
-                    self.camera.set_control_value(asi.ASI_EXPOSURE, new_exposure_time)
-                    self.camera.set_control_value(asi.ASI_GAIN, new_gain_value)
-                elif new_gain_value >= self.cfg.max_gain_setting:
-                    self.logit(
-                        f"New gain too high. Setting gain={self.cfg.max_gain_setting}. Increasing exposure time.")
-                    new_gain_value = self.cfg.min_gain_setting
-                    old_exposure_time = new_exposure_time
-                    new_exposure_time = int(
-                        1.25 * ((old_exposure_time) / (high_pix_value - self.cfg.pixel_bias) * desired_max_pix_value))
-                    self.logit(f'Old Exposure Time: {old_exposure_time}')
-                    self.logit(f'New Exposure Time: {new_exposure_time}')
-                    self.logit(f'Old Gain Value: {old_gain_value}')
-                    self.logit(f'New Gain Value: {new_gain_value}')
-                    self.camera.set_control_value(asi.ASI_EXPOSURE, new_exposure_time)
-                    self.camera.set_control_value(asi.ASI_GAIN, new_gain_value)
-                else:
-                    self.logit(f'Old Gain Value: {old_gain_value}')
-                    self.logit(f'New Gain Value: {new_gain_value}')
-                    self.camera.set_control_value(asi.ASI_GAIN, new_gain_value)
-            else:
-                new_gain_value = self.cfg.min_gain_setting
-                old_exposure_time = new_exposure_time
-                new_exposure_time = int(0.75 * old_exposure_time)
-                self.logit(f'Old Exposure Time: {old_exposure_time}')
-                self.logit(f'New Exposure Time: {new_exposure_time}')
+                self.logit(f"Image not saturated.")
+                #calculate gain adjustment
+                new_gain_value = self.calculate_gain_adjustment(old_gain_value, high_pix_value, desired_max_pix_value)
+
                 self.logit(f'Old Gain Value: {old_gain_value}')
                 self.logit(f'New Gain Value: {new_gain_value}')
-                self.camera.set_control_value(asi.ASI_EXPOSURE, new_exposure_time)
+                self.camera.set_control_value(asi.ASI_GAIN, new_gain_value)
+            else:
+                self.logit(f"Image is saturated. Setting gain to halfway.")
+                new_gain_value = int(0.5*(self.cfg.max_gain_setting-self.cfg.min_gain_setting))
+                if new_gain_value < self.cfg.min_gain_setting:
+                    self.logit(f"New gain too low. Setting gain={self.cfg.min_gain_setting}. Recommend decreasing exposure time.")
+                    new_gain_value = self.cfg.min_gain_setting
+                elif new_gain_value >= self.cfg.max_gain_setting:
+                    self.logit(
+                        f"New gain too high. Setting gain={self.cfg.max_gain_setting}. Recommend increasing exposure time.")
+                    new_gain_value = self.cfg.max_gain_setting
+
+                self.logit(f'Old Gain Value: {old_gain_value}')
+                self.logit(f'New Gain Value: {new_gain_value}')
                 self.camera.set_control_value(asi.ASI_GAIN, new_gain_value)
             loop_counts = loop_counts + 1
-        # No need to close aperture
-        # self.logit('Closing Aperture.')
-        # self.focuser.close_aperture()
-        # self.logit('Stopping video mode')
-        # self.camera.stop_video_capture()
-        self.logit("##########################Auto Gain, Auto Exposure Routine Summary Results: ###############################", color='green')
+        self.logit("##########################Auto Gain Routine Summary Results: ###############################", color='green')
         self.logit(f'desired_max_pix_value: {desired_max_pix_value} [counts]')
         self.logit(f'largest count in image is: {high_pix_value} [counts]')
         self.logit(f'optimal_gain_value: {new_gain_value} [cB]')
-        self.logit(f'desired exposure time: {desired_exposure_time} [us]')
-        self.logit(f'optimal exposure_time: {new_exposure_time} [us]')
         self.logit("#"*107, color='green')
-        self.logit(f'do_auto_gain_exposure_routine completed in {get_dt(t0)}.', color='cyan')
-        return new_gain_value, new_exposure_time
+        self.logit(f'do_auto_gain_routine completed in {get_dt(t0)}.', color='cyan')
+        return new_gain_value
+
+    def calculate_gain_adjustment(self, old_gain_value, high_pix_value, desired_max_pix_value):
+        # Constants from config
+        max_gain = self.cfg.max_gain_setting  # e.g., 570
+        min_gain = self.cfg.min_gain_setting
+
+        try:
+            # Step 1: Calculate old gain in electrons/ADU
+            old_electrons_per_ADU_gain = 6.0037 * math.exp(-0.013 * old_gain_value)
+            old_ADU_per_electrons_gain = 1 / old_electrons_per_ADU_gain
+            self.logit(f"old_electrons_per_ADU_gain: {old_electrons_per_ADU_gain}")
+            self.logit(f"old_ADU_per_electrons_gain: {old_ADU_per_electrons_gain}")
+
+            # Step 2: Calculate gain multiplier
+            gain_multiplier = (desired_max_pix_value - self.cfg.pixel_bias) / (high_pix_value - self.cfg.pixel_bias)
+            self.logit(f"gain_multiplier: {gain_multiplier}")
+
+            # Step 3: Compute new gain values
+            new_ADU_per_electrons_gain = gain_multiplier * old_ADU_per_electrons_gain
+            new_electrons_per_ADU_gain = 1 / new_ADU_per_electrons_gain
+            self.logit(f"new_electrons_per_ADU_gain: {new_electrons_per_ADU_gain}")
+
+            # Step 4: Invert gain equation to compute gain setting
+            new_gain_value = -76.9230769 * math.log(0.16656395 * new_electrons_per_ADU_gain)
+            new_gain_value = int(round(new_gain_value))
+
+            # Step 5: Clamp gain and warn if limits are hit
+            if new_gain_value < min_gain:
+                self.logit(
+                    f"WARNING: Calculated gain {new_gain_value} is below minimum {min_gain}. Clamping to minimum.")
+                new_gain_value = min_gain
+            elif new_gain_value > max_gain:
+                self.logit(
+                    f"WARNING: Calculated gain {new_gain_value} exceeds maximum {max_gain}. Clamping to maximum.")
+                new_gain_value = max_gain
+            else:
+                self.logit(f"Clamped new_gain_value: {new_gain_value}")
+
+        except (ZeroDivisionError, ValueError) as e:
+            self.logit(f"ERROR: Failed to calculate new gain due to: {e}")
+            new_gain_value = old_gain_value  # fallback
+
+        return new_gain_value
+
+    def do_auto_exposure_routine(self, auto_exposure_image_path, initial_exposure_value,
+                                 desired_max_pix_value, pixel_saturated_value, pixel_count_tolerance):
+        t0 = time.monotonic()
+        is_done = False
+        loop_counts = 1
+        new_exposure_value = initial_exposure_value
+        # take image using these settings.
+        self.camera.set_control_value(asi.ASI_EXPOSURE, new_exposure_value)
+        self.logit(f'New Exposure Value: {new_exposure_value}')
+        if self.focuser.aperture_position == 'closed':
+            self.logit('Opening Aperture.')
+            self.focuser.open_aperture()
+        self.logit("Starting autoexposure routine.")
+        high_pix_value = 0
+        while not is_done:
+            self.logit("#" * 104)
+            self.logit(f"Autoexposure Iteration: {loop_counts}")
+
+            if loop_counts > self.cfg.max_autoexposure_iterations:
+                is_done = True
+                self.logit("Maximum iterations reached. Can't find solution. Ending cycle.")
+                break
+
+            self.logit('Capturing image.')
+            inserted_string = 'e'  + 'g' + str(new_exposure_value)
+            img = self.capture_timestamp_save(auto_exposure_image_path, inserted_string)
+            bins = np.linspace(0, pixel_saturated_value, self.cfg.autoexposure_num_bins)
+            arr = img.flatten()
+            counts, bins = np.histogram(arr, bins=bins)
+            # There is one counts less than bins, therefore we iterae over counts, not bins
+            n = len(counts)
+            high_pix_value = max(arr)
+            # min_count = 10 # [IMAGE] min_count
+            # find the next largest pixel value
+            second_largest_pix_value = None
+            self.log.debug(f'bin: {len(bins)} counts: {len(counts)}')
+            try:
+                for i in range(n - 1, -1, -1):
+                    if bins[i] < high_pix_value and counts[i] >= self.cfg.min_count:
+                        # second_largest_pix_value = arr[i]
+                        second_largest_pix_value = int(bins[i])
+                        break
+                    else:
+                        second_largest_pix_value = high_pix_value
+            except IndexError as e:
+                self.log.error(e)
+                raise IndexError(e)
+            plt.figure()
+            plt.hist(bins[:-1], bins, weights=counts)
+            plt.xlabel('Brightness, counts')
+            plt.ylabel('Frequency, pixels')
+            plt.title(f'hpv: {high_pix_value}, slp: {second_largest_pix_value}, lpv: {min(arr)}')
+            plt.grid()
+            # TODO: Showing only in TESTING phase!
+            # plt.show()
+
+            image_saturated = True
+            if high_pix_value == pixel_saturated_value:
+                if second_largest_pix_value >= (desired_max_pix_value + pixel_count_tolerance):
+                    self.logit("Image is saturated.")
+                    image_saturated = True
+                elif second_largest_pix_value < (desired_max_pix_value - pixel_count_tolerance):
+                    self.logit("Image has hot pixels. Image not saturated.")
+                    high_pix_value = second_largest_pix_value  # overwrite high pix value with valid count.
+                    image_saturated = False
+            else:
+                self.logit("Image has no hot pixels.")
+                image_saturated = False
+            if high_pix_value > desired_max_pix_value + pixel_count_tolerance:
+                self.logit("Counts too high.")
+                self.logit(f"Pixel count difference: {desired_max_pix_value - high_pix_value}")
+            elif high_pix_value < desired_max_pix_value - pixel_count_tolerance:
+                self.logit("Counts too low.")
+                self.logit(f"Pixel count difference: {desired_max_pix_value - high_pix_value}")
+            else:
+                # highest value is high enough.
+                self.logit("Pixels counts are in range. Ending iterations.")
+                self.logit(f"Pixel count difference: {desired_max_pix_value - high_pix_value}")
+                is_done = False
+                break
+            old_exposure_value = new_exposure_value
+
+            if not image_saturated:
+                # calculate & make gain adjustment
+                self.logit(f'Image not saturated.')
+                new_exposure_value = (old_exposure_value/high_pix_value)*desired_max_pix_value
+                if new_exposure_value < self.cfg.min_exposure_setting:
+                    self.logit(f"New exposure too low. Setting exposure={self.cfg.min_exposure_setting}. Recommend decreasing gain.")
+                    new_exposure_value = self.cfg.min_exposure_setting
+
+                elif new_exposure_value >= self.cfg.max_exposure_setting:
+                    self.logit(
+                        f"New gain too high. Setting gain={self.cfg.max_exposure_setting}. Recomend increasing gain.")
+                    new_exposure_value = self.cfg.max_exposure_setting
+
+                self.logit(f'Old Exposure Value: {old_exposure_value}')
+                self.logit(f'New Exposure Value: {new_exposure_value}')
+                self.camera.set_control_value(asi.ASI_GAIN, new_exposure_value)
+            else:
+                self.logit(f'Image Saturated.')
+                new_exposure_value = 0.5 * old_exposure_value
+                if new_exposure_value < self.cfg.min_exposure_setting:
+                    self.logit(
+                        f"New exposure too low. Setting exposure={self.cfg.min_exposure_setting}. Recommend decreasing gain.")
+                    new_exposure_value = self.cfg.min_exposure_setting
+                self.logit(f'Old Exposure Value: {old_exposure_value}')
+                self.logit(f'New Exposure Value: {new_exposure_value}')
+                self.camera.set_control_value(asi.ASI_EXPOSURE, new_exposure_value)
+            loop_counts = loop_counts + 1
+        self.logit("##########################Auto Exposure Routine Summary Results: ###############################", color='green')
+        self.logit(f'desired_max_pix_value: {desired_max_pix_value} [counts]')
+        self.logit(f'largest count in image is: {high_pix_value} [counts]')
+        self.logit(f'optimal_exposure_value: {new_exposure_value} [us]')
+        self.logit("#"*107, color='green')
+        self.logit(f'do_auto_exposure_routine completed in {get_dt(t0)}.', color='cyan')
+        return new_exposure_value
 
     def get_centroid_diameters(self, img, is_array=True, log_file_path="log/test_log.txt", return_partial_images=True):
         # read image in array format. From camera
@@ -759,7 +928,7 @@ class PueoStarCameraOperation:
         return diameters
 
     def do_autofocus_routine(self, focus_image_path, focus_start_pos, focus_stop_pos, focus_step_count,
-                             max_focus_position, focus_method='covariance'):
+                             max_focus_position, focus_method='sequence_contrast'):
         """
         focus_method: ['sequence_contrast', 'sequence_diameter', 'sequence_twostep']
         """
@@ -905,18 +1074,17 @@ class PueoStarCameraOperation:
                 self.focuser.open_aperture()
 
             timestamp_string = current_timestamp(self.timestamp_fmt)
-            auto_gain_exposure_image_path = self.cfg.auto_gain_image_path_tmpl.format(timestamp_string=timestamp_string)
-            os.mkdir(auto_gain_exposure_image_path)
+            auto_gain_image_path = self.cfg.auto_gain_image_path_tmpl.format(timestamp_string=timestamp_string)
+            os.mkdir(auto_gain_image_path)
             gain_value = self.cfg.min_gain_setting
-            self.logit("First pass running auto gain/exposure routine...", color='cyan')
-            self.best_gain_value, self.best_exposure_time = self.do_auto_gain_exposure_routine(
-                auto_gain_exposure_image_path,
+            self.logit("First pass running auto gain routine...", color='cyan')
+            self.best_gain_value = self.do_auto_gain_routine(
+                auto_gain_image_path,
                 gain_value,
-                self.cfg.exposure_time,
                 self.desired_max_pix_value,
                 self.pixel_saturated_value,
                 self.pixel_count_tolerance)
-            self.logit(f"Auto gain & exposure done. Best gain: {self.best_gain_value}, Best exposure time: {self.best_exposure_time}")
+            self.logit(f"Auto gain done. Best gain: {self.best_gain_value}")
             ###############################
 
             # change to low resolution, low dynamic range##
@@ -940,8 +1108,9 @@ class PueoStarCameraOperation:
             coarse_start_focus_pos = self.max_focus_position - int(self.cfg.bottom_end_span_percentage * (self.max_focus_position - self.min_focus_position))  # units of counts
             coarse_stop_focus_pos = self.max_focus_position - int(self.cfg.top_end_span_percentage * (self.max_focus_position - self.min_focus_position))  # units of counts
 
-            ## Doing coarse focus asjustment##
-            timestamp_string = current_timestamp("%y%m%d_%H:%M:%S.%f")
+            ## Doing coarse focus adjustments##
+            # Note there must be no : in the name for sake of using this as file/path name on linux/windows.
+            timestamp_string = current_timestamp("%y%m%d_%H%M%S.%f")
             # focus_image_path = '/home/windell/PycharmProjects/pueo_star_tracker/' + timestamp_string + '_coarse_focus_images/'
 
             # focus_image_path = '/home/windell/PycharmProjects/version_5/' + timestamp_string + '_coarse_focus_images/'
@@ -965,18 +1134,17 @@ class PueoStarCameraOperation:
 
             ## Doing auto gain##
             timestamp_string = current_timestamp(self.timestamp_fmt)
-            auto_gain_exposure_image_path = self.cfg.auto_gain_image_path_tmpl.format(timestamp_string=timestamp_string)
-            self.logit("Second pass running auto gain/exposure routine...", color='cyan')
+            auto_gain_image_path = self.cfg.auto_gain_image_path_tmpl.format(timestamp_string=timestamp_string)
+            self.logit("Second pass running auto gain routine...", color='cyan')
 
-            os.mkdir(auto_gain_exposure_image_path)
-            self.best_gain_value, self.best_exposure_time = self.do_auto_gain_exposure_routine(
-                auto_gain_exposure_image_path,
+            os.mkdir(auto_gain_image_path)
+            self.best_gain_value = self.do_auto_gain_routine(
+                auto_gain_image_path,
                 self.best_gain_value,
-                self.best_exposure_time,
                 self.desired_max_pix_value,
                 pixel_saturated_value,
                 self.pixel_count_tolerance)
-            self.logit(f"Autogain routine. Best gain: {self.best_gain_value}, Best exposure time: {self.best_exposure_time}")
+            self.logit(f"Autogain routine. Best gain: {self.best_gain_value}")
             ################################
 
             # change to low resolution, low dynamic range##
@@ -1003,9 +1171,10 @@ class PueoStarCameraOperation:
 
             # TODO:if cannot do the fit, need to still be able to store the files. Default the focus position to the previously best known value.
             # TODO:need to handle case where image is saturated. Right now if second pixel is also high, it leaves image saturated
-            timestamp_string = current_timestamp("%y%m%d_%H:%M:%S.%f")
+            timestamp_string = current_timestamp("%y%m%d_%H%M%S.%f")
             focus_image_path = self.cfg.ultrafine_focus_image_path_tmpl.format(timestamp_string=timestamp_string)
-            auto_gain_exposure_image_path = self.cfg.auto_gain_image_path_tmpl.format(timestamp_string=timestamp_string)
+            #TODO: Why in the next line the image is being saved in the autogain and focus image path?????
+            auto_gain_image_path = self.cfg.auto_gain_image_path_tmpl.format(timestamp_string=timestamp_string)
             os.mkdir(focus_image_path)
             # TODO: commenting out for now - Saving Autofocus images
             self.save_images(self.image_filename_list)
@@ -1139,25 +1308,26 @@ class PueoStarCameraOperation:
         return None
 
     def perform_autogain(self, camera_settings):
-        if self.online_auto_gain_enabled and self.check_gain_exposure_routine(self.curr_img,
-                                                                              self.desired_max_pix_value,
-                                                                              self.pixel_saturated_value,
-                                                                              self.pixel_count_tolerance):
-            self.server.write("Interrupting autonomous mode. Performing autogain/exposure maintenance.")
+        """
+        Comment by Windell: dont only want to do this when in autonomous mode. It should be done whenever it is asked to.
+        Checking for autonomous mode should happen earlier.
+        """
+        if self.check_gain_routine(self.curr_img, self.desired_max_pix_value, self.pixel_saturated_value,
+                                   self.pixel_count_tolerance):
+            self.server.write("Performing autogain maintenance.")
             timestamp_string = current_timestamp(self.timestamp_fmt)
-            auto_gain_exposure_image_path = self.cfg.auto_gain_image_path_tmpl.format(timestamp_string=timestamp_string)
-            os.mkdir(auto_gain_exposure_image_path)
+            auto_gain_image_path = self.cfg.auto_gain_image_path_tmpl.format(timestamp_string=timestamp_string)
+            os.mkdir(auto_gain_image_path)
             curr_gain_value = camera_settings['Gain']
-            curr_exposure_time = camera_settings['Exposure']
-            self.best_gain_value, self.best_exposure_time = self.do_auto_gain_exposure_routine(
-                auto_gain_exposure_image_path, curr_gain_value, curr_exposure_time,
+            self.best_gain_value = self.do_auto_gain_routine(
+                auto_gain_image_path, curr_gain_value,
                 self.desired_max_pix_value, self.pixel_saturated_value, self.pixel_count_tolerance)
-            self.logit(
-                f"Auto gain & exposure done. Best gain: {self.best_gain_value}, Best exposure time: {self.best_exposure_time}")
+            self.logit(f"Auto gain done. Best gain: {self.best_gain_value}")
             # Now that gain has been adjusted. Take a picture and resume.
-            self.curr_img = self.camera.capture()
+            # self.curr_img = self.camera.capture()
+            #
         else:
-            self.logit("No need to adjust gain or exposure.")
+            self.logit("Gain value is ok. No need to adjust.", color='green')
 
     def info_add_image_info(self, camera_settings, curr_utc_timestamp, curr_serial_utc_timestamp):
         unique_pixel_values = np.unique(self.curr_img)  # Get distinct pixel values
@@ -1371,6 +1541,7 @@ class PueoStarCameraOperation:
             try:
                 self.logit(f'Capturing image @{get_dt(t0)}.', color='green')
                 self.curr_img = self.camera.capture()
+                self.img_cnt += 1
                 self.logit(f'Camera image captured in {get_dt(t1)} @{get_dt(t0)} shape: {self.curr_img.shape}.', color='green')
             except Exception as e:
                 self.logit(f'Capture error: {e}', level='error', color='red')
@@ -1389,12 +1560,22 @@ class PueoStarCameraOperation:
         # Get and log camera settings
         camera_settings = self.camera.get_control_values()
         self.logit(f"exposure time (us) : {camera_settings['Exposure']}")
-        self.logit(f"gain (cB) : {camera_settings['Gain']}")
+        current_gain = camera_settings['Gain']
+        self.logit(f"gain (cB) : {current_gain}")
         self.logit(f'curr image length: {len(self.curr_img)} prev image length: {len(self.prev_img)}')
         self.logit(f"Max pixel: {np.max(self.curr_img)}, Min pixel: {np.min(self.curr_img)}. ")
 
         # Write image info to log
         self.info_add_image_info(camera_settings, curr_utc_timestamp, curr_serial_utc_timestamp)
+
+        # Periodic Autogain (in autonomous mode)
+        # Single iteration keeps the camera in range.
+        # TODO: If the autonomous mode is disabled it will lose track so needs to rerun the full autogain interations again
+        if is_operation and (self.img_cnt % self.cfg.autogain_update_interval) == 0:
+            new_gain = None
+            # TODO: Add autogain routine here for this image
+            self.logit(f'Single image autogain interval: {self.cfg.autogain_update_interval} current gain: {current_gain} new gain: {new_gain}')
+            self.perform_autogain(camera_settings)
 
         # perform astrometry
         image_file = timestamp_string
@@ -1579,20 +1760,28 @@ class PueoStarCameraOperation:
         self.auto_exposure(auto=('Exposure',))
         """
 
-        mix_pixel_value = cmd.mix_pixel_value
-        # TODO: mix_pixel_value NOT USED!!!
+        desired_max_pixel_value = cmd.desired_max_pixel_value
+        # TODO: max_pixel_value NOT USED!!!
         self.logit('Commanded to run autogain.')
         ## Doing auto gain##
         timestamp_string = current_timestamp(self.timestamp_fmt)
-        auto_gain_exposure_image_path = self.cfg.auto_gain_image_path_tmpl.format(
-            timestamp_string=timestamp_string)
-        os.mkdir(auto_gain_exposure_image_path)
-        self.best_gain_value, self.best_exposure_time = self.do_auto_gain_exposure_routine(
-            auto_gain_exposure_image_path, self.best_gain_value,
-            self.best_exposure_time, self.desired_max_pix_value,
+        auto_gain_image_path = self.cfg.auto_gain_image_path_tmpl.format(timestamp_string=timestamp_string)
+        os.mkdir(auto_gain_image_path)
+        self.best_gain_value = self.do_auto_gain_routine(
+            auto_gain_image_path, self.best_gain_value, desired_max_pixel_value,
             self.pixel_saturated_value, self.pixel_count_tolerance)
-        self.logit(
-            f"Autogain routine. Best gain: {self.best_gain_value}, Best exposure time: {self.best_exposure_time}")
+        self.logit(f"Autogain routine. Best gain: {self.best_gain_value}")
+
+    def camera_run_autoexposure(self, cmd):
+        desired_max_pixel_value = cmd.desired_max_pixel_value
+        self.logit('Commanded to run autoexposure.')
+        timestamp_string = current_timestamp(self.timestamp_fmt)
+        auto_exposure_image_path = self.cfg.auto_gain_image_path_tmpl.format(timestamp_string=timestamp_string)
+        os.mkdir(auto_exposure_image_path)
+        self.best_exposure_time = self.do_auto_exposure_routine(
+            auto_exposure_image_path, self.best_exposure_time,
+            desired_max_pixel_value, self.pixel_saturated_value, self.pixel_count_tolerance)
+        self.logit(f"Autoexposure routine. Best exposure: {self.best_exposure_time}")
 
     def camera_resume(self, cmd):
         self.logit(f"Command to resume star tracker operation. Setting solver: {cmd.solver}")
@@ -1600,6 +1789,7 @@ class PueoStarCameraOperation:
             return
         self.focuser.open_aperture()
         self.operation_enabled = True
+        self.img_cnt = 0
         self.solver = cmd.solver
         self.astro.solver = self.solver  # Update also the astro instance
         self.cadence = float(cmd.cadence)
@@ -1607,7 +1797,7 @@ class PueoStarCameraOperation:
         self.server.write(f"Operation resumed. Solver: {self.solver}  cadence: {self.cadence}")
 
     def camera_pause(self):
-        self.logit("Command to pause star tracker operation")
+        self.logit("Command to pause PUEO Star Tracker operation")
         self.operation_enabled = False
         time.sleep(1)
         if self.focuser.aperture_position == 'opened':
@@ -1639,7 +1829,7 @@ class PueoStarCameraOperation:
         self.camera.set_roi(bins=self.cfg.roi_bins)
 
         # TODO: Implement the third routine for two_step method, also add the param: focus_coefficient to do_autofocus_routine
-        timestamp_string = current_timestamp("%y%m%d_%H:%M:%S.%f")
+        timestamp_string = current_timestamp("%y%m%d_%H%M%S.%f")
         self.focus_image_path = self.cfg.focus_image_path_tmpl.format(timestamp_string=timestamp_string)
         os.mkdir(self.focus_image_path)
 
@@ -1665,6 +1855,10 @@ class PueoStarCameraOperation:
         with suppress(Exception):
             pos, f_val = self.focuser.get_aperture_position()
         self.server.write(f'Focuser position: {pos} [{f_val}]')
+
+    def camera_get_aperture_position(self):
+        # returns pos, f_val
+        return self.focuser.get_aperture_position()
 
     def camera_set_exposure_time(self, cmd):
         manual_exposure_time = cmd.exposure_time

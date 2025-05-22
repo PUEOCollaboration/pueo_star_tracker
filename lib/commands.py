@@ -42,7 +42,7 @@ class Commands(Enum):
         delta_focus_position <focus_delta>
            focus_delta: int (-100 .. 100)
 
-        run_autogain <max_pixel_value>
+        run_autogain <desired_max_pixel_value>
         # TODO
            ## Note mix_pixel_value is a TYPO shall be max_pixel_value
            ## mix_pixel_value : int (0 .. 65535)
@@ -76,20 +76,23 @@ class Commands(Enum):
     RUN_AUTOFOCUS = 4
 
     SET_GAIN = 5
-    SET_APERTURE_POSITION = 6
-    SET_FOCUS_POSITION = 7
-    DELTA_FOCUS_POSITION = 8
+    SET_APERTURE = 6
+    SET_APERTURE_POSITION = 7
+    SET_FOCUS_POSITION = 8
+    DELTA_FOCUS_POSITION = 9
 
-    RUN_AUTOGAIN = 9
-    SET_EXPOSURE_TIME = 10
-    ENABLE_DISTORTION_CORRECTION = 11
-    DISABLE_DISTORTION_CORRECTION = 12
-    INPUT_GYRO_RATES = 13
-    UPDATE_TIME = 14
+    RUN_AUTOGAIN = 10
+    RUN_AUTOEXPOSURE = 11
+    SET_EXPOSURE_TIME = 12
+    ENABLE_DISTORTION_CORRECTION = 13
+    DISABLE_DISTORTION_CORRECTION = 14
+    INPUT_GYRO_RATES = 15
+    UPDATE_TIME = 16
 
-    POWER_CYCLE = 15
-    HOME_LENS = 16
+    POWER_CYCLE = 17
+    HOME_LENS = 18
 
+    GET = 98
     FLIGHT_MODE = 99
     FLIGHT_TELEMETRY = 100
 
@@ -108,10 +111,11 @@ class Command:
     step_count = None
     focus_coefficient = None
     gain = None
+    aperture = None
     aperture_position = None
     focus_position = None
     focus_delta = None
-    mix_pixel_value = None
+    desired_max_pixel_value = None
     exposure_time = None
     fov = None
     distortion_parameter1 = None
@@ -123,6 +127,7 @@ class Command:
     limit = 0
     method = None
     mode = None
+    param = None
 
     settings = {
         Commands.CHECK_STATUS.value: {
@@ -148,7 +153,6 @@ class Command:
                     'min': 0,
                     'max': 5000000
                 },
-
             }
         },
         Commands.RESUME_OPERATION.value: {
@@ -204,6 +208,14 @@ class Command:
                 }
             }
         },
+        Commands.SET_APERTURE.value: {
+            'params': {
+                'aperture': {
+                    'type': 'list',
+                    'values': ['closed', 'opened']
+                }
+            }
+        },
         Commands.SET_APERTURE_POSITION.value: {
             'params': {
                 'aperture_position': {
@@ -233,7 +245,16 @@ class Command:
         },
         Commands.RUN_AUTOGAIN.value: {
             'params': {
-                'mix_pixel_value': {
+                'desired_max_pixel_value': {
+                    'type': 'int',
+                    'min': 0,
+                    'max': 65535
+                }
+            }
+        },
+        Commands.RUN_AUTOEXPOSURE.value: {
+            'params': {
+                'desired_max_pixel_value': {
                     'type': 'int',
                     'min': 0,
                     'max': 65535
@@ -305,6 +326,15 @@ class Command:
             'params': {}
         },
 
+        Commands.GET.value: {
+            'params': {
+                'param': {
+                    'type': 'list',
+                    'values': ['aperture', 'aperture_position', 'exposure', 'gain', 'focus', 'settings'],
+                },
+            },
+        },
+
         Commands.FLIGHT_MODE.value: {
             'params': {
                 'method': {
@@ -371,6 +401,8 @@ class Command:
 
         elif self.command == Commands.SET_GAIN:
             self.add_attribute('gain', self.data['gain'], validation['params'])
+        elif self.command == Commands.SET_APERTURE:
+            self.add_attribute('aperture', self.data['aperture'], validation['params'])
         elif self.command == Commands.SET_APERTURE_POSITION:
             self.add_attribute('aperture_position', self.data['aperture_position'], validation['params'])
         elif self.command == Commands.SET_FOCUS_POSITION:
@@ -380,7 +412,10 @@ class Command:
             self.add_attribute('focus_delta', self.data['focus_delta'], validation['params'])
 
         elif self.command == Commands.RUN_AUTOGAIN:
-            self.add_attribute('mix_pixel_value', self.data['mix_pixel_value'], validation['params'])
+            self.add_attribute('desired_max_pixel_value', self.data['desired_max_pixel_value'], validation['params'])
+        elif self.command == Commands.RUN_AUTOEXPOSURE:
+            self.add_attribute('desired_max_pixel_value', self.data['desired_max_pixel_value'], validation['params'])
+
         elif self.command == Commands.SET_EXPOSURE_TIME:
             self.add_attribute('exposure_time', self.data['exposure_time'], validation['params'])
         elif self.command == Commands.ENABLE_DISTORTION_CORRECTION:
@@ -394,6 +429,8 @@ class Command:
         elif self.command == Commands.UPDATE_TIME:
             self.add_attribute('new_time', self.data['new_time'], validation['params'])
         # ...
+        elif self.command == Commands.GET:
+            self.add_attribute('param', self.data['param'], validation['params'])
         # FLIGHT_MODE ~ id 99
         elif self.command == Commands.FLIGHT_MODE:
             if self.data is None:
@@ -457,6 +494,7 @@ class Command:
         return self.command_data
 
     def resume_operation(self, solver: str, cadence: float):
+        """cadence: float in seconds"""
         command_data = {
             'command': Commands.RESUME_OPERATION.name.lower(),
             'data': {
@@ -494,6 +532,11 @@ class Command:
         self.define(command_data)
         return self.command_data
 
+    def set_aperture(self, aperture: int):
+        command_data = {'command': Commands.SET_APERTURE.name.lower(), 'data': {'aperture': aperture}}
+        self.define(command_data)
+        return self.command_data
+
     def set_aperture_position(self, aperture_position: int):
         command_data = {'command': Commands.SET_APERTURE_POSITION.name.lower(), 'data': {'aperture_position': aperture_position}}
         self.define(command_data)
@@ -509,8 +552,13 @@ class Command:
         self.define(command_data)
         return self.command_data
 
-    def run_autogain(self, mix_pixel_value: int):
-        command_data = {'command': Commands.RUN_AUTOGAIN.name.lower(), 'data': {'mix_pixel_value': mix_pixel_value}}
+    def run_autogain(self, max_pixel_value: int):
+        command_data = {'command': Commands.RUN_AUTOGAIN.name.lower(), 'data': {'desired_max_pixel_value': max_pixel_value}}
+        self.define(command_data)
+        return self.command_data
+
+    def run_autoexposure(self, max_pixel_value: int):
+        command_data = {'command': Commands.RUN_AUTOEXPOSURE.name.lower(), 'data': {'desired_max_pixel_value': max_pixel_value}}
         self.define(command_data)
         return self.command_data
 
@@ -518,6 +566,19 @@ class Command:
         command_data = {'command': Commands.SET_EXPOSURE_TIME.name.lower(), 'data': {'exposure_time': exposure_time}}
         self.define(command_data)
         return self.command_data
+
+    def set(self, command, value):
+        if command in ['aperture', 'set_aperture']:
+            return self.set_aperture(value)
+        if command in ['aperture_position', 'set_aperture_position']:
+            return self.set_aperture_position(value)
+        elif command in ['exposure', 'set_exposure_time']:
+            return self.set_exposure_time(value)
+        elif command in ['focus', 'set_focus_position']:
+            return self.set_focus_position(value)
+        elif command in ['gain', 'set_gain']:
+            return self.set_gain(value)
+        raise ValueError('Invalid command.')
 
     def enable_distortion_correction(self, fov: float, distortion_parameter1: float, distortion_parameter2: float):
         command_data = {'command': Commands.ENABLE_DISTORTION_CORRECTION.name.lower(),
@@ -555,6 +616,11 @@ class Command:
         self.define(command_data)
         return self.command_data
 
+    def get(self, param:str):
+        command_data = {'command': Commands.GET.name.lower(), 'data': {'param': param}}
+        self.define(command_data)
+        return self.command_data
+
     def flight_mode(self, method:str, mode:str=None):
         command_data = {'command': Commands.FLIGHT_MODE.name.lower(), 'data': {'method': method}}
         if method == 'set':
@@ -585,6 +651,9 @@ if __name__ == "__main__":
 
     cmds = [
         command_data1, command_data1_raw,
+        cmd.resume_operation('solver1', 10),  # start/resume autonomous mode: solver1|solver2, cadence in seconds
+        cmd.pause_operation(),  # stop autonomous mode
+
         cmd.update_time(datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S.%f')),
         {
             'command': 'update_time',
@@ -597,7 +666,10 @@ if __name__ == "__main__":
             'command': 'flight_telemetry',
         },
         cmd.flight_mode('get'),
-        cmd.flight_mode('set', 'preflight')
+        cmd.flight_mode('set', 'preflight'),
+        cmd.take_image('solver1'), # 'raw', 'solver1', 'solver2
+        cmd.get('focus'),
+        cmd.get('aperture_position'),
     ]
     for cmd_dict in cmds:
         cmd = Command(cmd_dict)
@@ -617,6 +689,8 @@ if __name__ == "__main__":
 
         elif cmd.command == Commands.FLIGHT_MODE:
             print(f'{cmd.method}, {cmd.command_name}, {cmd.data}')
+        else:
+            print(f'{cmd.command} -> {cmd_dict} ... {cmd.param}')
 
         # cmd.add_attribute('exposure_time', 1)
         # print(cmd.exposure_time)

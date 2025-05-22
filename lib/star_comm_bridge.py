@@ -368,13 +368,19 @@ class StarCommBridge:
                 ret = Status.get_status(Status.SUCCESS, "Paused.")
             elif commands == Commands.RUN_AUTOFOCUS:
                 self.server.camera_run_autofocus(cmd)
-                ret = Status.get_status(Status.SUCCESS, "Autofocus completed.")
+                ret = Status.get_status(Status.SUCCESS, "Autofocus initiated.")
             elif commands == Commands.SET_GAIN:
                 self.server.camera_set_gain(cmd)
                 ret = Status.get_status(Status.SUCCESS, "Gain set.")
+            elif commands == Commands.SET_APERTURE:
+                if cmd.aperture == 'closed':
+                    self.server.focuser.close_aperture()
+                elif cmd.aperture == 'opened':
+                    self.server.focuser.open_aperture()
+                ret = Status.get_status(Status.SUCCESS, f"Command camera_set_aperture set to {cmd.aperture}.")
             elif commands == Commands.SET_APERTURE_POSITION:
                 self.server.camera_set_aperture_position(cmd)
-                ret = Status.get_status(Status.ERROR, "Command camera_set_aperture not implemented.")
+                ret = Status.get_status(Status.ERROR, "Command camera_set_aperture_position set")
             elif commands == Commands.SET_FOCUS_POSITION:
                 self.server.camera_set_focus_position(cmd)
                 ret = Status.get_status(Status.SUCCESS, "Focus position set.")
@@ -383,7 +389,10 @@ class StarCommBridge:
                 ret = Status.get_status(Status.SUCCESS, "Focus delta position set.")
             elif commands == Commands.RUN_AUTOGAIN:
                 self.server.camera_run_autogain(cmd)
-                ret = Status.get_status(Status.SUCCESS, "Autogain completed.")
+                ret = Status.get_status(Status.SUCCESS, "Autogain initiated.")
+            elif commands == Commands.RUN_AUTOEXPOSURE:
+                self.server.camera_run_autoexposure(cmd)
+                ret = Status.get_status(Status.SUCCESS, "Autoexposure initiated.")
             elif commands == Commands.SET_EXPOSURE_TIME:
                 self.server.camera_set_exposure_time(cmd)
                 ret = Status.get_status(Status.SUCCESS, "Exposure time set.")
@@ -405,6 +414,38 @@ class StarCommBridge:
             elif commands == Commands.HOME_LENS:
                 self.server.camera_home_lens(cmd)
                 ret = Status.get_status(Status.SUCCESS, "Camera Home lens completed.")
+            elif commands == Commands.GET:
+                value = None
+                if cmd.param == 'aperture':
+                    value = self.server.focuser.aperture_position
+                elif cmd.param == 'aperture_position':
+                    aperture_pos, aperture_f_val = self.server.focuser.get_aperture_position()
+                    value = {'aperture_pos': aperture_pos, 'aperture_f_val': aperture_f_val}
+                elif cmd.param == 'focus':
+                    value = self.server.focuser.focus_position
+                elif cmd.param in ['exposure', 'gain']:
+                    camera_settings = self.server.camera.get_control_values()
+                    value = camera_settings['Gain'] if cmd.param == 'gain' else camera_settings['Exposure']
+                elif cmd.param == 'settings':
+                    aperture_pos, aperture_f_val = self.server.focuser.get_aperture_position()
+                    value = {
+                        'aperture': self.server.focuser.aperture_position,
+                        'aperture_pos': aperture_pos,
+                        'aperture_f_val': aperture_f_val,
+                        'focus': self.server.focuser.focus_position,
+                        'flight_mode': self.server.flight_mode,
+                        'run_test': self.server.cfg.run_test,
+                        'run_telemetry': self.server.cfg.run_telemetry,
+                        'run_chamber': self.server.cfg.run_chamber,
+                        'autonomous': self.server.operation_enabled,
+                        'solver': self.server.solver,
+                        'cadence': self.server.time_interval / 1e6
+                    }
+                    camera_settings = self.server.camera.get_control_values()
+                    value.update(camera_settings)
+
+                ret = Status.success({'data': {'param': cmd.param, 'value': value}}, f"Get {cmd.param}.")
+
             elif commands == Commands.FLIGHT_MODE:
                 if cmd.method == 'set':
                     self.server.flight_mode = cmd.mode
@@ -422,7 +463,7 @@ class StarCommBridge:
         self.server.server.messages.write(f'Command {commands} status: {ret}')
         # Command completed
         self.is_processing = False
-        if commands in [Commands.FLIGHT_MODE]:
+        if commands in [Commands.FLIGHT_MODE] or True:
             return ret
         return None
 

@@ -27,6 +27,13 @@ class Config:
     # lens focus constants.
     # trial_focus_pos = 8355  # units of counts. Focuser maps 0 to 16383 for lens focus position.
     trial_focus_pos = 2000  # for very near field.
+
+    ###### CLI For Autofocus #######
+    autofocus_start_position = 5000
+    autofocus_stop_position = 6000
+    autofocus_step_count = 10
+    autofocus_method = 'sequence_contrast'
+
     ###### COURSE focus finding parameters#######
     top_end_span_percentage = 0.60
     bottom_end_span_percentage = 0.80
@@ -44,13 +51,28 @@ class Config:
     env_filename = '~/ASIStudio/lib/libASICamera2.so'
     # lens_focus_homed = False # Already defined above
     # auto exposure and gain constants.
-    autoexposuregain_num_bins = 100
-    max_autoexposuregain_iterations = 10
+    autogain_update_interval = 5
+    autogain_num_bins = 100
+    autoexposure_num_bins = 100
+    max_autogain_iterations = 10
+    max_autoexposure_iterations = 10
     max_gain_setting = 570
     min_gain_setting = 120
+
+    # microseconds
+    # 200000 = 200ms
+    #  50000 =  50ms
+    max_exposure_setting = 200000
+    min_exposure_setting = 50000
+
+    autogain_desired_max_pixel_value = 100  # TODO: Add correct value Windell
+    autoexposure_desired_max_pixel_value = 100 # TODO: Add correct value Windell
+
     lab_best_focus = 8352
     lab_best_gain = 120
-    lab_best_exposure = 10000
+    # microseconds
+    # 100000 = 109ms
+    lab_best_exposure = 100000
     autofocus_max_deviation = 0.1
 
     # New parameterised variables
@@ -211,6 +233,7 @@ class Config:
     pueo_server_ip = '0.0.0.0'  # IP address of the server for communication
     server_ip = '127.0.0.1'     # IP address of the server for GUI/Flight Computer communication
     port = 5555                 # Port number for communication
+    socket_timeout = 5          # Socket timeout
     max_retry = 5               # Maximum number of retries for connection attempts
     retry_delay = 2             # Delay in seconds between retries
     fq_max_size = 12            # Max number of solutions available/to keep for flight computer API exchange
@@ -308,6 +331,12 @@ class Config:
 
         self.trial_focus_pos = self.config.getint('LENS_FOCUS_CONSTANTS', 'trial_focus_pos',
                                                   fallback=self.trial_focus_pos)
+
+        self.autofocus_start_position = self.config.getint('LENS_FOCUS_CONSTANTS', 'autofocus_start_position', fallback=self.autofocus_start_position)
+        self.autofocus_stop_position = self.config.getint('LENS_FOCUS_CONSTANTS', 'autofocus_stop_position', fallback=self.autofocus_stop_position)
+        self.autofocus_step_count = self.config.getint('LENS_FOCUS_CONSTANTS', 'autofocus_step_count', fallback=self.autofocus_step_count)
+        self.autofocus_method = self.config.get('LENS_FOCUS_CONSTANTS', 'autofocus_method', fallback=self.autofocus_method)
+
         self.top_end_span_percentage = self.config.getfloat('LENS_FOCUS_CONSTANTS', 'top_end_span_percentage',
                                                             fallback=self.top_end_span_percentage)
         self.bottom_end_span_percentage = self.config.getfloat('LENS_FOCUS_CONSTANTS', 'bottom_end_span_percentage',
@@ -325,15 +354,33 @@ class Config:
         env_filename = self.config.get('LENS_FOCUS_CONSTANTS', 'env_filename', fallback=self.env_filename)
         self.env_filename = os.path.abspath(os.path.expanduser(env_filename))
 
-        self.autoexposuregain_num_bins = self.config.getint('LENS_FOCUS_CONSTANTS', 'autoexposuregain_num_bins',
-                                                            fallback=self.autoexposuregain_num_bins)
-        self.max_autoexposuregain_iterations = self.config.getint('LENS_FOCUS_CONSTANTS',
-                                                                  'max_autoexposuregain_iterations',
-                                                                  fallback=self.max_autoexposuregain_iterations)
+        self.autogain_update_interval = self.config.getint('LENS_FOCUS_CONSTANTS', 'autogain_update_interval',
+                                                           fallback=self.autogain_update_interval)
+        self.autogain_num_bins = self.config.getint('LENS_FOCUS_CONSTANTS', 'autogain_num_bins',
+                                                    fallback=self.autogain_num_bins)
+        self.autoexposure_num_bins = self.config.getint('LENS_FOCUS_CONSTANTS', 'autoexposure_num_bins',
+                                                    fallback=self.autoexposure_num_bins)
+        self.max_autogain_iterations = self.config.getint('LENS_FOCUS_CONSTANTS',
+                                                          'max_autogain_iterations',
+                                                          fallback=self.max_autogain_iterations)
+        self.max_autoexposure_iterations = self.config.getint('LENS_FOCUS_CONSTANTS',
+                                                              'max_autoexposure_iterations',
+                                                              fallback=self.max_autoexposure_iterations)
+
         self.max_gain_setting = self.config.getint('LENS_FOCUS_CONSTANTS', 'max_gain_setting',
                                                    fallback=self.max_gain_setting)
         self.min_gain_setting = self.config.getint('LENS_FOCUS_CONSTANTS', 'min_gain_setting',
                                                    fallback=self.min_gain_setting)
+
+        self.max_exposure_setting = self.config.getint('LENS_FOCUS_CONSTANTS', 'max_exposure_setting',
+                                                   fallback=self.max_exposure_setting)
+        self.min_exposure_setting = self.config.getint('LENS_FOCUS_CONSTANTS', 'min_exposure_setting',
+                                                   fallback=self.min_exposure_setting)
+
+        self.autogain_desired_max_pixel_value = self.config.getint('LENS_FOCUS_CONSTANTS', 'autogain_desired_max_pixel_value',
+                                                                   fallback=self.autogain_desired_max_pixel_value)
+        self.autoexposure_desired_max_pixel_value = self.config.getint('LENS_FOCUS_CONSTANTS', 'autoexposure_desired_max_pixel_value',
+                                                                       fallback=self.autoexposure_desired_max_pixel_value)
         self.lab_best_focus = self.config.getint('LENS_FOCUS_CONSTANTS', 'lab_best_focus', fallback=self.lab_best_focus)
         self.lab_best_gain = self.config.getint('LENS_FOCUS_CONSTANTS', 'lab_best_gain', fallback=self.lab_best_gain)
         self.lab_best_exposure = self.config.getint('LENS_FOCUS_CONSTANTS', 'lab_best_exposure',
@@ -530,6 +577,7 @@ class Config:
         self.pueo_server_ip = self.config.get('STAR_COMM_BRIDGE', 'pueo_server_ip', fallback=self.pueo_server_ip)
         self.server_ip = self.config.get('STAR_COMM_BRIDGE', 'server_ip', fallback=self.server_ip)
         self.port = self.config.getint('STAR_COMM_BRIDGE', 'port', fallback=self.port)
+        self.socket_timeout = self.config.getint('STAR_COMM_BRIDGE', 'socket_timeout', fallback=self.socket_timeout)
         self.max_retry = self.config.getint('STAR_COMM_BRIDGE', 'max_retry', fallback=self.max_retry)
         self.retry_delay = self.config.getint('STAR_COMM_BRIDGE', 'retry_delay', fallback=self.retry_delay)
         self.fq_max_size = self.config.getint('STAR_COMM_BRIDGE', 'fq_max_size', fallback=self.fq_max_size)
@@ -553,6 +601,12 @@ class Config:
 
         config['LENS_FOCUS_CONSTANTS'] = {
             'trial_focus_pos': self.trial_focus_pos,
+
+            'autofocus_start_position': self.autofocus_start_position,
+            'autofocus_stop_position': self.autofocus_stop_position,
+            'autofocus_step_count': self.autofocus_step_count,
+            'autofocus_method': self.autofocus_method,
+
             'top_end_span_percentage': self.top_end_span_percentage,
             'bottom_end_span_percentage': self.bottom_end_span_percentage,
             'coarse_focus_step_count': self.coarse_focus_step_count,
@@ -561,10 +615,15 @@ class Config:
             'exposure_time': self.exposure_time,
             'pixel_bias': self.pixel_bias,
             'env_filename': self.env_filename,
-            'autoexposuregain_num_bins': self.autoexposuregain_num_bins,
-            'max_autoexposuregain_iterations': self.max_autoexposuregain_iterations,
+            'autogain_update_interval': self.autogain_update_interval,
+            'autogain_num_bins': self.autogain_num_bins,
+            'autoexposure_num_bins': self.autoexposure_num_bins,
+            'max_autogain_iterations': self.max_autogain_iterations,
+            'max_autoexposure_iterations': self.max_autoexposure_iterations,
             'max_gain_setting': self.max_gain_setting,
             'min_gain_setting': self.min_gain_setting,
+            'autogain_desired_max_pixel_value': self.autogain_desired_max_pixel_value,
+            'autoexposure_desired_max_pixel_value': self.autoexposure_desired_max_pixel_value,
             'lab_best_focus': self.lab_best_focus,
             'lab_best_gain': self.lab_best_gain,
             'lab_best_exposure': self.lab_best_exposure,
@@ -709,6 +768,7 @@ class Config:
             'pueo_server_ip': self.pueo_server_ip,
             'server_ip': self.server_ip,
             'port': self.port,
+            'socket_timeout': self.socket_timeout,
             'max_retry': self.max_retry,
             'retry_delay': self.retry_delay,
             'fq_max_size': self.fq_max_size,

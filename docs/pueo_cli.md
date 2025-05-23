@@ -1,6 +1,6 @@
 # PUEO Command Line Interface (CLI) Reference
 **Version:** 1.0 (Preliminary)
-**Last Updated:** 2025-05-22
+**Last Updated:** 2025-05-23
 **Contact:** [Milan Stubljar](mailto:info@stubljar.com)
 
 ## Overview
@@ -23,11 +23,11 @@ python pueo-cli.py <command> [<args>...]
 
 ### System Control Commands
 
-| Command        | Description                          | Arguments                     |
-|----------------|--------------------------------------|-------------------------------|
-| `start`        | Start/resume autonomous mode         | None                          |
-| `stop`         | Stop autonomous mode                 | None                          |
-| `power_cycle`  | Powercycle camera and focuser        | None                          |
+| Command        | Description                    | Arguments                                                                        |
+|----------------|--------------------------------|----------------------------------------------------------------------------------|
+| `start`        | Start/resume autonomous mode   | `[solver]` (optional: solver1, solver2)<br/>`[cadence]` (optional: Time in seconds) |
+| `stop`         | Stop autonomous mode           | None                                                                             |
+| `power_cycle`  | Power cycle camera and focuser | None                                                                             |
 
 ### Focus Operations
 
@@ -44,12 +44,23 @@ python pueo-cli.py <command> [<args>...]
 | `auto_exposure`  | Run autoexposure routine            | `[desired_max_pixel_value]` (optional) |
 | `take_image`     | Capture image                       | `[type]` (optional: raw, solver1, solver2) |
 
+### Chamber Mode Control
+
+| Command            | Description              | Arguments             |
+|--------------------|--------------------------|-----------------------|
+| `get_chamber_mode` | Get current chamber mode | None                  |
+| `set_chamber_mode` | Set chamber mode         | `<mode>` (True/False) |
+
+Note: Chamber mode is used for testing in a dark chamber, to generate heat by normal operation yet getting viable test images for solving from **test_images** files. Make sure to have this set to False in real flight.
+
 ### Flight Mode Control
 
 | Command             | Description                          | Arguments                     |
 |---------------------|--------------------------------------|-------------------------------|
 | `get_flight_mode`   | Get current flight mode              | None                          |
 | `set_flight_mode`   | Set flight mode                      | `<mode>` (preflight or flight) |
+
+Note: In preflight mode the images are not saved to sd/ssd while all other operations are the same.
 
 ### Parameter Access Commands
 
@@ -82,8 +93,11 @@ python pueo-cli.py start
 # Stop autonomous mode
 python pueo-cli.py stop
 
-# Take a solver image
+# Take an image and run solver1
 python pueo-cli.py take_image solver1
+
+# Take a raw image and skip astro solving.
+python pueo-cli.py take_image raw
 ```
 
 ### Focus Control
@@ -254,10 +268,10 @@ INFO: Response time: 4.4ms Response:
         "aperture_pos": 0,
         "aperture_f_val": "??",
         "focus": null,
+        "chamber_mode": false,
         "flight_mode": "preflight",
         "run_test": false,
         "run_telemetry": true,
-        "run_chamber": false,
         "autonomous": false,
         "solver": "solver2",
         "cadence": 5.0,

@@ -414,6 +414,10 @@ class StarCommBridge:
             elif commands == Commands.HOME_LENS:
                 self.server.camera_home_lens(cmd)
                 ret = Status.get_status(Status.SUCCESS, "Camera Home lens completed.")
+            elif commands == Commands.CHAMBER_MODE:
+                if cmd.method == 'set':
+                    self.server.chamber_mode = cmd.mode
+                ret = Status.success({'data': {'mode': self.server.chamber_mode}}, f"Chamber mode {cmd.method}.")
             elif commands == Commands.GET:
                 value = None
                 if cmd.param == 'aperture':
@@ -433,10 +437,10 @@ class StarCommBridge:
                         'aperture_pos': aperture_pos,
                         'aperture_f_val': aperture_f_val,
                         'focus': self.server.focuser.focus_position,
+                        'chamber_mode': self.server.chamber_mode,
                         'flight_mode': self.server.flight_mode,
                         'run_test': self.server.cfg.run_test,
                         'run_telemetry': self.server.cfg.run_telemetry,
-                        'run_chamber': self.server.cfg.run_chamber,
                         'autonomous': self.server.operation_enabled,
                         'solver': self.server.solver,
                         'cadence': self.server.time_interval / 1e6

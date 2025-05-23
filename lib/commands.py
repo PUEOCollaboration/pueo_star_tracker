@@ -19,7 +19,7 @@ from lib.common import convert_to_timestamp
 
 class Commands(Enum):
     """
-        Available Commands:
+        Key Available Commands:
         camera_take_image
         resume_operation
         pause_operation
@@ -92,6 +92,7 @@ class Commands(Enum):
     POWER_CYCLE = 17
     HOME_LENS = 18
 
+    CHAMBER_MODE = 97
     GET = 98
     FLIGHT_MODE = 99
     FLIGHT_TELEMETRY = 100
@@ -164,7 +165,7 @@ class Command:
                 'cadence': {
                     'type': 'float',
                     'min': 0,
-                    'max': 3600*24 # like one day
+                    'max': 3600 * 24  # like one day
                 },
             }
         },
@@ -325,7 +326,19 @@ class Command:
         Commands.HOME_LENS.value: {
             'params': {}
         },
-
+        Commands.CHAMBER_MODE.value: {
+            'params': {
+                'method': {
+                    'type': 'list',
+                    'values': ['get', 'set'],
+                    'default': 'get'
+                },
+                'mode': {
+                    'type': 'list',
+                    'values': [True, False]
+                },
+            },
+        },
         Commands.GET.value: {
             'params': {
                 'param': {
@@ -334,7 +347,6 @@ class Command:
                 },
             },
         },
-
         Commands.FLIGHT_MODE.value: {
             'params': {
                 'method': {
@@ -348,7 +360,6 @@ class Command:
                 },
             },
         },
-
         Commands.FLIGHT_TELEMETRY.value: {
             'params': {
                 'limit': {
@@ -428,6 +439,16 @@ class Command:
             self.add_attribute('omega_z', self.data['omega_z'], validation['params'])
         elif self.command == Commands.UPDATE_TIME:
             self.add_attribute('new_time', self.data['new_time'], validation['params'])
+        # CHAMBER_MODE ~ id 97
+        elif self.command == Commands.CHAMBER_MODE:
+            if self.data is None:
+                self.data = {}
+            if 'method' not in self.data:
+                self.data['method'] = validation['params']['method']['default']
+            self.add_attribute('method', self.data['method'], validation['params'])
+            # The chamber_mode is applicable for the set method
+            if self.method == 'set':
+                self.add_attribute('mode', self.data['mode'], validation['params'])
         # ...
         elif self.command == Commands.GET:
             self.add_attribute('param', self.data['param'], validation['params'])
@@ -435,7 +456,6 @@ class Command:
         elif self.command == Commands.FLIGHT_MODE:
             if self.data is None:
                 self.data = {}
-
             if 'method' not in self.data:
                 self.data['method'] = validation['params']['method']['default']
             self.add_attribute('method', self.data['method'], validation['params'])
@@ -538,7 +558,8 @@ class Command:
         return self.command_data
 
     def set_aperture_position(self, aperture_position: int):
-        command_data = {'command': Commands.SET_APERTURE_POSITION.name.lower(), 'data': {'aperture_position': aperture_position}}
+        command_data = {'command': Commands.SET_APERTURE_POSITION.name.lower(),
+                        'data': {'aperture_position': aperture_position}}
         self.define(command_data)
         return self.command_data
 
@@ -553,12 +574,14 @@ class Command:
         return self.command_data
 
     def run_autogain(self, max_pixel_value: int):
-        command_data = {'command': Commands.RUN_AUTOGAIN.name.lower(), 'data': {'desired_max_pixel_value': max_pixel_value}}
+        command_data = {'command': Commands.RUN_AUTOGAIN.name.lower(),
+                        'data': {'desired_max_pixel_value': max_pixel_value}}
         self.define(command_data)
         return self.command_data
 
     def run_autoexposure(self, max_pixel_value: int):
-        command_data = {'command': Commands.RUN_AUTOEXPOSURE.name.lower(), 'data': {'desired_max_pixel_value': max_pixel_value}}
+        command_data = {'command': Commands.RUN_AUTOEXPOSURE.name.lower(),
+                        'data': {'desired_max_pixel_value': max_pixel_value}}
         self.define(command_data)
         return self.command_data
 
@@ -616,12 +639,19 @@ class Command:
         self.define(command_data)
         return self.command_data
 
-    def get(self, param:str):
+    def chamber_mode(self, method: str, mode: bool = None):
+        command_data = {'command': Commands.CHAMBER_MODE.name.lower(), 'data': {'method': method}}
+        if method == 'set':
+            command_data = {'command': Commands.CHAMBER_MODE.name.lower(), 'data': {'method': method, 'mode': mode}}
+        self.define(command_data)
+        return self.command_data
+
+    def get(self, param: str):
         command_data = {'command': Commands.GET.name.lower(), 'data': {'param': param}}
         self.define(command_data)
         return self.command_data
 
-    def flight_mode(self, method:str, mode:str=None):
+    def flight_mode(self, method: str, mode: str = None):
         command_data = {'command': Commands.FLIGHT_MODE.name.lower(), 'data': {'method': method}}
         if method == 'set':
             command_data = {'command': Commands.FLIGHT_MODE.name.lower(), 'data': {'method': method, 'mode': mode}}
@@ -632,6 +662,7 @@ class Command:
         command_data = {'command': Commands.FLIGHT_TELEMETRY.name.lower(), 'data': {'limit': limit}}
         self.define(command_data)
         return self.command_data
+
 
 if __name__ == "__main__":
     print(Commands.TAKE_IMAGE.value)
@@ -667,9 +698,11 @@ if __name__ == "__main__":
         },
         cmd.flight_mode('get'),
         cmd.flight_mode('set', 'preflight'),
-        cmd.take_image('solver1'), # 'raw', 'solver1', 'solver2
+        cmd.take_image('solver1'),  # 'raw', 'solver1', 'solver2
         cmd.get('focus'),
         cmd.get('aperture_position'),
+        cmd.chamber_mode('set', True),
+        cmd.chamber_mode('get'),
     ]
     for cmd_dict in cmds:
         cmd = Command(cmd_dict)

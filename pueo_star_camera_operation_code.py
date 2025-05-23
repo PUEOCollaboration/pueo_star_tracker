@@ -110,6 +110,7 @@ class PueoStarCameraOperation:
         self.img_cnt = 0
         self.solver = self.cfg.solver
         self._flight_mode = self.cfg.flight_mode
+        self._chamber_mode = self.cfg.run_chamber
 
         self.time_interval: int = self.cfg.time_interval
         self.cadence: float = self.time_interval / 1e6
@@ -500,11 +501,13 @@ class PueoStarCameraOperation:
         second_largest_pix_value = int(bins[0])
         for i in range(n - 1, -1, -1):
             # if arr[i] < high_pix_value:
-            if bins[i] < high_pix_value and counts[i] >= min_count:
-                second_largest_pix_value = int(bins[i])
-                break
-            else:
-                second_largest_pix_value = high_pix_value
+            # TODO: Fix this routine as it is failing. Note the len(bins) = len(counts) + 1
+            with suppress(IndexError):
+                if bins[i] < high_pix_value and counts[i] >= min_count:
+                    second_largest_pix_value = int(bins[i])
+                    break
+                else:
+                    second_largest_pix_value = high_pix_value
 
         plt.figure()
         plt.hist(bins[:-1], bins, weights=counts)
@@ -1545,11 +1548,11 @@ class PueoStarCameraOperation:
                 self.logit(f'Camera image captured in {get_dt(t1)} @{get_dt(t0)} shape: {self.curr_img.shape}.', color='green')
             except Exception as e:
                 self.logit(f'Capture error: {e}', level='error', color='red')
-                if not self.cfg.run_chamber:
+                if not self.chamber_mode:
                     return
 
         # Chamber mode/test mode?
-        if self.cfg.run_chamber or is_test:
+        if self.chamber_mode or is_test:
             self.curr_img = self.camera_dummy.capture()
             self.logit(f'Taking DUMMY capture from file: {self.camera_dummy.filename}', 'warning', color='blue')
 
@@ -1784,9 +1787,9 @@ class PueoStarCameraOperation:
         self.logit(f"Autoexposure routine. Best exposure: {self.best_exposure_time}")
 
     def camera_resume(self, cmd):
-        self.logit(f"Command to resume star tracker operation. Setting solver: {cmd.solver}")
-        if self.operation_enabled:
-            return
+        self.logit(f"Command to resume star tracker operation. Setting solver: {cmd.solver} cadence: {cmd.cadence}s.", color='green')
+        # if self.operation_enabled:
+        #     return
         self.focuser.open_aperture()
         self.operation_enabled = True
         self.img_cnt = 0
@@ -1794,7 +1797,7 @@ class PueoStarCameraOperation:
         self.astro.solver = self.solver  # Update also the astro instance
         self.cadence = float(cmd.cadence)
         self.time_interval = int(self.cadence * 1e6)  # Convert cadence [s] into time_interval [micros]
-        self.server.write(f"Operation resumed. Solver: {self.solver}  cadence: {self.cadence}")
+        self.server.write(f"Operation resumed. Solver: {self.solver}  cadence: {self.cadence}s")
 
     def camera_pause(self):
         self.logit("Command to pause PUEO Star Tracker operation")
@@ -1992,6 +1995,16 @@ class PueoStarCameraOperation:
             f'Home Lens completed: new min/max positions: {self.min_focus_position}/{self.max_focus_position} old: {c_min}/{c_max}')
 
     @property
+    def chamber_mode(self):
+        """Getter for chamber_mode (no arguments allowed)."""
+        return self._chamber_mode
+
+    @chamber_mode.setter
+    def chamber_mode(self, value: bool):
+        """Setter for chamber_mode."""
+        self._chamber_mode = value
+
+    @property
     def flight_mode(self):
         """Getter for flight_mode (no arguments allowed)."""
         return self._flight_mode
@@ -2052,7 +2065,7 @@ class PueoStarCameraOperation:
 
     def run_test(self):
         tm = time.monotonic()
-        self.cfg.run_chamber = False # Note
+        self.chamber_mode = False # Note
         solvers = ['solver1', 'solver2']
         # solvers = ['solver1', ]
 

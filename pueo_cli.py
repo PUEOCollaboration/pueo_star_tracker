@@ -14,6 +14,8 @@ Available commands:
   auto_gain                 Run autogain routine
   auto_exposure             Run autoexposure routine
   take_image [type]         Take image (raw, solver1, solver2 - default from config)
+  get_chamber_mode          Get current chamber mode
+  set_chamber_mode <mode>   Set chamber mode (true, false)
   get_flight_mode           Get current flight mode
   set_flight_mode <mode>    Set flight mode (preflight, flight)
   get_aperture              Get current aperture value
@@ -155,7 +157,7 @@ class PueoSocketClient:
             description='PUEO Command Line Interface',
             formatter_class=argparse.RawDescriptionHelpFormatter,
             epilog="""Examples:
-  python pueo-cli.py start
+  python pueo-cli.py start raw
   python pueo-cli.py stop
   python pueo-cli.py take_image solver1
   python pueo-cli.py set_focus 150
@@ -177,6 +179,17 @@ class PueoSocketClient:
 
         # Start command
         start_parser = subparsers.add_parser('start', help='Start/resume autonomous mode')
+        start_parser.add_argument('solver', nargs='?', choices=['solver1', 'solver2'], default=self.cfg.solver,
+                                      help='Solver value (default: %(default)s)')
+        start_parser.add_argument('cadence', nargs='?', type=float, default=float(self.cfg.time_interval/1.e6),
+                                      help='Cadence (default: %(default)s)')
+
+        # Custom validation
+        def start_validate_args(args):
+            if args.cadence is not None and args.solver not in ['solver1', 'solver2']:
+                start_parser.error("Cadence requires explicit solver (solver1/solver2)")
+
+        start_parser.set_defaults(validator=start_validate_args)
 
         # Stop command
         stop_parser = subparsers.add_parser('stop', help='Stop autonomous mode')
@@ -200,7 +213,6 @@ class PueoSocketClient:
                 args.stop_position != self.cfg.autofocus_stop_position,
                 args.step_count != self.cfg.autofocus_step_count
             ]
-            pass
             if any(provided) and not all(provided):
                 autofocus_parser.error("Either provide ALL positional arguments (start_position, stop_position, step_count) or NONE to use defaults.")
 
@@ -219,6 +231,23 @@ class PueoSocketClient:
         take_image_parser.add_argument('type', nargs='?', default=self.cfg.solver,
                                       choices=['raw', 'solver1', 'solver2'],
                                       help='Image type (default: %(default)s)')
+
+        # Chamber mode commands
+        def str2bool(v):
+            if isinstance(v, bool):
+                return v
+            if v.lower() in ('yes', 'true', 't', 'y', '1'):
+                return True
+            elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+                return False
+            else:
+                raise argparse.ArgumentTypeError('Boolean value expected.')
+
+        subparsers.add_parser('get_chamber_mode', help='Get current chamber mode')
+
+        set_chamber_parser = subparsers.add_parser('set_chamber_mode', help='Set chamber mode')
+        set_chamber_parser.add_argument('mode', type=str2bool,
+                                        help='Chamber mode to set (True/False, true/false, 0/1, yes/no)')
 
         # Flight mode commands
         subparsers.add_parser('get_flight_mode', help='Get current flight mode')
@@ -260,7 +289,7 @@ class PueoSocketClient:
 
         try:
             if args.command == 'start':
-                return cmd.resume_operation(self.cfg.solver, float(self.cfg.time_interval/1.e6))  # Default solver and cadence
+                return cmd.resume_operation(args.solver, args.cadence)  # Default solver and cadence
             elif args.command == 'stop':
                 return cmd.pause_operation()
             elif args.command == 'home_lens':
@@ -275,6 +304,10 @@ class PueoSocketClient:
                 return cmd.run_autoexposure(args.desired_max_pixel_value)
             elif args.command == 'take_image':
                 return cmd.take_image(args.type)
+            elif args.command == 'get_chamber_mode':
+                return cmd.chamber_mode('get')
+            elif args.command == 'set_chamber_mode':
+                return cmd.chamber_mode('set', args.mode)
             elif args.command == 'get_flight_mode':
                 return cmd.flight_mode('get')
             elif args.command == 'set_flight_mode':

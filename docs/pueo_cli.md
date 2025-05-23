@@ -23,18 +23,18 @@ python pueo-cli.py <command> [<args>...]
 
 ### System Control Commands
 
-| Command        | Description                    | Arguments                                                                        |
-|----------------|--------------------------------|----------------------------------------------------------------------------------|
-| `start`        | Start/resume autonomous mode   | `[solver]` (optional: solver1, solver2)<br/>`[cadence]` (optional: Time in seconds) |
-| `stop`         | Stop autonomous mode           | None                                                                             |
-| `power_cycle`  | Power cycle camera and focuser | None                                                                             |
+| Command        | Description                    | Arguments                                                                                                           |
+|----------------|--------------------------------|---------------------------------------------------------------------------------------------------------------------|
+| `start`        | Start/resume autonomous mode   | `[solver]` (solver1, solver2), `[cadence]` (Cadence in seconds)<br/> (all optional, but must provide first or both) |
+| `stop`         | Stop autonomous mode           | None                                                                                                                |
+| `power_cycle`  | Power cycle camera and focuser | None                                                                                                                |
 
 ### Focus Operations
 
 | Command        | Description                          | Arguments                     |
 |----------------|--------------------------------------|-------------------------------|
 | `home_lens`    | Perform focuser homing               | None                          |
-| `auto_focus`   | Run autofocus routine                | `[start_position] [stop_position] [step_count]` (all optional, but must provide all or none) |
+| `auto_focus`   | Run autofocus routine                | `[start_position] [stop_position] [step_count]`<br/>(all optional, but must provide all or none) |
 
 ### Camera Settings
 

@@ -42,7 +42,7 @@ class Commands(Enum):
         delta_focus_position <focus_delta>
            focus_delta: int (-100 .. 100)
 
-        run_autogain <desired_max_pixel_value>
+        run_autofocus <desired_max_pixel_value>
         # TODO
            ## Note mix_pixel_value is a TYPO shall be max_pixel_value
            ## mix_pixel_value : int (0 .. 65535)

@@ -74,6 +74,7 @@ class Config:
     # 100000 = 109ms
     lab_best_exposure = 100000
     autofocus_max_deviation = 0.1
+    focus_tolerance_percentage = 2.5 # Percentage
 
     # New parameterised variables
     # CONFIG - [PATHS]
@@ -199,7 +200,7 @@ class Config:
     max_processes = 4
     operation_timeout = 60
     current_timeout = 200
-    run_autogain = False
+    run_autofocus = False
     run_autonomous = False
     run_telemetry = True
     run_chamber = False
@@ -389,6 +390,9 @@ class Config:
         self.autofocus_max_deviation = self.config.getfloat('LENS_FOCUS_CONSTANTS', 'autofocus_max_deviation',
                                                             fallback=self.autofocus_max_deviation)
 
+        focus_tolerance_percentage = self.config.getfloat('LENS_FOCUS_CONSTANTS', 'focus_tolerance_percentage',
+                                                            fallback=self.focus_tolerance_percentage)
+
         self.fit_points_init = self.config.getint('LENS_FOCUS_CONSTANTS', 'fit_points_init',
                                                   fallback=self.fit_points_init)
         self.lab_fov = self.config.getfloat('LENS_FOCUS_CONSTANTS', 'lab_fov', fallback=self.lab_fov)
@@ -538,7 +542,7 @@ class Config:
         self.max_processes = self.config.getint('GENERAL', 'max_processes', fallback=self.max_processes)
         self.operation_timeout = self.config.getint('GENERAL', 'operation_timeout', fallback=self.operation_timeout)
         self.current_timeout = self.config.getint('GENERAL', 'current_timeout', fallback=self.current_timeout)
-        self.run_autogain = self.config.getboolean('GENERAL', 'run_autogain', fallback=self.run_autogain)
+        self.run_autofocus = self.config.getboolean('GENERAL', 'run_autofocus', fallback=self.run_autofocus)
         self.run_autonomous = self.config.getboolean('GENERAL', 'run_autonomous', fallback=self.run_autonomous)
         self.run_telemetry = self.config.getboolean('GENERAL', 'run_telemetry', fallback=self.run_telemetry)
         self.run_chamber = self.config.getboolean('GENERAL', 'run_chamber', fallback=self.run_chamber)
@@ -628,6 +632,7 @@ class Config:
             'lab_best_gain': self.lab_best_gain,
             'lab_best_exposure': self.lab_best_exposure,
             'autofocus_max_deviation': self.autofocus_max_deviation,
+            'focus_tolerance_percentage': self.focus_tolerance_percentage,
             'fit_points_init': self.fit_points_init,
             'lab_fov': self.lab_fov,
             'lab_distortion_coefficient_1': self.lab_distortion_coefficient_1,
@@ -749,7 +754,7 @@ class Config:
             'max_processes': self.max_processes,
             'operation_timeout': self.operation_timeout,
             'current_timeout': self.current_timeout,
-            'run_autogain': self.run_autogain,
+            'run_autofocus': self.run_autofocus,
             'run_autonomous': self.run_autonomous,
             'run_telemetry': self.run_telemetry,
             'run_chamber': self.run_chamber,

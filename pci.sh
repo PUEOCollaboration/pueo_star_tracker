@@ -57,7 +57,7 @@ while true; do
 
     # Execute command
     echo "➔ Executing: ${cmd_args[*]}"
-    python3 "$SCRIPT_DIR/pueo-cli.py" "${cmd_args[@]}"
+    python3 "$SCRIPT_DIR/pueo_cli.py" "${cmd_args[@]}"
 done
 
 # Cleanup

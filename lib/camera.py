@@ -272,6 +272,8 @@ class PueoStarCamera(Camera):
         self.camera_info = {}
         self.simulated = True
 
+        # TODO: Implement Camera Retry in case of error.
+
         self.initialize_camera()
         # Initialize the parent class
         self.id = self.camera_id

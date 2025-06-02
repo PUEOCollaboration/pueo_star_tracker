@@ -367,8 +367,9 @@ class StarCommBridge:
                 self.server.camera_pause()
                 ret = Status.get_status(Status.SUCCESS, "Paused.")
             elif commands == Commands.RUN_AUTOFOCUS:
-                self.server.camera_run_autofocus(cmd)
-                ret = Status.get_status(Status.SUCCESS, "Autofocus initiated.")
+                # self.server.camera_run_autofocus(cmd) # Note this is autofocus only! Shall not be used standalone.
+                self.server.camera_autofocus(cmd) # Note this is full autofocus/autogain
+                ret = Status.get_status(Status.SUCCESS, "Autofocus/autogain initiated.")
             elif commands == Commands.SET_GAIN:
                 self.server.camera_set_gain(cmd)
                 ret = Status.get_status(Status.SUCCESS, "Gain set.")
@@ -410,7 +411,7 @@ class StarCommBridge:
                 ret = Status.get_status(Status.SUCCESS, "Time updated set.")
             elif commands == Commands.POWER_CYCLE:
                 self.server.camera_power_cycle(cmd)
-                ret = Status.get_status(Status.SUCCESS, "Powercycle not implemented.")
+                ret = Status.get_status(Status.SUCCESS, "Camera/Focuser Power cycle completed.")
             elif commands == Commands.HOME_LENS:
                 self.server.camera_home_lens(cmd)
                 ret = Status.get_status(Status.SUCCESS, "Camera Home lens completed.")
@@ -573,7 +574,7 @@ class StarCommBridge:
             self.log.info('Starting start_status_check')
             Thread(target=check_status, daemon=True).start()
 
-    def write(self, item, level='info', data_type='message', dst_filename=None):
+    def write(self, item, level='info', data_type='message', dst_filename=None, is_preserve=None):
         """Write saves the item to the message queue.
         It handles different types such as 'message', 'file'.
         It saves the data as dict that is used to send over a socket connection to the client
@@ -582,7 +583,12 @@ class StarCommBridge:
             self.messages.write(item, level, data_type, dst_filename)
 
         # If not connected to the client, delete images in preflight mode.
-        if data_type.endswith('_file') and not self.server.is_flight:
+        # Delete if is_preserve
+        # Delete if is_preserve=
+        if (data_type.endswith('_file') and
+                ((is_preserve is None and not self.server.is_flight) or
+                 (is_preserve is not None and not is_preserve))):
+            # Condition met
             with suppress(FileNotFoundError, PermissionError, Exception):
                 file_path = item
                 os.remove(file_path)

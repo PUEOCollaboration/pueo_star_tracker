@@ -17,7 +17,7 @@ fi
 # export EXAMPLE_VAR="value"
 
 # Execute the Python CLI with all passed arguments
-python3 "$SCRIPT_DIR/pueo-cli.py" "$@"
+python3 "$SCRIPT_DIR/pueo_cli.py" "$@"
 EXIT_CODE=$?
 
 # Deactivate the virtual environment if it was activated

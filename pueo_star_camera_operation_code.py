@@ -27,7 +27,7 @@ import os
 import io
 import pstats
 import shutil
-from shutil import disk_usage
+# from shutil import disk_usage
 # import usb.core
 # from os import listdir
 from types import SimpleNamespace
@@ -206,6 +206,21 @@ class PueoStarCameraOperation:
         # Board API (VersaLogic)
         self.versa_api = VersaAPI()
 
+        # Set Camera and Focuser Board GPIO pins to known state: LOW
+        self.logit('Setting GPIO Pins For Focuser to False (LOW):', color='cyan')
+        with suppress(RuntimeError):
+            self.versa_api.set_pin(self.cfg.sbc_dio_focuser_pin, False)
+
+        time.sleep(5)
+
+        self.logit('Setting GPIO Pins For Camera to False (LOW):', color='cyan')
+        with suppress(RuntimeError):
+            self.versa_api.set_pin(self.cfg.sbc_dio_camera_pin, False)
+
+
+        # Wait 2 secs in case Camera/Focuser got started.
+        time.sleep(2)
+
         # Create camera object
         self.camera = PueoStarCamera(self.cfg)
         self.camera_dummy = DummyCamera()
@@ -314,11 +329,11 @@ class PueoStarCameraOperation:
         score = laplacian.var()
         return score
 
-    def plt_savefig(self, plt, focus_image_file):
-        self.logit(f'Saving focus image: {focus_image_file}')
-        plt.savefig(focus_image_file)
-        # TODO: This image has no info file. likely disable in prod
-        self.server.write(focus_image_file, data_type='image_file')
+    def plt_savefig(self, plt, mage_file, is_preserve=True):
+        """Saves an image and sends it to the messenger."""
+        self.logit(f'Saving image: {mage_file}')
+        plt.savefig(mage_file)
+        self.server.write(mage_file, data_type='image_file', is_preserve=is_preserve)
 
     def fit_best_focus(self, focus_image_path, focus_positions, focus_scores, diameter_scores, max_focus_position,
                        focus_method='sequence_contrast'):
@@ -441,7 +456,7 @@ class PueoStarCameraOperation:
                 self.log.error(f'Fitting Error: {e}')
                 self.logit(f"There was an error with fitting: {e}")
                 sigma = self.cfg.sigma_error_value
-                focus_dict['sequence_diameter']['best_focus_pos'] = self.cfg.trial_focus_po
+                focus_dict['sequence_diameter']['best_focus_pos'] = self.cfg.trial_focus_pos
                 focus_dict['sequence_diameter']['status'] = False
         if focus_method == 'sequence_contrast':  # and focus_dict['covariance']['status']:
             best_focus_pos = focus_dict['sequence_contrast']['best_focus_pos']
@@ -469,7 +484,9 @@ class PueoStarCameraOperation:
         mode = None
         image = Image.fromarray(img, mode=mode)
         image.save(filename)
-        self.logit(f'wrote {filename}')
+        # Images saved using cv2 are larger and saved slower.
+        # cv2.imwrite(filename, img, [int(cv2.IMWRITE_PNG_COMPRESSION), self.cfg.png_compression])
+        self.logit(f'  saved image: {filename}', color='yellow')
 
     def capture_timestamp_save(self, path, inserted_string, img = None):
         """Take image if not provided."""
@@ -480,10 +497,11 @@ class PueoStarCameraOperation:
         img = self.camera.capture() if img is None else img
         self.logit(f"Max pixel: {np.max(img)}, Min pixel: {np.min(img)}.")
         self.image_list.append(img)
-        self.image_filename_list.append(path + timestamp_string + "_" + inserted_string + '.png')
-        filename = path + timestamp_string + "_" + inserted_string + '.txt'
+        basename = f"{path}{timestamp_string}_{inserted_string}"
+        self.image_filename_list.append(f'{basename}.png')
+        filename = f"{basename}.txt"
         self.save_capture_properties(filename, timestamp_string)
-        return img
+        return img, basename
 
     def save_image(self, img, path, timestamp_string, inserted_string):
         filename = f'{path}{timestamp_string}_{inserted_string}.png'
@@ -494,7 +512,7 @@ class PueoStarCameraOperation:
         self.save_capture_properties(filename, timestamp_string)
 
     def check_gain_routine(self, curr_img, desired_max_pix_value, pixel_saturated_value,
-                           pixel_count_tolerance) -> bool:
+                           pixel_count_tolerance, save_path=None) -> bool:
         bins = np.linspace(0, pixel_saturated_value, self.cfg.autogain_num_bins)
         arr = curr_img.flatten()
         counts, bins = np.histogram(arr, bins=bins)
@@ -513,14 +531,17 @@ class PueoStarCameraOperation:
                 else:
                     second_largest_pix_value = high_pix_value
 
-        plt.figure()
-        plt.hist(bins[:-1], bins, weights=counts)
-        plt.xlabel('Brightness, counts')
-        plt.ylabel('Frequency, pixels')
-        plt.title(f'hpv: {high_pix_value}, slp: {second_largest_pix_value}, lpv: {min(arr)}')
-        plt.grid()
-        # TODO: Showing only for TESTING purposes!
-        # plt.show()
+        # Note this has already been done! Disabling for now!
+        if False:
+            plt.figure()
+            plt.hist(bins[:-1], bins, weights=counts)
+            plt.xlabel('Brightness, counts')
+            plt.ylabel('Frequency, pixels')
+            plt.title(f'hpv: {high_pix_value}, slp: {second_largest_pix_value}, lpv: {min(arr)}')
+            plt.grid()
+            # plt.show() # Showing only in TESTING phase!
+            filename = f'{save_path}check_gain'
+            self.save_fig(filename, plt)
 
         if high_pix_value == pixel_saturated_value:
             if second_largest_pix_value >= (desired_max_pix_value + pixel_count_tolerance):
@@ -573,7 +594,7 @@ class PueoStarCameraOperation:
         plt.title(f'hpv: {high_pix_value}, slp: {second_largest_pix_value}, lpv: {min(arr)}')
         plt.grid()
         # TODO: Showing only for TESTING purposes!
-        # plt.show()
+        # plt.show() # Showing only in TESTING phase!
 
         if high_pix_value == pixel_saturated_value:
             if second_largest_pix_value >= (desired_max_pix_value + pixel_count_tolerance):
@@ -597,6 +618,50 @@ class PueoStarCameraOperation:
             self.logit("Pixels counts are in range. Ending iterations.")
             self.logit(f"Pixel count difference: {difference}")
             return False
+
+    def save_fig(self, basename, plt):
+        """Saves a matplotlib figure as a compressed JPEG image with optimized settings.
+
+        This function saves the given matplotlib figure as a JPEG image with settings
+        optimized for small file size while maintaining reasonable visual quality.
+        The image is saved with the provided basename appended with '_histogram.jpg'.
+
+        Args:
+            basename (str): Base filename to use for the output image (without extension).
+            plt (matplotlib.pyplot): The pyplot figure object to be saved.
+
+        Side Effects:
+            - Writes an image file to disk
+            - Logs the save operation using self.logit()
+
+        Optimization Notes:
+            - Uses JPEG format with default quality (adjust via rcParams)
+            - Sets DPI=50 (lower than screen standard) for smaller dimensions
+            - tight bounding box (bbox_inches='tight') removes excess whitespace
+            - Minimal padding (pad_inches=0.05) reduces empty space around plot
+
+        Example:
+            >>> save_fig('temperature_data', plt)
+            # Saves as 'temperature_data_histogram.jpg'
+        """
+        filename = f'{basename}_histogram.jpg'
+
+        self.logit(f'Saving histogram image as: {filename}')
+
+        plt.savefig(
+            filename,
+            dpi=75,
+            facecolor='w',
+            edgecolor='w',
+            bbox_inches='tight',
+            pad_inches=0.05,
+            format='jpg'
+        )
+        # self.server.write(filename, data_type='image_file', is_preserve=True)  # Will delete the image so saving it again!
+
+        tmp_filename = f'{basename}_histogram_tmp.png'
+        self.plt_savefig(plt, tmp_filename, is_preserve=False)
+
 
     def do_auto_gain_routine(self, auto_gain_image_path, initial_gain_value,
                              desired_max_pix_value, pixel_saturated_value, pixel_count_tolerance,
@@ -630,7 +695,7 @@ class PueoStarCameraOperation:
             inserted_string = 'e'  + 'g' + str(new_gain_value)
             # Take image or use existing self.curr_img for single gain update
             img = self.curr_img if max_iterations is not None and max_iterations == 1 else None
-            img = self.capture_timestamp_save(auto_gain_image_path, inserted_string, img)
+            img, basename = self.capture_timestamp_save(auto_gain_image_path, inserted_string, img)
             bins = np.linspace(0, pixel_saturated_value, self.cfg.autogain_num_bins)
             arr = img.flatten()
             counts, bins = np.histogram(arr, bins=bins)
@@ -655,12 +720,12 @@ class PueoStarCameraOperation:
                 raise IndexError(e)
             plt.figure()
             plt.hist(bins[:-1], bins, weights=counts)
-            plt.xlabel('Brightness, counts')
+            plt.xlabel('Gain Brightness, counts')
             plt.ylabel('Frequency, pixels')
             plt.title(f'hpv: {high_pix_value}, slp: {second_largest_pix_value}, lpv: {min(arr)}')
             plt.grid()
-            # TODO: Showing only in TESTING phase!
-            # plt.show()
+            # plt.show() # Showing only in TESTING phase!
+            self.save_fig(basename, plt)
 
             image_saturated = True
             if high_pix_value == pixel_saturated_value:
@@ -790,11 +855,11 @@ class PueoStarCameraOperation:
 
             self.logit('Capturing image.')
             inserted_string = 'e'  + 'g' + str(new_exposure_value)
-            img = self.capture_timestamp_save(auto_exposure_image_path, inserted_string)
+            img, basename = self.capture_timestamp_save(auto_exposure_image_path, inserted_string)
             bins = np.linspace(0, pixel_saturated_value, self.cfg.autoexposure_num_bins)
             arr = img.flatten()
             counts, bins = np.histogram(arr, bins=bins)
-            # There is one counts less than bins, therefore we iterae over counts, not bins
+            # There is one counts less than bins, therefore we iterate over counts, not bins
             n = len(counts)
             high_pix_value = max(arr)
             # min_count = 10 # [IMAGE] min_count
@@ -818,8 +883,8 @@ class PueoStarCameraOperation:
             plt.ylabel('Frequency, pixels')
             plt.title(f'hpv: {high_pix_value}, slp: {second_largest_pix_value}, lpv: {min(arr)}')
             plt.grid()
-            # TODO: Showing only in TESTING phase!
-            # plt.show()
+            # plt.show() # Showing only in TESTING phase!
+            self.save_fig(basename, plt)
 
             image_saturated = True
             if high_pix_value == pixel_saturated_value:
@@ -976,7 +1041,7 @@ class PueoStarCameraOperation:
             measured_focus_positions.append(self.focuser.move_focus_position(focus_positions[i]))
             self.logit('Taking image')
             log_file_path = "log/test_log.txt"
-            img = self.capture_timestamp_save(focus_image_path, inserted_string)
+            img, basename = self.capture_timestamp_save(focus_image_path, inserted_string)
             # We intend to calculate both scores using sequence_diameter and sequence_contrast
             diameters = self.get_centroid_diameters(img=img, is_array=True, log_file_path=log_file_path)
             # TODO: diameters will not be none but [-1], decide with next if...
@@ -993,7 +1058,6 @@ class PueoStarCameraOperation:
             score = self.process_image_covariance(img)
             self.logit(f'Covariance Focus score: {score}')
             focus_scores.append(score)
-
 
             count = count + 1
 
@@ -1047,13 +1111,20 @@ class PueoStarCameraOperation:
 
     def save_images(self, image_filename_list):
         ## Write images to disk##
-        self.logit('Writing Images to disk.')
-        for idx, filename in enumerate(image_filename_list):
-            self.store_image(self.image_list[idx], image_filename_list[idx])
-        self.logit('Finished writing images to disk.')
+        if self.is_flight:
+            self.logit('Writing Images to disk.')
+            for idx, filename in enumerate(image_filename_list):
+                self.store_image(self.image_list[idx], image_filename_list[idx])
+            self.logit('Finished writing images to disk.')
+        else:
+            self.logit('Skipping write Images to disk (preflight mode).', color='yellow')
 
-    def camera_autofocus(self):
+    def camera_autofocus(self, cmd=None):
         t0 = time.monotonic()
+
+        focus_method = cmd.focus_method if cmd else 'sequence_contrast'
+
+        self.logit(f'Refocusing (take gain/focus sequences). Focus Method: {focus_method}', color='cyan')
         self.logit('\n** Autogain **', color='cyan')
         # GUI: AutoGain True, AutoExposure: True ==> enable_autogain = True
         #   else: enable_autogain = False
@@ -1167,15 +1238,15 @@ class PueoStarCameraOperation:
         self.best_focus, self.stdev = self.do_autofocus_routine(self.focus_image_path, coarse_start_focus_pos,
                                                                 coarse_stop_focus_pos,
                                                                 self.cfg.coarse_focus_step_count,
-                                                                self.max_focus_position)
+                                                                self.max_focus_position,
+                                                                focus_method)
 
         # change back to default image dynamic range and resolution.
         self.camera.set_image_type(asi.ASI_IMG_RAW16)
         self.camera.set_roi(bins=self.cfg.roi_bins)
 
-        # TODO: commenting out for now - Saving Autofocus images
+        # Saving Autofocus images (in flight mode only)
         self.save_images(self.image_filename_list)
-
 
         #reinitialize the image_list and filename_lists
         self.image_list = []
@@ -1346,12 +1417,12 @@ class PueoStarCameraOperation:
         self.camera.set_roi(bins=self.cfg.roi_bins)
 
         gain_value = camera_settings['Gain']
+        timestamp_string = current_timestamp(self.timestamp_fmt)
+        auto_gain_image_path = self.cfg.auto_gain_image_path_tmpl.format(timestamp_string=timestamp_string)
+        os.mkdir(auto_gain_image_path)
         if self.check_gain_routine(self.curr_img, self.desired_max_pix_value, self.pixel_saturated_value,
-                                   self.pixel_count_tolerance):
+                                   self.pixel_count_tolerance, auto_gain_image_path):
             self.server.write("Performing autogain maintenance.")
-            timestamp_string = current_timestamp(self.timestamp_fmt)
-            auto_gain_image_path = self.cfg.auto_gain_image_path_tmpl.format(timestamp_string=timestamp_string)
-            os.mkdir(auto_gain_image_path)
             curr_gain_value = camera_settings['Gain']
             self.best_gain_value = self.do_auto_gain_routine(
                 auto_gain_image_path, curr_gain_value,
@@ -1882,8 +1953,8 @@ class PueoStarCameraOperation:
     def camera_set_aperture_position(self, cmd):
         aperture_position = int(cmd.aperture_position)
         f_val = self.focuser.f_stops[aperture_position] if len(self.focuser.f_stops) > aperture_position else 'f??'
-        self.logit(f'Commanded to change focuser aperture to: {aperture_position} [{f_val}]', color='blue')
-        self.server.write(f'Commanded to change focuser aperture to: {aperture_position} [{f_val}]')
+        self.logit(f'Changing focuser aperture to: {aperture_position} [{f_val}]', color='blue')
+        self.server.write(f'Changing focuser aperture to: {aperture_position} [{f_val}]')
         self.focuser.move_aperture_absolute(aperture_position)
         pos = f_val = None
         with suppress(Exception):
@@ -1896,14 +1967,14 @@ class PueoStarCameraOperation:
 
     def camera_set_exposure_time(self, cmd):
         manual_exposure_time = cmd.exposure_time
-        self.logit(f'Commanded to change camera exposure to: {manual_exposure_time} [us]')
-        self.server.write(f"Commanded to change camera exposure to: {manual_exposure_time}")
+        self.logit(f'Changing camera exposure to: {manual_exposure_time} [us]')
+        self.server.write(f"Changing camera exposure to: {manual_exposure_time}")
         self.camera.set_control_value(asi.ASI_EXPOSURE, int(manual_exposure_time))  # units microseconds,
 
     def camera_set_gain(self, cmd):
         gain_setting = cmd.gain
         self.camera.set_control_value(asi.ASI_GAIN, int(gain_setting))
-        self.logit(f'Commanded to set camera gain to: {gain_setting} [cB]')
+        self.logit(f'Changing camera gain to: {gain_setting} [cB]')
 
     def camera_get_values(self):
         r = self.camera.get_control_values()
@@ -1921,13 +1992,13 @@ class PueoStarCameraOperation:
 
     def camera_set_focus_position(self, cmd):
         focus_position = int(cmd.focus_position)
-        self.logit(f'Commanded to change focus to: {focus_position} [counts]')
+        self.logit(f'Changing focus to: {focus_position} [counts]')
         focus_position = self.focuser.move_focus_position(focus_position)
         self.logit(f'New Focus Position: {focus_position}')
 
     def camera_delta_focus_position(self, cmd):
         delta_focus = cmd.focus_delta
-        self.logit(f'Commanded to adjust focus by: {delta_focus} [us]')
+        self.logit(f'Adjusting focus by: {delta_focus} [us]')
         curr_focus_position = self.focuser.get_focus_position()
         new_focus_position = curr_focus_position + int(delta_focus)
         adjusted_focus_position = self.focuser.move_focus_position(new_focus_position)

@@ -7,6 +7,10 @@ _Compiled by **Milan Štubljar** of [stubljar.com](https://stubljar.com) on 2025
 ## Install Essentials (Optional)
 ```bash
 
+# Update/Upgrade All 
+sudo apt update
+sudo apt upgrade
+
 # Install PyCharm Classic
 sudo apt update
 sudo apt install snapd 
@@ -65,6 +69,12 @@ wget https://demo.stubljar.com/tmp/Windell/pcc-gui.7z --no-check-certificate
 7za x "pcc-gui.7z" -o"pcc-gui"
 ```
 
+## LVM + RAID 0 (Best of Both Worlds)
+```bash
+# TODO: Add instructions for creating raid.
+
+```
+
 ## Mount sdcard (if not already)
 ```
 # List available disks
@@ -120,28 +130,28 @@ ls /mnt/sdcard1
 ## Create links for ssd/sd folders
 
 ```bash
+# Note the ssd1 is in final version raid
+
 cd /home/pst/Projects/pcc
 # Remove project placeholder folders (folder should be empty)
 # WARNING!!! DO NOT run this if the mount has already been created.
 rm ssd_path
 rm sd_card_path
-sudo mkdir /mnt/ssd1/pueo_images_final
-sudo mkdir /mnt/ssd1/pueo_images_raw
-sudo mkdir /mnt/sdcard1/pueo_images_ds
+sudo mkdir /mnt/raid1/pueo_images_final
+sudo mkdir /mnt/raid1/pueo_images_raw
+sudo mkdir /mnt/raid1/pueo_autogain
+sudo mkdir /mnt/sdcard/pueo_images_ds
 
-sudo chown pst:pst /mnt/ssd1/pueo_images_final
-sudo chown pst:pst /mnt/ssd1/pueo_images_raw
-sudo chown pst:pst /mnt/sdcard1/pueo_images_ds
-
-# Old:
-sudo chown pueo-star-tracker2:pueo-star-tracker2 /mnt/ssd1/pueo_images_final
-sudo chown pueo-star-tracker2:pueo-star-tracker2 /mnt/ssd1/pueo_images_raw
-sudo chown pueo-star-tracker2:pueo-star-tracker2 /mnt/sdcard1/pueo_images_ds
+sudo chown pst:pst /mnt/raid1/pueo_images_final
+sudo chown pst:pst /mnt/raid1/pueo_images_raw
+sudo chown pst:pst /mnt/raid1/pueo_autogain
+sudo chown pst:pst /mnt/sdcard/pueo_images_ds
 
 # mkdir /mnt/sd/pueo_images
 # Create symbolic link from ssd_path to actual ssd folder
 ln -s /mnt/ssd1/pueo_images_final output
 ln -s /mnt/ssd1/pueo_images_raw ssd_path
+ln -s /mnt/ssd1/pueo_autogain autogain
 
 # Create symbolic link from ssd_path to actual sd folder
 ln -s /mnt/sdcard1/pueo_images_ds sd_card_path
@@ -252,6 +262,7 @@ sudo ldconfig
 # 
 cd ~/Projects/camera
 bunzip2 ASI_linux_mac_SDK_V1.37.tar.bz2 
+tar -xvf ASI_linux_mac_SDK_V1.37.tar
 
 # Install ASIStudio
 cd ~/Projects/camera
@@ -260,7 +271,6 @@ chmod +x ASIStudio_V1.14.run
 
 # Copy the lib to ASIStudio
 cd /home/pst/Projects/camera/ASI_linux_mac_SDK_V1.37/lib/x64
-cp libASICamera2.so ~/ASIStudio/
 cp libASICamera2.so ~/ASIStudio/
 
 # Configure Udev Rules:
@@ -703,7 +713,7 @@ sudo chmod 666 /dev/ttyS0
 # Camera ASI SDK Library
 env_filename = /home/pueo-star-tracker2/ASIStudio/libASICamera2.so
 # Focuser Port connected to hardware serial port
-focuser_port = /dev/ttyS0
+focuser_port = /dev/ttyS1
 # Arduino Telemtry Temperature Sensors connected to USB2
 telemetry_port = /dev/ttyUSB0
 server_ip = 172.20.10.3
@@ -835,5 +845,52 @@ sudo apt remove btop  # Ubuntu/Debian
 # OR
 sudo /usr/local/share/btop/uninstall.sh  # Manual install
 ```
+
+#### Cleanup - Remove files
+```bash
+# Goto designated folder
+# 
+cd ~/Projects/pcc/log
+cd ~/Projects/pcc/autogain
+cd ~/Projects/pcc/output
+cd ~/Projects/pcc/sd_card_path
+cd ~/Projects/pcc/sdd_path
+
+
+# ...
+# Delete all files in current folder (when rm -rf fails with argument to long)
+find . -maxdepth 1 -type f -delete
+
+# Delete all files and folders in current folder
+find . -mindepth 1 -delete
+```
+
+#### Training and Knowledge Transfer
+- Basic usage
+  - Starting/Stoping the PUEO Server/GUI
+  - Check list:
+    - Configure (conf/config.ini)
+      - preflight mode: flight_mode = preflight
+      - autonomous mode: run_autonomous = True
+    - Run server, manually or automatically rebooting the system.
+      - Enable flight mode by sending cli command: set_flight_mode flight
+  - Checking PUEO is running
+    - Logs: logs/
+      - Console logs, tail -f pueu_console.log
+      - Server logs
+      - client
+      - ./status.sh lists pids of cedar/pueo server, need to kill pueo, use first of the two pids
+        - kill -9 <pid>
+  - Sending commands to Pueo Server
+    - ./pc.sh <command> [options]
+    - For example: 
+      - ./pc.sh set_flight_mode flight
+      - ./pc.sh get_focus
+      - ./pc.sh set_focus 1215
+      - ...
+    - or use ./pci.sh as interactive shell to the PUEO Server, only sending commands:
+      - set_flight_mode flight
+      - set_focus 1215
+      - get_gain
 
 --- 

@@ -4,5 +4,9 @@
 
 rm *.pid
 rm telemetry.log
+rm telemetry.log.*
 rm debug-server.log
+rm debug-server.log.*
+rm pueo_console.log
+rm pueo_console.log.*
 

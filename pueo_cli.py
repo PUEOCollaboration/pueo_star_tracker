@@ -255,6 +255,12 @@ class PueoSocketClient:
         set_flight_parser = subparsers.add_parser('set_flight_mode', help='Set flight mode')
         set_flight_parser.add_argument('mode', choices=['preflight', 'flight'], help='Flight mode to set')
 
+        # Flight Telemetry
+        get_flight_telemetry_parser = subparsers.add_parser('get_flight_telemetry', help='Get flight telemetry data',
+                                                            description='Positional args: [limit]')
+        get_flight_telemetry_parser.add_argument('limit', nargs='?', type=int, default=0,
+                                                 help='Number of last solutions (default: %(default)s)')
+
         # Parameter get commands
         get_list = ['aperture', 'aperture_position', 'focus', 'exposure', 'gain', 'settings']
         set_list = ['aperture', 'aperture_position', 'focus', 'exposure', 'gain']
@@ -312,6 +318,8 @@ class PueoSocketClient:
                 return cmd.flight_mode('get')
             elif args.command == 'set_flight_mode':
                 return cmd.flight_mode('set', args.mode)
+            elif args.command == 'get_flight_telemetry':
+                return cmd.flight_telemetry(args.limit)
             elif args.command.startswith('get_'):
                 param = args.command[4:]  # Remove 'get_' prefix
                 return cmd.get(param)

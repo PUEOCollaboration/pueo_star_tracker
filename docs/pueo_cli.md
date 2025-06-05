@@ -62,6 +62,18 @@ Note: Chamber mode is used for testing in a dark chamber, to generate heat by no
 
 Note: In preflight mode the images are not saved to sd/ssd while all other operations are the same.
 
+### Flight Telemetry Data
+
+| Command                | Description               | Arguments                                   |
+|------------------------|---------------------------|---------------------------------------------|
+| `get_flight_telemetry` | Get flight telemetry data | `[limit]` (Number of solutions, 0 for all.) |
+
+Note: Number of solutions kept by server is defined in ```config.ini```, default 1. 
+```ini
+# Max number of solutions available/to keep for flight computer API exchange
+fq_max_size = 1
+```
+
 ### Parameter Access Commands
 
 #### Get Commands

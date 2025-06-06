@@ -880,6 +880,29 @@ cat debug-server.log | grep Focuser
 "aperture_postion": 0
 "aperture_f_val": "f14"
 
+# Camera Initialized:
+pst@erin-02:~/Projects/pcc/logs$ cat debug-server.log |grep ZWO
+2025-06-05 23:17:44.529 9718   318:        initialize_camera   DEBUG Found one camera: ZWO ASI294MM
+
+# Telemetry recording
+pst@erin-02:~/Projects/pcc/logs$ cat telemetry.log | grep Sensor
+2025-06-05 23:17:57.548 9718   105:                 __init__    INFO Sensors initialized.
+2025-06-05 23:17:57.559 9718   109:                 __init__    INFO Sensors: package_id_0_temp, core_0_temp, core_1_temp, core_2_temp, core_3_temp, acpitz-acpi-0_temp
+2025-06-05 23:18:00.408 9718   323:         get_arduino_data    INFO Arduino: Sensor 1 Address: 28D02D3F0000001C
+2025-06-05 23:18:00.440 9718   323:         get_arduino_data    INFO Arduino: Sensor 2 Address: 280A363F0000001B
+2025-06-05 23:18:00.483 9718   323:         get_arduino_data    INFO Arduino: Sensor 3 Address: 28C6294100000057
+2025-06-05 23:18:00.542 9718   323:         get_arduino_data    INFO Arduino: Sensor 4 Address: 2881313F00000058
+2025-06-05 23:18:00.616 9718   323:         get_arduino_data    INFO Arduino: Sensor 5 Address: 28D9D63E000000D3
+2025-06-05 23:18:00.704 9718   323:         get_arduino_data    INFO Arduino: Sensor 6 Address: 2857803F000000AC
+
+tail -f telemetry.log
+# Look for Telemetry header that is printed every 20 or so seconds (lines). It should include the SX sensors, those are Arduino sensors if arduino is properly initialised and present.
+
+2025-06-05 23:34:15.220 9718   403:                 log_data    INFO Telemetry header: package_id_0_temp, core_0_temp, core_1_temp, core_2_temp, core_3_temp, acpitz-acpi-0_temp, core0_load, core1_load, core2_load, core3_load, S1, S2, S3, S4, S5, S6
+2025-06-05 23:33:41.568 9718   404:                 log_data    INFO Telemetry data: 2025-06-05 23:33:40, 42.0 °C, 41.0 °C, 41.0 °C, 42.0 °C, 41.0 °C, 41.0 °C, 33.7 %, 33.3 %, 37.0 %, 38.1 %, 27.12 °C, 33.25 °C, 33.38 °C, 28.00 °C, 25.50 °C, 34.25 °C
+2025-06-05 23:33:42.645 9718   404:                 log_data    INFO Telemetry data: 2025-06-05 23:33:41, 42.0 °C, 41.0 °C, 42.0 °C, 42.0 °C, 42.0 °C, 41.0 °C, 40.8 %, 34.7 %, 40.6 %, 35.7 %, 27.19 °C, 33.25 °C, 33.31 °C, 28.00 °C, 25.50 °C, 34.25 °C
+
+
 ```
 
 #### Training and Knowledge Transfer

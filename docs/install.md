@@ -865,6 +865,23 @@ find . -maxdepth 1 -type f -delete
 find . -mindepth 1 -delete
 ```
 
+#### Checks
+```bash
+# Focuser properly initialised - using debug log parsing
+cd ~/Projects/pcc/logs
+cat debug-server.log | grep Focuser
+# Observe lines "Focuser Initialized Successfully" or other focuser commands should have 'OK' inline...
+# Example:
+.. INFO Focuser PA (Print Aperture Position): ['pa', 'OK', '0,f14', ''] pos: 0 f_val: f14
+# Focuser properly initialised - using cli command
+./pc.sh get_aperture_position
+
+# The correct response gives a value like:
+"aperture_postion": 0
+"aperture_f_val": "f14"
+
+```
+
 #### Training and Knowledge Transfer
 - Basic usage
   - Starting/Stoping the PUEO Server/GUI

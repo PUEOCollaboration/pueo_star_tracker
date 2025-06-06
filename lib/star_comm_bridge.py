@@ -378,10 +378,10 @@ class StarCommBridge:
                     self.server.focuser.close_aperture()
                 elif cmd.aperture == 'opened':
                     self.server.focuser.open_aperture()
-                ret = Status.get_status(Status.SUCCESS, f"Command camera_set_aperture set to {cmd.aperture}.")
+                ret = Status.get_status(Status.SUCCESS, f"Camera aperture set to {cmd.aperture}.")
             elif commands == Commands.SET_APERTURE_POSITION:
                 self.server.camera_set_aperture_position(cmd)
-                ret = Status.get_status(Status.ERROR, "Command camera_set_aperture_position set")
+                ret = Status.get_status(Status.SUCCESS, "Camera aperture position set.")
             elif commands == Commands.SET_FOCUS_POSITION:
                 self.server.camera_set_focus_position(cmd)
                 ret = Status.get_status(Status.SUCCESS, "Focus position set.")
@@ -408,7 +408,7 @@ class StarCommBridge:
                 ret = Status.get_status(Status.SUCCESS, "New Gyro rates set.")
             elif commands == Commands.UPDATE_TIME:
                 self.server.camera_update_time(cmd)
-                ret = Status.get_status(Status.SUCCESS, "Time updated set.")
+                ret = Status.get_status(Status.SUCCESS, "Time updated.")
             elif commands == Commands.POWER_CYCLE:
                 self.server.camera_power_cycle(cmd)
                 ret = Status.get_status(Status.SUCCESS, "Camera/Focuser Power cycle completed.")

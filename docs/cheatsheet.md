@@ -111,3 +111,4 @@ The server starts automatically on boot via:
    {"command": "flight_mode", "data": {"method": "set", "mode": "flight"}}
    ```  
 4. **Stop server post-mission.**  
+

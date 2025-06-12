@@ -1,6 +1,14 @@
 # PUEO Star Camera Server Installation Procedure
 _Compiled by **Milan Štubljar** of [stubljar.com](https://stubljar.com) on 2025-01-08 v1.0_
 
+# Configuration
+
+| Hostname | enp1s0 MAC Address   | enp1s0 IP Address  | enp2s0 MAC Address   | enp3s0 MAC Address   | Status       |
+|----------|----------------------|--------------------|----------------------|----------------------|--------------|
+| erin-01  | `00:04:bf:c0:17:7a`  | 192.168.100.121    | `00:04:bf:c0:9b:8a`  | `00:04:bf:cc:01:5a`  | DHCP/Static  |
+| erin-02  | `00:04:bf:c0:ab:b9`  | 192.168.100.55     | `00:04:bf:c0:9b:bc`  | `00:04:bf:cc:8c:f7`  | DHCP/Static  |
+| erin-03  | `00:04:bf:c0:a0:d4`  | 192.168.100.61     | `00:04:bf:c0:9b:84`  | `00:04:bf:93:37:84`  | DHCP/Static  |
+
 # Installation Procedure
 
 ```

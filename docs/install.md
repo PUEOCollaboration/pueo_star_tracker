@@ -608,10 +608,7 @@ chmod +x run.sh
 
 ```
 
-
-
-
-## SBC1 Configuration
+## Single Board Computer (SBC) Configuration
 ```bash
 
 (.venv) pueo-star-tracker2@pueo-star-tracker2-EPU-4011-4012:~/Projects/pcc$ cat /etc/debian_version 
@@ -694,7 +691,7 @@ Bus 002 Device 001: ID 1d6b:0003 Linux Foundation 3.0 root hub
 ```
 ## Setting permissions for USB/Serial
 ```
-# Should be ardoino:
+# Should be Ardoino:
 sudo dmesg | grep -i "usb\|tty"
 # >>> usb 1-6: ch341-uart converter now attached to ttyUSB0
 
@@ -703,7 +700,71 @@ sudo chmod 666 /dev/ttyUSB0
 
 # For Focuser
 sudo chmod 666 /dev/ttyS0
+```
+## Setting Serial for Console/Getty Remote Backup Access
+### Serial Port Redirection
 
+```bash
+sudo nano /etc/default/grub
+
+GRUB_CMDLINE_LINUX_DEFAULT=""
+GRUB_CMDLINE_LINUX="console=tty0 console=ttyS0,115200n8"
+GRUB_TERMINAL="console serial"
+GRUB_SERIAL_COMMAND="serial --speed=115200 --unit=0 --word=8 --parity=no --stop=1"
+
+sudo update-grub
+```
+# Getty Setup 
+```bash
+# Install getty
+sudo apt-get update
+sudo apt-get install util-linux
+
+# Configure a service for getty
+# Create or Modify the Getty Service
+# Use systemd’s built-in serial-getty@.service (Recommended)
+sudo systemctl enable serial-getty@ttyS0.service
+sudo systemctl start serial-getty@ttyS0.service
+sudo systemctl edit serial-getty@ttyS0
+
+# Add this to the file:
+[Service]
+ExecStart=
+ExecStart=-/sbin/agetty -o "-p -- \\u" -s 115200 %I $TERM
+Restart=always
+RestartSec=5s
+
+# Save and
+sudo systemctl daemon-reload
+# Stop and Start or Restart Service 
+sudo systemctl stop serial-getty@ttyS0
+sudo systemctl start serial-getty@ttyS0
+sudo systemctl restart serial-getty@ttyS0
+
+# Check status
+sudo systemctl status serial-getty@ttyS0.service
+
+# Test - Connection - On Flight Computer, assuming the ttyS0 is also configured to connect to Erin
+sudo apt-get install minicom
+
+sudo minicom -D /dev/ttyS0 -b 115200
+
+#
+# Troubleshooting
+#
+# If getty isn't starting, check logs:
+journalctl -u serial-getty@ttyS0.service
+
+# Verify the serial port is available:
+ls -l /dev/ttyS0
+
+# Expected output: crw-rw---- 1 root dialout 4, 64 ...  
+# If not, fix permissions:
+sudo usermod -a -G dialout $USER
+sudo chmod 660 /dev/ttyS0
+
+# Check dmesg for serial port detection:
+dmesg | grep ttyS
 ```
 
 ## Setting up Chamber Test Mode
@@ -721,6 +782,12 @@ server_ip = 172.20.10.3
  
 2. Enable Chamber and Autonomous Mode at Startup
 ```ini
+# flight_mode: str: preflight, flight
+#   preflight: normal operation but images not saved (RAW, FINAL, ...)
+#   flight: normal operation
+flight_mode = 'flight'
+
+# Enable autonomous mode at startup
 run_autonomous = True
 # run_telemetry, set to True to enable collecting telemetry data at all times to logs/telemetry.log
 run_telemetry = True
@@ -855,7 +922,6 @@ cd ~/Projects/pcc/autogain
 cd ~/Projects/pcc/output
 cd ~/Projects/pcc/sd_card_path
 cd ~/Projects/pcc/sdd_path
-
 
 # ...
 # Delete all files in current folder (when rm -rf fails with argument to long)

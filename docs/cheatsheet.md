@@ -84,7 +84,8 @@ The server starts automatically on boot via:
 1. **Edit `conf/config.ini`:**  
    ```ini
    run_chamber = True  
-   flight_mode = flight  
+   flight_mode = flight
+   run_autonomous = False  
    ```  
 2. **Cleanup:**  
    ```bash
@@ -97,7 +98,8 @@ The server starts automatically on boot via:
 1. **Edit `conf/config.ini`:**  
    ```ini
    run_chamber = False  
-   flight_mode = preflight  
+   flight_mode = preflight
+   run_autonomous = False  
    ```  
 2. **Cleanup and restart server.**  
 3. **Start data recording during mission:**  

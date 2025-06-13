@@ -415,6 +415,9 @@ class StarCommBridge:
             elif commands == Commands.HOME_LENS:
                 self.server.camera_home_lens(cmd)
                 ret = Status.get_status(Status.SUCCESS, "Camera Home lens completed.")
+            elif commands == Commands.CHECK_LENS:
+                result = self.server.camera_check_lens(cmd)
+                ret = Status.success({'data': {'result': result}}, f"Camera Check lens completed.")
             elif commands == Commands.CHAMBER_MODE:
                 if cmd.method == 'set':
                     self.server.chamber_mode = cmd.mode

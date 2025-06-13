@@ -409,7 +409,7 @@ class PueoStarCameraOperation:
                 self.logit(f"There was an error with fitting: {e}")
                 sigma = self.cfg.sigma_error_value
                 # This needs to be read from a config file
-                focus_dict['sequence_contrast']['best_focus_pos'] = self.cfg.trial_focus_po
+                focus_dict['sequence_contrast']['best_focus_pos'] = self.cfg.trial_focus_pos
                 focus_dict['sequence_contrast']['status'] = False
         elif focus_method == 'sequence_diameter':
             # Autofocus score by mean diameters
@@ -2095,6 +2095,11 @@ class PueoStarCameraOperation:
         self.min_focus_position, self.max_focus_position = self.focuser.home_lens_focus()
         self.logit(
             f'Home Lens completed: new min/max positions: {self.min_focus_position}/{self.max_focus_position} old: {c_min}/{c_max}')
+
+    def camera_check_lens(self, cmd):
+        result = self.focuser.check_lens_focus()
+        self.logit(f'Check Lens completed: results: {result}')
+        return result
 
     @property
     def chamber_mode(self):

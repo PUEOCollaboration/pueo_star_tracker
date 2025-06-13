@@ -31,10 +31,11 @@ python pueo-cli.py <command> [<args>...]
 
 ### Focus Operations
 
-| Command        | Description                          | Arguments                     |
-|----------------|--------------------------------------|-------------------------------|
-| `home_lens`    | Perform focuser homing               | None                          |
-| `auto_focus`   | Run autofocus routine                | `[start_position] [stop_position] [step_count]`<br/>(all optional, but must provide all or none) |
+| Command      | Description                                 | Arguments                                                                                        |
+|--------------|---------------------------------------------|--------------------------------------------------------------------------------------------------|
+| `home_lens`  | Perform focuser homing                      | None                                                                                             |
+| `check_lens` | Perform focuser check lens (MZ, MZ, MI, MI) | None (```stop``` autonomous before running ```check_lens```)                                    |
+| `auto_focus` | Run autofocus routine                       | `[start_position] [stop_position] [step_count]`<br/>(all optional, but must provide all or none) |
 
 ### Camera Settings
 

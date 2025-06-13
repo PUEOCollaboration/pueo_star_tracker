@@ -195,7 +195,10 @@ class PueoSocketClient:
         stop_parser = subparsers.add_parser('stop', help='Stop autonomous mode')
 
         # Home lens command
-        home_parser = subparsers.add_parser('home_lens', help='Perform focuser homing')
+        home_lens_parser = subparsers.add_parser('home_lens', help='Perform focuser homing')
+
+        # Home lens command
+        check_lens_parser = subparsers.add_parser('check_lens', help='Perform focuser check lens')
 
         # Power cycle command
         power_parser = subparsers.add_parser('power_cycle', help='Powercycle and initialize camera and focuser')
@@ -300,6 +303,8 @@ class PueoSocketClient:
                 return cmd.pause_operation()
             elif args.command == 'home_lens':
                 return cmd.home_lens()
+            elif args.command == 'check_lens':
+                return cmd.check_lens()
             elif args.command == 'power_cycle':
                 return cmd.power_cycle()
             elif args.command == 'auto_focus':

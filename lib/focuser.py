@@ -366,6 +366,20 @@ class Focuser:
         logit(f'Aperture closed in {get_dt(t0)}.', color='magenta')
 
     def move_focus_to_zero(self):
+        """
+        Move Focus to Zero (mz)
+        Command Type : Legacy
+        Syntax : mz
+        Returns : DONE<signed_num_counts>,<flag>
+        Description
+            This command moves the lens focus to the zero position. The actual number of
+            counts moved as reported by the lens' encoder is given in <signed_num_counts>. <flag>
+            is 1 if the lens reports having hit a stop, 0 if it hasn't. Note that some lenses do not return
+            a 1 until the second time the stop is hit.
+        Example:
+            mz <CR>
+            DONE-1246,1
+        """
         self.server.write('Move focus to zero.')
         if not self.is_open():
             self.log.warning('Focuser connection closed.')
@@ -374,11 +388,27 @@ class Focuser:
         cmd = 'mz' + '\r'
         self.ser.write(cmd.encode('ascii'))
         out = self.ser.readline()
-        logit(f'Moved focus to 0.', color='magenta')
+        parts = out.decode('ascii').split('\r')
+        logit(f'Moved focus to 0. {parts}', color='magenta')
         self._focus_position = 0
         return out
 
     def move_focus_to_infinity(self):
+        """
+        Move Focus to Infinity (mi)
+        Command Type : Legacy
+        Syntax : mi
+        Returns : DONE<signed_num_counts>,<flag>
+        Description
+            This command moves the lens focus to the infinity position. The actual number of
+            counts moved as reported by the lens' encoder is given in <signed_num_counts>. <flag>
+            is 1 if the lens reports having hit a stop, 0 if it hasn't. Note that some lenses do not return
+            a 1 until the second time the stop is hit.
+
+        Example:
+            mi <CR>
+            DONE246,1
+        """
         self.server.write('Move focus to infinity.')
         if not self.is_open():
             self.log.warning('Focuser connection closed.')
@@ -387,7 +417,8 @@ class Focuser:
         cmd = 'mi' + '\r'
         self.ser.write(cmd.encode('ascii'))
         out = self.ser.readline()
-        logit(f'Moved focus to inf.', color='magenta')
+        parts = out.decode('ascii').split('\r')
+        logit(f'Moved focus to inf.  {parts}', color='magenta')
         self._focus_position = self.focus_inf
         return out
 
@@ -403,6 +434,81 @@ class Focuser:
         self._focus_position = 0
         return out
 
+    def get_signed_num_counts(self, input) -> (str, int, int):
+        """
+        Input format: <prefix>\rOK\rDONE<signed_num_counts>,<flag>\r
+        Example inputs:
+        1. b'mz\rOK\rDONE0,1\r'
+        2. b'mi\rOK\rDONE8808,1\r'
+
+        :return: (status, signed_num_counts, flag)
+        :rtype: str, int, int
+        """
+        status = 'ERROR'
+        signed_num_counts, flag = 0, 0  # Default return values in case of error
+
+        try:
+            # 1. Decode if input is bytes
+            # print(f'    RAW: {input}')
+            input_str = input.decode('ascii').strip() if isinstance(input, bytes) else input.strip()
+            # print(f'DECODED: {input_str}')
+
+            # 2. Split into parts using \r as separator
+            parts = [p for p in input_str.split('\r') if p]  # Remove empty parts
+            if len(parts) < 3:
+                return 'ERROR', 0, 0
+
+            # 3. Get status (should be 'OK') and DONE part
+            status = parts[1]  # The part after prefix and before DONE
+            if status != 'OK':
+                return 'ERROR', 0, 0
+
+            done_part = parts[2]
+            if not done_part.startswith('DONE'):
+                return 'ERROR', 0, 0
+
+            # 4. Extract the numeric values after DONE
+            data_part = done_part[4:]  # Remove 'DONE'
+            num_parts = data_part.split(',')
+            if len(num_parts) != 2:
+                return 'ERROR', 0, 0
+
+            # 5. Convert to integers
+            signed_num_counts = int(num_parts[0])
+            flag = int(num_parts[1])
+            status = 'OK'
+
+        except (AttributeError, ValueError, IndexError, UnicodeDecodeError) as e:
+            print(f'Error parsing input: {e}')
+            status, signed_num_counts, flag = 'ERROR', 0, 0
+
+        return status, signed_num_counts, flag
+
+    def check_lens_focus(self):
+        """
+        Execute MZ MZ MI MI and report total number of steps
+        :return:
+        :rtype:
+        """
+        commands = ['mz', 'mz', 'mi', 'mi']
+        current_focus_position = self.focus_position
+        results = []
+        for command in commands:
+            output = ''
+            if command == 'mz':
+                output = self.move_focus_to_zero()
+            elif command == 'mi':
+                output = self.move_focus_to_infinity()
+
+            status, signed_num_counts, flag = self.get_signed_num_counts(output)
+            # Report
+            results.append({'command': command, 'status': status, 'signed_num_counts': signed_num_counts, 'flag': flag})
+
+        # Move to original focus position
+        self.move_focus_position(current_focus_position)
+        self.log.debug(f'Check lens results: {results}')
+        return results
+
 # Example usage
 if __name__ == "__main__":
     logit('Running Focuser STANDALONE.')
@@ -412,7 +518,8 @@ if __name__ == "__main__":
             baud_rate = 115200
         focuser = Focuser(cfg)  # Replace with your port and baud rate
         # ... (your application logic) ...
-
+        results = focuser.check_lens_focus()
+        print(results)
 
     except Exception as e:
         logit(f"Error: {e}")

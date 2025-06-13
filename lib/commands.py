@@ -91,6 +91,7 @@ class Commands(Enum):
 
     POWER_CYCLE = 17
     HOME_LENS = 18
+    CHECK_LENS = 19
 
     CHAMBER_MODE = 97
     GET = 98
@@ -324,6 +325,9 @@ class Command:
             'params': {}
         },
         Commands.HOME_LENS.value: {
+            'params': {}
+        },
+        Commands.CHECK_LENS.value: {
             'params': {}
         },
         Commands.CHAMBER_MODE.value: {
@@ -636,6 +640,11 @@ class Command:
 
     def home_lens(self):
         command_data = {'command': Commands.HOME_LENS.name.lower(), 'data': {}}
+        self.define(command_data)
+        return self.command_data
+
+    def check_lens(self):
+        command_data = {'command': Commands.CHECK_LENS.name.lower(), 'data': {}}
         self.define(command_data)
         return self.command_data
 

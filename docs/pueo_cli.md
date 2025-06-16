@@ -287,6 +287,7 @@ INFO: Response time: 4.4ms Response:
         "run_telemetry": true,
         "autonomous": false,
         "solver": "solver2",
+        "status": "initializing (autofocus)"
         "cadence": 5.0,
         "Gain": 120,
         "Exposure": 30000,

@@ -99,6 +99,7 @@ class asi:
 
 class PueoStarCameraOperation:
     """Implements Pueo StarCamera Operation Main Server"""
+    _status = 'Initializing'
 
     def __init__(self, cfg):
 
@@ -106,6 +107,7 @@ class PueoStarCameraOperation:
         self.cfg = cfg
 
         # Params
+        self.status = 'Initializing'
         self.operation_enabled = self.cfg.run_autonomous
         self.img_cnt = 0
         self.solver = self.cfg.solver
@@ -277,6 +279,24 @@ class PueoStarCameraOperation:
         logit(msg, color=color)
         with suppress(Exception):
             self.server.write(msg, level)
+
+    @property
+    def status(self):
+        """Getter for current status"""
+        return self._status
+
+    @status.setter
+    def status(self, value):
+        """Setter for status with validation"""
+        valid_statuses = ['Initializing', 'Ready', 'Error', 'Stopped', 'Initializing (autofocus)']
+        if value not in valid_statuses:
+            raise ValueError(f"Invalid status. Must be one of: {valid_statuses}")
+        self._status = value
+        logit(f"PUEO Server Status changed to: {self._status}", color='green')  # Optional logging
+
+    def is_ready(self):
+        """Check if server is ready"""
+        return self._status == 'Ready'
 
     @staticmethod
     def get_daily_path(path: str,
@@ -1316,6 +1336,7 @@ class PueoStarCameraOperation:
 
         if self.cfg.run_autofocus:
             self.log.info('Running startup autofocus.')
+            self.status = 'Initializing (autofocus)'
             self.camera_autofocus()
         else:
             self.log.warning('Skipping startup autofocus. Set config::GENERAL::run_autofocus to True to enable.')
@@ -1329,7 +1350,7 @@ class PueoStarCameraOperation:
         # time_interval = 1000000 # Global
         prev_time = time.monotonic()
         command = ''
-        # TODO: By default server should run automaticaly and operation_enabled should be True
+        # TODO: By default server should run automatically and operation_enabled should be True
         online_auto_gain_enabled = False
         self.prev_img = []
         self.curr_img = []
@@ -1387,6 +1408,7 @@ class PueoStarCameraOperation:
             self.distortion_calibration_params = default_distortion_calibration_params
 
         logit('Entering main operational loop:', color='green')
+        self.status = 'Ready'
         while True:
             try:
                 self.main_loop()

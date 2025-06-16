@@ -7,6 +7,9 @@ from lib.star_comm_bridge import DummyPueoServer
 from lib.common import logit, get_dt
 
 class Focuser:
+    """
+    TODO: Make sure only one command is running at the same TIME!!!
+    """
     f_stop_sequence = [
         'f14', 'f15', 'f17', 'f18', 'f20', 'f22', 'f24', 'f26', 'f28', 'f30',
         'f33', 'f36', 'f40', 'f43', 'f48', 'f52', 'f56', 'f61', 'f67', 'f73',
@@ -238,14 +241,17 @@ class Focuser:
             self.log.warning('Focuser connection closed.')
             return 0, '??'
             # define aperture: -> fmin,num_stops,fmax
-        cmd = f'pa\r'
-        self.ser.write(cmd.encode('ascii'))
-        out = self.ser.readline()  # b'pa\rOK\r5,f54\r'
-        parts = out.decode('ascii').split('\r')
-        pos, self._aperture_f_val = parts[-2].replace('DONE', '').split(',')
-        logit(f"Focuser PA (Print Aperture Position): {parts} pos: {pos} f_val: {self._aperture_f_val}", color='magenta')
+        try:
+            cmd = f'pa\r'
+            self.ser.write(cmd.encode('ascii'))
+            out = self.ser.readline()  # b'pa\rOK\r5,f54\r'
+            parts = out.decode('ascii').split('\r')
+            pos, self._aperture_f_val = parts[-2].replace('DONE', '').split(',')
+            logit(f"Focuser PA (Print Aperture Position): {parts} pos: {pos} f_val: {self._aperture_f_val}", color='magenta')
 
-        self._aperture_pos = int(pos)
+            self._aperture_pos = int(pos)
+        except Exception as e:
+            return 0, '??'
         return self._aperture_pos, self._aperture_f_val
 
     @property

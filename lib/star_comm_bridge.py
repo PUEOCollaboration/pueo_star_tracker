@@ -48,6 +48,8 @@ from queue import Queue
 import errno
 import traceback
 from datetime import datetime
+import grpc
+from grpc import RpcError, StatusCode
 
 # Custom Imports
 from lib.commands import Command, Commands
@@ -354,9 +356,12 @@ class StarCommBridge:
         try:
             if commands == Commands.TAKE_IMAGE:
                 # Execute the take image command here
-                if self.server.operation_enabled is not None and not self.server.operation_enabled:
+                if self.server.operation_enabled is not None and not self.server.operation_enabled and self.server.is_ready():
                     self.server.camera_take_image(cmd)
                     ret = Status.get_status(Status.SUCCESS, "Image captured.")
+                elif not self.server.is_ready():
+                    self.server.server.messages.write(f'Warning: Cannot take image, server is not ready: {self.server.is_ready()}','warning')
+                    ret = Status.get_status(Status.ERROR,f"Warning: Cannot take image, server not ready: {self.server.status}")
                 else:
                     self.server.server.messages.write('Warning: Cannot take image, autonomous operation is enabled.', 'warning')
                     ret = Status.get_status(Status.ERROR, "'Warning: Cannot take image, autonomous operation is enabled.")
@@ -447,6 +452,7 @@ class StarCommBridge:
                         'run_telemetry': self.server.cfg.run_telemetry,
                         'autonomous': self.server.operation_enabled,
                         'solver': self.server.solver,
+                        'status': str(self.server.status).lower(),
                         'cadence': self.server.time_interval / 1e6
                     }
                     camera_settings = self.server.camera.get_control_values()
@@ -461,11 +467,23 @@ class StarCommBridge:
             else:
                 self.log.warning("Unknown command received: %s", commands)
                 return Status.get_status(Status.ERROR, f"Unknown command: {commands}")
-        except Exception as e:
-            ret = Status.get_status(Status.ERROR, f"Error running command: {commands}")
+        except (Exception, RpcError) as e:
+            # Get clean traceback lines
+            traceback_lines = [
+                line.strip()
+                for line in traceback.format_exception(type(e), e, e.__traceback__)
+                if line.strip()  # Remove empty lines
+            ]
             for line in traceback.format_exception(e):
                 self.server.logit(line.strip(), 'error') # .strip()
-                # logit(line, color='red')
+
+            # Build error data structure
+            error_data = {
+                'exception_type': type(e).__name__,
+                'exception_msg': str(e),
+                'traceback': traceback_lines,
+            }
+            ret = Status.error(error_data, f"Error running command: {commands}")
 
         self.server.camera_get_values()
         self.server.server.messages.write(f'Command {commands} status: {ret}')

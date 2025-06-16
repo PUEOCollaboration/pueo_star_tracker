@@ -68,6 +68,6 @@ class Status:
         return cls.get_status(cls.SUCCESS, message, data)
 
     @classmethod
-    def error(cls, message=None, data=None):
+    def error(cls, data=None, message=None):
         """Shortcut for error responses."""
         return cls.get_status(cls.ERROR, message, data)

@@ -18,7 +18,7 @@
 ### Autostart  
 The server starts automatically on boot via:  
 ```bash
-~/Projects/scripts/startup_commands.sh
+~/scripts/startup_commands.sh
 ```  
 **Processes:**  
 1. `CEDAR Detect Server`  
@@ -31,6 +31,53 @@ The server starts automatically on boot via:
 | CEDAR Server       | `~/Projects/pcc/logs/cedar_console.log` | N/A                            | `~/Projects/pcc-gui/logs/cedar.pid` |
 | PUEO CLI           | N/A                             | `~/Projects/pcc/logs/debug-client.log` | N/A                          |
 | PUEO GUI           | N/A                             | `~/Projects/pcc-gui/logs/debug-client.log` | N/A                          |
+
+### Automatic Start/Stop/Restart/Status using PUEO Server Status Tool
+```bash
+# Get Status:
+~/Projects/pcc/logs/status.sh
+# or 
+~/Projects/pcc/logs/status.sh status
+# Example output:
+VL Install: Installed & Enabled (Success)
+CEDAR Detect: Running (PIDs: 39977)
+PUEO Server: Running (PIDs: 39980,40181)
+
+# Start - will check automaticaly if the server is running already, stop it and startit.
+~/Projects/pcc/logs/status.sh start
+
+# Stop 
+~/Projects/pcc/logs/status.sh stop
+
+# Restart
+~/Projects/pcc/logs/status.sh restart
+# Example output:
+Stopping services (delay: 2s)...
+  CEDAR Detect: Terminated PIDs: 38631
+  PUEO Server: Terminated PIDs: 38634
+38844
+Starting services...
+  Executed: /home/pst/scripts/startup_commands.sh
+Waiting 5s for servers to initialize...
+
+Final Status:
+VL Install: Installed & Enabled (Success)
+CEDAR Detect: Running (PIDs: 39977)
+PUEO Server: Running (PIDs: 39980)
+
+# Help:
+~/Projects/pcc/logs/status.sh -h
+PUEO Server Status Tool
+Usage: ./status.sh [command]
+Commands:
+  status       Show current status (default)
+  start        Stop (if running) and start services
+  stop         Kill all CEDAR/PUEO processes
+  restart      Stop + Start services
+  -h, --help   Show this help
+
+Reports VL installation state and CEDAR/PUEO process status with PIDs
+```
 
 ### Manual Restart  
 1. **Stop existing processes:**  

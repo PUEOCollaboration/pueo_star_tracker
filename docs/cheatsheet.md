@@ -43,7 +43,7 @@ VL Install: Installed & Enabled (Success)
 CEDAR Detect: Running (PIDs: 39977)
 PUEO Server: Running (PIDs: 39980,40181)
 
-# Start - will check automaticaly if the server is running already, stop it and startit.
+# Start - will check automatically if the server is running already, stop it and startit.
 ~/Projects/pcc/logs/status.sh start
 
 # Stop 

@@ -159,3 +159,112 @@ Reports VL installation state and CEDAR/PUEO process status with PIDs
    ```  
 4. **Stop server post-mission.**  
 
+### Manual Autofocus/Autogain
+1) How to perform a **manual autofocus**. Where to find file generated/images:
+
+**Ensure:**
+- autonomous: stopped (pasued)
+- chamber_mode: False
+- flight_mode: flight
+
+```bash
+# CLI:
+./pc.sh stop 
+./pc.sh set_flight_mode flight
+./pc.sh set_chamber_mode False
+./pc.sh auto_focus
+```
+
+Note: The following **auto_focus** options are available.
+```bash
+$ python pueo_cli.py auto_focus -h
+pueo-cli v1.0.0
+Reading config file: conf/config.ini
+usage: pueo_cli.py auto_focus [-h] [start_position] [stop_position] [step_count]
+
+Positional args: [start] [stop] [step] (or none for defaults)
+
+positional arguments:
+  start_position  Start position value (default: 5000)
+  stop_position   Stop position value (default: 6000)
+  step_count      Step count value (default: 10)
+
+options:
+  -h, --help      show this help message and exit
+```
+
+
+The **resulting images** (flight_mode='flight') and files will reside in the "**autogain**" subfolder: ```~/Projects/pcc/autogain```
+
+```bash
+pst@erin-03:~/Projects/pcc/autogain$ ll
+total 376
+drwxr-xr-x 5 pst  pst  364544 Jun 16 06:36 ./
+drwxr-xr-x 6 root root   4096 Jun  2 03:26 ../
+drwxrwxr-x 2 pst  pst    4096 Jun 16 06:36 250616_063404.062499_auto_gain_exposure_images/
+    -rw-rw-r-- 1 pst pst    17508 Jun 16 06:34 250616_063406.175537_eg120_histogram.jpg
+    -rw-rw-r-- 1 pst pst 11090925 Jun 16 06:36 250616_063406.175537_eg120.png
+    -rw-rw-r-- 1 pst pst      240 Jun 16 06:34 250616_063406.175537_eg120.txt
+drwxrwxr-x 2 pst  pst    4096 Jun 16 06:36 250616_063429.005674_coarse_focus_images/
+    -rw-rw-r-- 1 pst pst 3876249 Jun 16 06:36 250616_063431.171664_f8242.png
+    -rw-rw-r-- 1 pst pst     240 Jun 16 06:34 250616_063431.171664_f8242.txt
+    -rw-rw-r-- 1 pst pst 3883078 Jun 16 06:36 250616_063440.798067_f8266.png
+    -rw-rw-r-- 1 pst pst     240 Jun 16 06:34 250616_063440.798067_f8266.txt
+    -rw-rw-r-- 1 pst pst 3886129 Jun 16 06:36 250616_063450.140885_f8291.png
+    -rw-rw-r-- 1 pst pst     240 Jun 16 06:34 250616_063450.140885_f8291.txt
+    -rw-rw-r-- 1 pst pst 3887147 Jun 16 06:36 250616_063459.389541_f8315.png
+    -rw-rw-r-- 1 pst pst     240 Jun 16 06:35 250616_063459.389541_f8315.txt
+    -rw-rw-r-- 1 pst pst 3889653 Jun 16 06:36 250616_063508.757726_f8340.png
+    -rw-rw-r-- 1 pst pst     240 Jun 16 06:35 250616_063508.757726_f8340.txt
+    -rw-rw-r-- 1 pst pst 3895876 Jun 16 06:36 250616_063517.927965_f8364.png
+    -rw-rw-r-- 1 pst pst     240 Jun 16 06:35 250616_063517.927965_f8364.txt
+    -rw-rw-r-- 1 pst pst 3901938 Jun 16 06:36 250616_063527.106097_f8389.png
+    -rw-rw-r-- 1 pst pst     240 Jun 16 06:35 250616_063527.106097_f8389.txt
+    -rw-rw-r-- 1 pst pst 3905954 Jun 16 06:36 250616_063536.366798_f8413.png
+    -rw-rw-r-- 1 pst pst     240 Jun 16 06:35 250616_063536.366798_f8413.txt
+    -rw-rw-r-- 1 pst pst 3902918 Jun 16 06:36 250616_063545.533872_f8438.png
+    -rw-rw-r-- 1 pst pst     240 Jun 16 06:35 250616_063545.533872_f8438.txt
+    -rw-rw-r-- 1 pst pst 3901951 Jun 16 06:36 250616_063554.712080_f8462.png
+    -rw-rw-r-- 1 pst pst     240 Jun 16 06:35 250616_063554.712080_f8462.txt
+    -rw-rw-r-- 1 pst pst 3914891 Jun 16 06:36 250616_063604.297356_f8352.png
+    -rw-rw-r-- 1 pst pst     240 Jun 16 06:36 250616_063604.297356_f8352.txt
+    -rw-rw-r-- 1 pst pst   45871 Jun 16 06:36 focus_score.png
+drwxrwxr-x 2 pst  pst    4096 Jun 16 06:36 250616_063639.671767_auto_gain_exposure_images/
+```
+
+
+3) How to perform a **manual autogain**. Where to find files generated images?
+Same as autofocus but the CLI command is auto_gain:
+```bash
+$ python pueo_cli.py auto_gain -h
+pueo-cli v1.0.0
+Reading config file: conf/config.ini
+usage: pueo_cli.py auto_gain [-h] [desired_max_pixel_value]
+
+positional arguments:
+  desired_max_pixel_value
+                        Auto gain desired max pixel value (default: 55702)
+
+options:
+  -h, --help            show this help message and exit
+```
+
+### Manual TAKE IMAGE
+1) How to **take a single image** at exposure time and gain. Where to find it
+? Really Windel?
+```bash
+./pc.sh stop 
+./pc.sh set_flight_mode flight
+./pc.sh set_chamber_mode False
+./pc.sh set_exposure 125
+./pc.sh set_gain 355
+./pc.sh set_focus 8200
+./pc.sh take_image
+
+# or ... 
+./pc.sh get_settings
+#  To fetch all current settings, gain, exposure, focus, modes...
+
+# Use ./pc.sh take_image -h
+# or refer to  pueo_cli.md documentation.
+```

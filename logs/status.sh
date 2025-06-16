@@ -1,11 +1,13 @@
 #!/bin/bash
-# PUEO Server Status Tool
-# Manages VL Install, CEDAR Detect, and PUEO Server with start/stop/restart capabilities
+# PUEO Server Status Tool v2.0
+# Manages VL Driver, Services, and Processes with start/stop/restart
 
 # Configuration
-TERMINATION_DELAY=2           # Configurable kill delay (seconds)
-STARTUP_DELAY=5               # 5-second post-start delay for Python initialization
+TERMINATION_DELAY=2
+STARTUP_DELAY=5
 STARTUP_SCRIPT="$HOME/scripts/startup_commands.sh"
+DRIVER_NAME="vldrivep"
+MODULES_CONF="/etc/modules-load.d/modules.conf"
 
 # Colors
 RED='\033[0;31m'
@@ -13,6 +15,25 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
+
+# --- Driver Check Functions ---
+
+check_driver_installed() {
+    # Check if driver module exists
+    if [[ -f "/lib/modules/$(uname -r)/$DRIVER_NAME.ko" ]]; then
+        # Check if loaded in kernel
+        if lsmod | grep -q "$DRIVER_NAME"; then
+            echo -e "${GREEN}Loaded${NC} (kernel module active)"
+        # Check if configured for auto-load
+        elif grep -q "^$DRIVER_NAME" "$MODULES_CONF" 2>/dev/null; then
+            echo -e "${GREEN}Installed${NC} (will load on boot)"
+        else
+            echo -e "${YELLOW}Installed but not configured${NC}"
+        fi
+    else
+        echo -e "${RED}Not Installed${NC}"
+    fi
+}
 
 # --- Core Functions ---
 
@@ -25,39 +46,32 @@ show_help() {
     echo "  stop         Kill all CEDAR/PUEO processes"
     echo "  restart      Stop + Start services"
     echo "  -h, --help   Show this help"
-    echo -e "\nReports VL installation state and CEDAR/PUEO process status with PIDs"
 }
 
 show_status() {
-    # VL Install Status
+    echo "=== System Status ==="
+
+    # 1. VL Driver Status
+    echo -n "VL Driver: "
+    check_driver_installed
+
+    # 2. VL Install Service
     if systemctl is-enabled vl_install.service &>/dev/null; then
         if [[ $(systemctl show -p ExecMainStatus vl_install.service | cut -d= -f2) -eq 0 ]]; then
-            vl_status="${GREEN}Installed & Enabled (Success)${NC}"
+            echo -e "VL Install: ${GREEN}Completed Successfully${NC}"
         else
-            vl_status="${YELLOW}Installed & Enabled (But Failed)${NC}"
+            echo -e "VL Install: ${YELLOW}Service Failed${NC}"
         fi
     else
-        vl_status="${RED}Not Installed${NC}"
+        echo -e "VL Install: ${RED}Not Configured${NC}"
     fi
-    echo -e "VL Install: ${vl_status}"
 
-    # CEDAR Status
+    # 3. Process Status
     cedar_pids=$(pgrep -f "cedar-detect-server" | tr '\n' ',' | sed 's/,$//')
-    if [[ -n "$cedar_pids" ]]; then
-        cedar_status="${GREEN}Running (PIDs: ${cedar_pids})${NC}"
-    else
-        cedar_status="${RED}Not Running${NC}"
-    fi
-    echo -e "CEDAR Detect: ${cedar_status}"
+    echo -e "CEDAR Detect: $([[ -n "$cedar_pids" ]] && echo "${GREEN}Running (PIDs: ${cedar_pids})${NC}" || echo "${RED}Not Running${NC}")"
 
-    # PUEO Status
     pueo_pids=$(pgrep -f "pueo_star_camera_operation" | tr '\n' ',' | sed 's/,$//')
-    if [[ -n "$pueo_pids" ]]; then
-        pueo_status="${GREEN}Running (PIDs: ${pueo_pids})${NC}"
-    else
-        pueo_status="${RED}Not Running${NC}"
-    fi
-    echo -e "PUEO Server: ${pueo_status}"
+    echo -e "PUEO Server: $([[ -n "$pueo_pids" ]] && echo "${GREEN}Running (PIDs: ${pueo_pids})${NC}" || echo "${RED}Not Running${NC}")"
 }
 
 stop_services() {

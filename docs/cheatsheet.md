@@ -250,8 +250,10 @@ options:
 ```
 
 ### Manual TAKE IMAGE
-1) How to **take a single image** at exposure time and gain. Where to find it
-? Really Windel?
+1) How to **take a single image** at exposure time and gain. Where to find it?
+
+**Really Windell?**
+
 ```bash
 ./pc.sh stop 
 ./pc.sh set_flight_mode flight
@@ -266,5 +268,16 @@ options:
 #  To fetch all current settings, gain, exposure, focus, modes...
 
 # Use ./pc.sh take_image -h
-# or refer to  pueo_cli.md documentation.
+$ python pueo_cli.py take_image -h
+pueo-cli v1.0.0
+Reading config file: conf/config.ini
+usage: pueo_cli.py take_image [-h] [{raw,solver1,solver2}]
+
+positional arguments:
+  {raw,solver1,solver2}
+                        Image type (default: solver2)
+
+options:
+  -h, --help            show this help message and exit
+# or refer to pueo_cli.md documentation in docs subfolder.
 ```

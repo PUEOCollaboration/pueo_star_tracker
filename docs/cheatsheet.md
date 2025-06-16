@@ -281,3 +281,34 @@ options:
   -h, --help            show this help message and exit
 # or refer to pueo_cli.md documentation in docs subfolder.
 ```
+
+The image is saved in 3 places:
+- in "**output**" - final images
+- in "**sd_card_path**" - downsized images
+- in "**ssd_path**" - raw images.
+
+within a **daily subfolder**: [YYYY-MM-DD]
+
+```bash
+pst@erin-03:~/Projects/pcc$ ll sd_card_path/
+total 960
+drwxr-xr-x 5 pst  pst    4096 Jun 16 00:31 ./
+drwxr-xr-x 4 root root   4096 Jun  1 23:41 ../
+drwxrwxr-x 2 pst  pst  425984 Jun 14 23:59 2025-06-14/
+drwxrwxr-x 2 pst  pst  544768 Jun 15 15:54 2025-06-15/
+drwxrwxr-x 2 pst  pst    4096 Jun 16 00:47 2025-06-16/
+pst@erin-03:~/Projects/pcc$ ll output/
+total 2580
+drwxr-xr-x 5 pst  pst     4096 Jun 16 00:31 ./
+drwxr-xr-x 6 root root    4096 Jun  2 03:26 ../
+drwxrwxr-x 2 pst  pst  1126400 Jun 15 00:00 2025-06-14/
+drwxrwxr-x 2 pst  pst  1503232 Jun 15 15:54 2025-06-15/
+drwxrwxr-x 2 pst  pst     4096 Jun 16 00:47 2025-06-16/
+pst@erin-03:~/Projects/pcc$ ll ssd_path/
+total 908
+drwxr-xr-x 5 pst  pst    4096 Jun 16 00:31 ./
+drwxr-xr-x 6 root root   4096 Jun  2 03:26 ../
+drwxrwxr-x 2 pst  pst  389120 Jun 14 23:59 2025-06-14/
+drwxrwxr-x 2 pst  pst  528384 Jun 15 15:43 2025-06-15/
+drwxrwxr-x 2 pst  pst    4096 Jun 16 00:47 2025-06-16/
+```

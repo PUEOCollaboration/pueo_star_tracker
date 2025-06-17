@@ -1231,9 +1231,31 @@ class PueoStarCameraOperation:
         # TODO: No autofocuser results in the None error in the line below.
         ## Doing initial autofocus run.##
 
-        # Define the start and stop focus sequence positions
+        # Define the start and stop, count focus sequence
+        # Command params:
+        #             'start_position': 300,
+        #             'stop_position': 400,
+        #             'step_count': 5
+
+        # Default values from config
         coarse_start_focus_pos = self.cfg.lab_best_focus - int(0.5*self.cfg.focus_tolerance_percentage/100 * (self.max_focus_position - self.min_focus_position))  # units of counts
         coarse_stop_focus_pos = self.cfg.lab_best_focus + int(0.5*self.cfg.focus_tolerance_percentage/100 * (self.max_focus_position - self.min_focus_position))  # units of counts
+        coarse_focus_step_count = self.cfg.coarse_focus_step_count
+        focus_params_src = 'config.ini'
+
+        # Override with cmd if provided (API CLI/GUI call)
+        if cmd:
+            coarse_start_focus_pos = int(cmd.start_position)
+            coarse_stop_focus_pos = int(cmd.stop_position)
+            coarse_focus_step_count = int( cmd.step_count)
+            focus_params_src = 'From API'
+
+        logit(
+            f'Autofocus params: src: {focus_params_src} '
+            f'range: {coarse_start_focus_pos} -> {coarse_stop_focus_pos} '
+            f'steps: {coarse_focus_step_count}',
+            color='yellow'
+        )
 
         ## Doing coarse focus adjustments##
         # Note there must be no : in the name for sake of using this as file/path name on linux/windows.
@@ -1256,8 +1278,7 @@ class PueoStarCameraOperation:
         # TODO: Recheck if autofocus should be done when running a program on its own...
         # best_focus = self.cfg.lab_best_focus
         self.best_focus, self.stdev = self.do_autofocus_routine(self.focus_image_path, coarse_start_focus_pos,
-                                                                coarse_stop_focus_pos,
-                                                                self.cfg.coarse_focus_step_count,
+                                                                coarse_stop_focus_pos, coarse_focus_step_count,
                                                                 self.max_focus_position,
                                                                 focus_method)
 

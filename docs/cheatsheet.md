@@ -313,3 +313,55 @@ drwxrwxr-x 2 pst  pst  389120 Jun 14 23:59 2025-06-14/
 drwxrwxr-x 2 pst  pst  528384 Jun 15 15:43 2025-06-15/
 drwxrwxr-x 2 pst  pst    4096 Jun 16 00:47 2025-06-16/
 ```
+
+### Field Standalone **TESTING**
+The motivation of this use case is having **PUEO Star Tracker** on the field for testing and primarily manual operation (autonomous not enabled).
+
+The server shall become ```ready``` after startup/restart within 30 or so seconds.
+
+**Key highlights:** 
+- No startup autofocus (speedup initialisation phase after server startup)
+- Startup Autonomous Mode off
+- Startup Flight mode set to ```flight``` (images will be saved)
+- Chamber off
+- Telemetry on
+
+```bash
+```bash
+# Edit conf/config.ini and set:
+flight_mode = flight
+run_autofocus = False
+enable_autogain_with_autofocus = False
+run_autonomous = False
+run_telemetry = True
+run_chamber = False
+
+# Next commands are REFERENCE commands only!!!
+
+# stop would stop autonomous, but it is already stopped with config.ini:run_autonomous = False
+./pc.sh stop 
+
+# flight mode already set in config.ini::flight_mode = flight
+./pc.sh set_flight_mode flight
+
+# Chamber mode is already disabled in config.ini:run_chamber = False
+./pc.sh set_chamber_mode False
+
+# Set YOUR own Exposure/Gain/Focus
+./pc.sh set_exposure 125
+./pc.sh set_gain 355
+./pc.sh set_focus 8200
+
+# run autofocus
+./pc.sh auto_focus 3000 5000 5 False
+
+# Take ONE image using default solver as per config.ini:solver setting
+./pc.sh take_image
+
+# Take ONE image using solver1 (Windel Detect + ESA Tetra3 Solve)
+./pc.sh take_image solver1 
+
+# Take ONE image using solver2 (Cedar Detect + Cedar Tetra3 Solve
+./pc.sh take_image solver2
+
+```

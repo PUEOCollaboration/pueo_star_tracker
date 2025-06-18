@@ -105,6 +105,7 @@ class PueoStarCameraOperation:
         self.cfg = cfg
 
         # Params
+        self.start_t0 = time.monotonic()
         self.status = 'Initializing'
         self.operation_enabled = self.cfg.run_autonomous
         self.img_cnt = 0
@@ -290,7 +291,7 @@ class PueoStarCameraOperation:
         if value not in valid_statuses:
             raise ValueError(f"Invalid status. Must be one of: {valid_statuses}")
         self._status = value
-        logit(f"PUEO Server Status changed to: {self._status}", color='green')  # Optional logging
+        logit(f"PUEO Server Status changed to: {self._status} [{get_dt(self.start_t0)}]", color='green')  # Optional logging
 
     def is_ready(self):
         """Check if server is ready"""

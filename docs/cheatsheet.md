@@ -177,20 +177,21 @@ Reports VL installation state and CEDAR/PUEO process status with PIDs
 
 Note: The following **auto_focus** options are available.
 ```bash
-$ python pueo_cli.py auto_focus -h
+python pueo_cli.py auto_focus -h
 pueo-cli v1.0.0
 Reading config file: conf/config.ini
-usage: pueo_cli.py auto_focus [-h] [start_position] [stop_position] [step_count]
+usage: pueo_cli.py auto_focus [-h] [start_position] [stop_position] [step_count] [enable_autogain]
 
 Positional args: [start] [stop] [step] (or none for defaults)
 
 positional arguments:
-  start_position  Start position value (default: 5000)
-  stop_position   Stop position value (default: 6000)
-  step_count      Step count value (default: 10)
+  start_position   Start position value (default: 5000)
+  stop_position    Stop position value (default: 6000)
+  step_count       Step count value (default: 10)
+  enable_autogain  Enable Autogain (default: False) (True/False, true/false, 0/1, yes/no)
 
 options:
-  -h, --help      show this help message and exit
+  -h, --help       show this help message and exit
 ```
 
 

@@ -358,10 +358,10 @@ run_chamber = False
 # Take ONE image using default solver as per config.ini:solver setting
 ./pc.sh take_image
 
-# Take ONE image using solver1 (Windel Detect + ESA Tetra3 Solve)
+# Take ONE image using solver1 (Windel Detect + ESA Tetra3 Solver)
 ./pc.sh take_image solver1 
 
-# Take ONE image using solver2 (Cedar Detect + Cedar Tetra3 Solve
+# Take ONE image using solver2 (Cedar Detect + Cedar Tetra3 Solver)
 ./pc.sh take_image solver2
 
 ```

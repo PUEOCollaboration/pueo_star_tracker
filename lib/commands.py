@@ -111,6 +111,7 @@ class Command:
     start_position = None
     stop_position = None
     step_count = None
+    enable_autogain = None
     focus_coefficient = None
     gain = None
     aperture = None
@@ -199,6 +200,9 @@ class Command:
                     'min': 0.0,
                     'max': 100.0
                 },
+                'enable_autogain': {
+                    'type': 'bool'
+                }
             }
         },
         Commands.SET_GAIN.value: {
@@ -413,6 +417,7 @@ class Command:
                 self.add_attribute('focus_coefficient', self.data['focus_coefficient'], validation['params'])
             else:
                 self.add_attribute('step_count', self.data['step_count'], validation['params'])
+            self.add_attribute('enable_autogain', self.data['enable_autogain'], validation['params'])
 
         elif self.command == Commands.SET_GAIN:
             self.add_attribute('gain', self.data['gain'], validation['params'])
@@ -535,13 +540,14 @@ class Command:
         return self.command_data
 
     def run_autofocus(self, focus_method: str, start_position: int, stop_position: int, step_count: int = 5,
-                      focus_coefficient: float = 1.0):
+                      focus_coefficient: float = 1.0, enable_autogain: bool = True):
         command_data = {
             'command': Commands.RUN_AUTOFOCUS.name.lower(),
             'data': {
                 'focus_method': focus_method,
                 'start_position': start_position,
                 'stop_position': stop_position,
+                'enable_autogain': enable_autogain
             }
         }
         if focus_method == 'sequence_twostep':
@@ -678,14 +684,15 @@ if __name__ == "__main__":
     print(Commands.TAKE_IMAGE)
 
     cmd = Command()
-    command_data1 = cmd.run_autofocus('sequence_twostep', 300, 400, focus_coefficient=25.2)
+    command_data1 = cmd.run_autofocus('sequence_twostep', 300, 400, focus_coefficient=25.2, enable_autogain=True)
     command_data1_raw = {
         'command': 'run_autofocus',
         'data': {
             'focus_method': 'sequence_diameter',
             'start_position': 300,
             'stop_position': 400,
-            'step_count': 5
+            'step_count': 5,
+            'enable_autogain': False
         }
     }
 
@@ -724,6 +731,7 @@ if __name__ == "__main__":
                 print(cmd.focus_coefficient)
             else:
                 print(cmd.step_count)
+            print(cmd.enable_autogain)
         elif cmd.command == Commands.UPDATE_TIME:
             print(cmd.new_time)
         elif cmd.command == Commands.FLIGHT_TELEMETRY:

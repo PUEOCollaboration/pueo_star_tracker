@@ -31,11 +31,11 @@ python pueo-cli.py <command> [<args>...]
 
 ### Focus Operations
 
-| Command      | Description                                 | Arguments                                                                                        |
-|--------------|---------------------------------------------|--------------------------------------------------------------------------------------------------|
-| `home_lens`  | Perform focuser homing                      | None                                                                                             |
-| `check_lens` | Perform focuser check lens (MZ, MZ, MI, MI) | None (```stop``` autonomous before running ```check_lens```)                                    |
-| `auto_focus` | Run autofocus routine                       | `[start_position] [stop_position] [step_count]`<br/>(all optional, but must provide all or none) |
+| Command      | Description                                 | Arguments                                                                                         |
+|--------------|---------------------------------------------|---------------------------------------------------------------------------------------------------|
+| `home_lens`  | Perform focuser homing                      | None                                                                                              |
+| `check_lens` | Perform focuser check lens (MZ, MZ, MI, MI) | None (```stop``` autonomous before running ```check_lens```)                                      |
+| `auto_focus` | Run autofocus routine                       | `[start_position] [stop_position] [step_count] [enable_autogain]`<br/>(all optional, but must provide all or none) |
 
 ### Camera Settings
 
@@ -119,7 +119,7 @@ python pueo-cli.py take_image raw
 python pueo-cli.py auto_focus
 
 # Run autofocus with custom parameters
-python pueo-cli.py auto_focus 100 200 10
+python pueo-cli.py auto_focus 100 200 10 False
 
 # Home the lens
 python pueo-cli.py home_lens
@@ -138,7 +138,7 @@ python pueo-cli.py auto_exposure
 ```
 
 ## Notes
-1. When using `auto_focus`, either provide all three parameters or none (to use defaults)
+1. When using `auto_focus`, either provide all four parameters or none (to use defaults)
 2. Most set commands require root privileges
 3. Default values are loaded from the configuration file
 

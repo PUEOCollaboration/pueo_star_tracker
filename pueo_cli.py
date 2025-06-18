@@ -142,6 +142,42 @@ class PueoSocketClient:
             self.log.error(f"Command failed: {str(e)}")
             return None, None
 
+    @staticmethod
+    def str2bool(v):
+        """Converts a string or boolean input to a boolean value.
+
+        This method is useful for parsing boolean values from configuration files,
+        CLI arguments, or environment variables where the input might be a string
+        (e.g., 'true', 'false') instead of a native boolean.
+
+        Args:
+            v (str | bool): Input value to convert. Accepts:
+                - Native Python booleans (returned as-is).
+                - Case-insensitive strings:
+                    - True values: 'yes', 'true', 't', 'y', '1'
+                    - False values: 'no', 'false', 'f', 'n', '0'
+
+        Returns:
+            bool: Parsed boolean value.
+
+        Raises:
+            argparse.ArgumentTypeError: If input is neither a boolean nor a recognized string.
+
+        Examples:
+            >>> str2bool(True)   # Returns True
+            >>> str2bool('YES')   # Returns True
+            >>> str2bool('0')     # Returns False
+            >>> str2bool('maybe') # Raises argparse.ArgumentTypeError
+        """
+        if isinstance(v, bool):
+            return v
+        if v.lower() in ('yes', 'true', 't', 'y', '1'):
+            return True
+        elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+            return False
+        else:
+            raise argparse.ArgumentTypeError('Boolean value expected.')
+
     def parse_cmd(self) -> dict:
         """
         Parse command line arguments and generate appropriate command dictionary.
@@ -208,16 +244,21 @@ class PueoSocketClient:
         autofocus_parser.add_argument('start_position', nargs='?', type=int, default=self.cfg.autofocus_start_position, help='Start position value (default: %(default)s)')
         autofocus_parser.add_argument('stop_position', nargs='?', type=int, default=self.cfg.autofocus_stop_position, help='Stop position value (default: %(default)s)')
         autofocus_parser.add_argument('step_count', nargs='?', type=int, default=self.cfg.autofocus_step_count, help='Step count value (default: %(default)s)')
+        autofocus_parser.add_argument('enable_autogain', nargs='?', type=self.str2bool, default=self.cfg.enable_autogain_with_autofocus,help='Enable Autogain (default: %(default)s) (True/False, true/false, 0/1, yes/no)')
 
         # Custom validation
         def autofocus_validate_args(args):
+            # Check which args were EXPLICITLY provided (even if they match defaults)
             provided = [
-                args.start_position != self.cfg.autofocus_start_position,
-                args.stop_position != self.cfg.autofocus_stop_position,
-                args.step_count != self.cfg.autofocus_step_count
+                hasattr(args, '_start_position'),  # True if user typed --start_position
+                hasattr(args, '_stop_position'),  # Same for other args
+                hasattr(args, '_step_count'),
+                hasattr(args, '_enable_autogain')
             ]
+
             if any(provided) and not all(provided):
-                autofocus_parser.error("Either provide ALL positional arguments (start_position, stop_position, step_count) or NONE to use defaults.")
+                autofocus_parser.error(
+                    "Either provide ALL positional arguments (start_position, stop_position, step_count, enable_autogain) or NONE to use defaults.")
 
         autofocus_parser.set_defaults(validator=autofocus_validate_args)
 
@@ -236,20 +277,10 @@ class PueoSocketClient:
                                       help='Image type (default: %(default)s)')
 
         # Chamber mode commands
-        def str2bool(v):
-            if isinstance(v, bool):
-                return v
-            if v.lower() in ('yes', 'true', 't', 'y', '1'):
-                return True
-            elif v.lower() in ('no', 'false', 'f', 'n', '0'):
-                return False
-            else:
-                raise argparse.ArgumentTypeError('Boolean value expected.')
-
         subparsers.add_parser('get_chamber_mode', help='Get current chamber mode')
 
         set_chamber_parser = subparsers.add_parser('set_chamber_mode', help='Set chamber mode')
-        set_chamber_parser.add_argument('mode', type=str2bool,
+        set_chamber_parser.add_argument('mode', type=self.str2bool,
                                         help='Chamber mode to set (True/False, true/false, 0/1, yes/no)')
 
         # Flight mode commands
@@ -308,7 +339,7 @@ class PueoSocketClient:
             elif args.command == 'power_cycle':
                 return cmd.power_cycle()
             elif args.command == 'auto_focus':
-                return cmd.run_autofocus(self.cfg.autofocus_method, args.start_position,args.stop_position, args.step_count)
+                return cmd.run_autofocus(self.cfg.autofocus_method, args.start_position,args.stop_position, args.step_count, enable_autogain=args.enable_autogain)
             elif args.command == 'auto_gain':
                 return cmd.run_autogain(args.desired_max_pixel_value)
             elif args.command == 'auto_exposure':

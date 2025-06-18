@@ -200,7 +200,8 @@ class Config:
     max_processes = 4
     operation_timeout = 60
     current_timeout = 200
-    run_autofocus = False
+    run_autofocus = True
+    enable_autogain_with_autofocus = True
     run_autonomous = False
     run_telemetry = True
     run_chamber = False
@@ -543,6 +544,8 @@ class Config:
         self.operation_timeout = self.config.getint('GENERAL', 'operation_timeout', fallback=self.operation_timeout)
         self.current_timeout = self.config.getint('GENERAL', 'current_timeout', fallback=self.current_timeout)
         self.run_autofocus = self.config.getboolean('GENERAL', 'run_autofocus', fallback=self.run_autofocus)
+        self.enable_autogain_with_autofocus = self.config.getboolean('GENERAL', 'enable_autogain_with_autofocus', fallback=self.enable_autogain_with_autofocus)
+
         self.run_autonomous = self.config.getboolean('GENERAL', 'run_autonomous', fallback=self.run_autonomous)
         self.run_telemetry = self.config.getboolean('GENERAL', 'run_telemetry', fallback=self.run_telemetry)
         self.run_chamber = self.config.getboolean('GENERAL', 'run_chamber', fallback=self.run_chamber)
@@ -755,6 +758,7 @@ class Config:
             'operation_timeout': self.operation_timeout,
             'current_timeout': self.current_timeout,
             'run_autofocus': self.run_autofocus,
+            'enable_autogain_with_autofocus': self.enable_autogain_with_autofocus,
             'run_autonomous': self.run_autonomous,
             'run_telemetry': self.run_telemetry,
             'run_chamber': self.run_chamber,

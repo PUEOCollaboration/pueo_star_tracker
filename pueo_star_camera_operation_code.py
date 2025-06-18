@@ -1,3 +1,4 @@
+# Use install.md for installing the PUEO Server/GUI and requirements.txt file with venv and pip
 # pip install opencv-python
 # pip install scipy
 # pip install astropy
@@ -10,9 +11,6 @@
 # pip install pyusb
 # pip install tqdm
 # pip install
-# notes:
-# 1) If you get timeout issues with the camera. Need to power cycle the camera.
-# 2)
 
 # Standard Imports
 import logging
@@ -72,11 +70,11 @@ from lib.commands import Command
 # CONFIG - [GLOBAL]
 config_file = 'config.ini'  # Note this file can only be changed HERE!!! IT is still config.ini, but just for ref.
 
-__version__ = '1.00a'
+__version__ = '1.00b'
 __created_modified__ = '2024-10-22'
-__last_modified__ = '2025-01-06'
+__last_modified__ = '2025-06-18'
 __release_date__ = '2025-01-06'
-__program__ = 'Pueo Star Camera Server'
+__program__ = 'Pueo Star Tracker Server'
 __program_short__ = 'pueo_star_camera_operation_code.py'
 __author__ = 'Windell Egami, Milan Stubljar of Stubljar d.o.o. <info@stubljar.com>'
 
@@ -1143,14 +1141,14 @@ class PueoStarCameraOperation:
         t0 = time.monotonic()
 
         focus_method = cmd.focus_method if cmd else 'sequence_contrast'
+        enable_autofocus = True
+        # Autofocus.AutoGain
+        enable_autogain = bool(cmd.enable_autogain) if cmd else self.cfg.enable_autogain_with_autofocus
 
-        self.logit(f'Refocusing (take gain/focus sequences). Focus Method: {focus_method}', color='cyan')
-        self.logit('\n** Autogain **', color='cyan')
+        self.logit(f'Refocusing (take gain/focus sequences). Focus Method: {focus_method} Autogain Enabled: {enable_autogain}', color='cyan')
         # GUI: AutoGain True, AutoExposure: True ==> enable_autogain = True
         #   else: enable_autogain = False
 
-        # AutoGain
-        enable_autofocus = True
         self.first_time = True
         # Run set focus/gain/exposure as per GUI
         if not enable_autofocus:
@@ -1199,18 +1197,20 @@ class PueoStarCameraOperation:
 
             # first move to the lab best focus position.
             self.focuser.move_focus_position(self.cfg.lab_best_focus)
-            self.logit('Moved to lab best focus position before running autogain.')
+            self.logit('Moved to lab best focus position before running autogain.', color='yellow')
 
-            #find best gain value
-            self.logit("Running auto gain before autofocus routine...", color='cyan')
-            self.best_gain_value = self.do_auto_gain_routine(
-                auto_gain_image_path,
-                gain_value,
-                self.desired_max_pix_value,
-                self.pixel_saturated_value,
-                self.pixel_count_tolerance)
-            self.logit(f"Auto gain done. Best gain: {self.best_gain_value}")
-
+            # Find best gain value
+            if enable_autogain:
+                self.logit("Running auto gain before autofocus routine.", color='cyan')
+                self.best_gain_value = self.do_auto_gain_routine(
+                    auto_gain_image_path,
+                    gain_value,
+                    self.desired_max_pix_value,
+                    self.pixel_saturated_value,
+                    self.pixel_count_tolerance)
+                self.logit(f"Auto gain done. Best gain: {self.best_gain_value}")
+            else:
+                self.logit("SKipping auto gain before autofocus routine.", color='cyan')
             ###############################
         # change to low resolution, low dynamic range##
         # take an image at full resolution and binning ==2
@@ -1253,7 +1253,8 @@ class PueoStarCameraOperation:
         logit(
             f'Autofocus params: src: {focus_params_src} '
             f'range: {coarse_start_focus_pos} -> {coarse_stop_focus_pos} '
-            f'steps: {coarse_focus_step_count}',
+            f'steps: {coarse_focus_step_count} ' 
+            f'enable_autogain: {enable_autogain}',
             color='yellow'
         )
 
@@ -1309,16 +1310,19 @@ class PueoStarCameraOperation:
         #set gain value to what is the best known currently
         gain_value = self.best_gain_value   #this is the best gain from the iterations
 
-        # find best gain value
-        self.logit("Running auto gain routine after autofocus...", color='cyan')
-        self.best_gain_value = self.do_auto_gain_routine(
-            auto_gain_image_path,
-            gain_value,
-            self.desired_max_pix_value,
-            self.pixel_saturated_value,
-            self.pixel_count_tolerance)
-        self.logit(f"Auto gain done. Best gain: {self.best_gain_value}")
-        ##############################
+        # Find best gain value
+        if enable_autogain:
+            self.logit("Running auto gain routine after autofocus.", color='cyan')
+            self.best_gain_value = self.do_auto_gain_routine(
+                auto_gain_image_path,
+                gain_value,
+                self.desired_max_pix_value,
+                self.pixel_saturated_value,
+                self.pixel_count_tolerance)
+            self.logit(f"Auto gain done. Best gain: {self.best_gain_value}")
+            ##############################
+        else:
+            self.logit("SKipping auto gain after autofocus routine.", color='cyan')
 
         self.logit(f'camera autofocus completed in {get_dt(t0)}.', color='cyan')
 

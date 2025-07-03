@@ -1588,10 +1588,25 @@ class PueoStarCameraOperation:
             for key, value in self.astrometry.items():
                 file.write(f"{key}: {value}\n")
 
-            plate_scale = 0
-            with suppress(TypeError):
-                plate_scale = self.astrometry.get('FOV', 0.0) / self.curr_img.shape[1]
-            file.write(f"\nplate scale : {plate_scale} arcseconds per pixel\n")
+            plate_scale = 0.0
+            try:
+                fov_deg = float(self.astrometry.get('FOV', 0.0))
+                if fov_deg > 0 and hasattr(self, 'curr_img') and self.curr_img is not None:
+                    plate_scale = (fov_deg / self.curr_img.shape[1]) * 3600  # arcsec/pixel
+            except (TypeError, AttributeError, ValueError) as e:
+                # Fallback to nominal FOV if astrometry fails
+                nominal_fov = self.cfg.lab_fov  # degrees
+                if hasattr(self, 'curr_img') and self.curr_img is not None:
+                    plate_scale = (nominal_fov / self.curr_img.shape[1]) * 3600
+
+            plate_scale_value = f'{plate_scale:.6f} arcsec/px'
+            file.write(f"\nplate scale : {plate_scale_value}\n")
+            if self.astrometry:
+                # Added for overlay
+                # TODO: HAve these captured differently!!!
+                self.astrometry['PlateScale'] = plate_scale_value
+                exposure = self.camera.get_control_values().get('Exposure', 'unknown')
+                self.astrometry['ExposureTime'] = f'{exposure} us' # microsec
 
     def info_add_misc_info(self, omega_x, omega_y, omega_z, pk):
         with open(self.info_file, "a", encoding='utf-8') as file:

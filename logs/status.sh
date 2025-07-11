@@ -45,6 +45,7 @@ show_help() {
     echo "  start        Stop (if running) and start services"
     echo "  stop         Kill all CEDAR/PUEO processes"
     echo "  restart      Stop + Start services"
+    echo "  shutdown     Stop services and power off system"
     echo "  -h, --help   Show this help"
 }
 
@@ -109,6 +110,13 @@ start_services() {
     fi
 }
 
+shutdown_server() {
+    echo -e "${YELLOW}Initiating shutdown sequence...${NC}"
+    stop_services
+    echo -e "${RED}System will now power off${NC}"
+    sudo shutdown now
+}
+
 # --- Command Handling ---
 case "$1" in
     start)
@@ -127,6 +135,9 @@ case "$1" in
         start_services
         echo -e "\n${GREEN}Final Status:${NC}"
         show_status
+        ;;
+    shutdown)
+        shutdown_server
         ;;
     status|"")
         show_status

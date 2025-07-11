@@ -32,7 +32,7 @@ The server starts automatically on boot via:
 | PUEO CLI           | N/A                             | `~/Projects/pcc/logs/debug-client.log` | N/A                          |
 | PUEO GUI           | N/A                             | `~/Projects/pcc-gui/logs/debug-client.log` | N/A                          |
 
-### Automatic Start/Stop/Restart/Status using PUEO Server Status Tool
+### Automatic Start/Stop/Restart/Status/Shutdown using PUEO Server Status Tool
 ```bash
 # Get Status:
 ~/Projects/pcc/logs/status.sh
@@ -74,6 +74,7 @@ Commands:
   start        Stop (if running) and start services
   stop         Kill all CEDAR/PUEO processes
   restart      Stop + Start services
+  shutdown     Stop services and power off system
   -h, --help   Show this help
 
 Reports VL installation state and CEDAR/PUEO process status with PIDs

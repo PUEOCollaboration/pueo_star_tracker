@@ -98,12 +98,58 @@ def global_background_estimation(
     return cleaned_img
 
 
+def create_level_filter(n: int) -> np.ndarray:
+    """
+    Create a local leveling filter matrix of size n×n.
+
+    The filter has ones in the following pattern:
+    - First and last rows have ones in all positions except the first and last
+    - First and last columns have ones in all positions except the first and last
+    - All other positions are zeros
+    The matrix is then normalized by the sum of all ones.
+
+    Args:
+        n: Size of the square matrix to create (must be odd and >= 3)
+
+    Returns:
+        A normalized n×n numpy array representing the level filter
+
+    Raises:
+        ValueError: If n is even or less than 3
+    """
+    # Validate input
+    if n % 2 == 0:
+        raise ValueError("n must be odd")
+    if n < 3:
+        raise ValueError("n must be at least 3")
+
+    # Initialize matrix with zeros
+    matrix = np.zeros((n, n), dtype=int)
+
+    # Set first and last rows
+    matrix[0, 1:-1] = 1  # First row, middle columns
+    matrix[-1, 1:-1] = 1  # Last row, middle columns
+
+    # Set first and last columns
+    matrix[1:-1, 0] = 1  # Middle rows, first column
+    matrix[1:-1, -1] = 1  # Middle rows, last column
+
+    # Calculate sum of ones for normalization
+    ones_sum = matrix.sum()
+
+    # Normalize the matrix
+    normalized_matrix = matrix / ones_sum
+
+    return normalized_matrix
+
+
 def local_levels_background_estimation(
         img,
         log_file_path="",
         leveling_filter_downscale_factor: int = 4,
         return_partial_images=False,
         partial_results_path="./partial_results/",
+        level_filter: int = 9
 ):
     """Estimate and subtract local background levels in an image by applying a leveling
     filter.
@@ -124,14 +170,15 @@ def local_levels_background_estimation(
             background and background-subtracted image). Defaults to False.
         partial_results_path (str, optional): The directory path where intermediate results will be saved
         if `return_partial_images` is True. Defaults to "./partial_results/".
-
+        level_filter (int): The size of the star level filter, shall be 5..199 and an odd number.
     Returns:
         tuple: A tuple containing two numpy arrays:
             - cleaned_img (numpy.ndarray): The image with the local background subtracted.
             - local_levels (numpy.ndarray): The estimated local background for each pixel in the image.
     """
     # (9 × 9 px) local leveling filter
-    level_filter = (1 / 28.0) * np.array(
+    # 28 is the SUM of the ones in the actual array
+    level_filter_array = (1 / 28.0) * np.array(
         [
             [0, 1, 1, 1, 1, 1, 1, 1, 0],
             [1, 0, 0, 0, 0, 0, 0, 0, 1],
@@ -145,13 +192,14 @@ def local_levels_background_estimation(
         ]
     )
 
+    level_filter_array = create_level_filter(level_filter)
     # Downsample the image using local mean
     # TODO: Done leveling_filter_downscale_factor = 4
     downscale_factor = leveling_filter_downscale_factor
     downsampled_img = downscale_local_mean(img, (downscale_factor, downscale_factor))
 
     # Calculate the local level of the downsampled image
-    local_levels = convolve2d(downsampled_img, level_filter, boundary="symm", mode="same")
+    local_levels = convolve2d(downsampled_img, level_filter_array, boundary="symm", mode="same")
     # Resize using nearest-neighbor interpolation
     local_levels_resized = cv2.resize(local_levels, (img.shape[1], img.shape[0]), interpolation=cv2.INTER_LINEAR)
 

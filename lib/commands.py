@@ -45,7 +45,7 @@ class Commands(Enum):
         run_autofocus <desired_max_pixel_value>
         # TODO
            ## Note mix_pixel_value is a TYPO shall be max_pixel_value
-           ## mix_pixel_value : int (0 .. 65535)
+           ## mix_pixel_value : int (0 ..16383)
 
            ##NEXT ARE TO BE CHECKED!!!!
            init_gain_value : int (120..570)        config: best_gain_value
@@ -93,10 +93,13 @@ class Commands(Enum):
     HOME_LENS = 18
     CHECK_LENS = 19
 
+    SET_LEVEL_FILTER = 20
+
     CHAMBER_MODE = 97
     GET = 98
     FLIGHT_MODE = 99
     FLIGHT_TELEMETRY = 100
+
 
     @classmethod
     def from_string(cls, string: str):
@@ -254,7 +257,7 @@ class Command:
                 'desired_max_pixel_value': {
                     'type': 'int',
                     'min': 0,
-                    'max': 65535
+                    'max': 16383
                 }
             }
         },
@@ -263,7 +266,7 @@ class Command:
                 'desired_max_pixel_value': {
                     'type': 'int',
                     'min': 0,
-                    'max': 65535
+                    'max': 16383
                 }
             }
         },
@@ -334,6 +337,17 @@ class Command:
         Commands.CHECK_LENS.value: {
             'params': {}
         },
+        Commands.SET_LEVEL_FILTER.value: {
+            'params': {
+                'level': {
+                    'type': 'int',
+                    'min': 5,
+                    'max': 199,
+                    'odd': True,
+                    'default': 9
+                }
+            }
+        },
         Commands.CHAMBER_MODE.value: {
             'params': {
                 'method': {
@@ -351,7 +365,7 @@ class Command:
             'params': {
                 'param': {
                     'type': 'list',
-                    'values': ['aperture', 'aperture_position', 'exposure', 'gain', 'focus', 'settings'],
+                    'values': ['aperture', 'aperture_position', 'exposure', 'gain', 'focus', 'settings', 'level_filter'],
                 },
             },
         },
@@ -458,6 +472,8 @@ class Command:
             # The chamber_mode is applicable for the set method
             if self.method == 'set':
                 self.add_attribute('mode', self.data['mode'], validation['params'])
+        elif self.command == Commands.SET_LEVEL_FILTER:
+            self.add_attribute('level', self.data['level'], validation['params'])
         # ...
         elif self.command == Commands.GET:
             self.add_attribute('param', self.data['param'], validation['params'])
@@ -480,13 +496,14 @@ class Command:
                 self.data['limit'] = validation['params']['limit']['default']
             self.add_attribute('limit', self.data['limit'], validation['params'])
 
-    def add_attribute(self, name, value, validation=None):
+    def add_attribute_old(self, name, value, validation=None):
         if validation is not None:
             rules = validation[name]
             var_type = rules['type']
             if var_type == 'list' and value not in rules['values']:
                 raise ValueError(f'Invalid value: name: {name}: {value} allowed values: {rules["values"]}')
-            elif var_type == 'int' and (int(value) < rules['min'] or rules['max'] < int(value)):
+            elif var_type == 'int' and (int(value) < rules['min'] or rules['max'] < int(value) or
+                                        rules.get['odd', False] and int(value)%2==0):
                 raise ValueError(f'Invalid value: name: {name}: {value} range: {rules["min"]} .. {rules["max"]}')
             elif var_type == 'float' and (float(value) < rules['min'] or rules['max'] < float(value)):
                 raise ValueError(f'Invalid value: name: {name}: {value} range: {rules["min"]} .. {rules["max"]}')
@@ -498,6 +515,93 @@ class Command:
             #     self.__annotations__[name] = int
             # if var_type == 'float':
             #     self.__annotations__[name] = float
+
+    def add_attribute(self, name, value, validation=None):
+        """
+        Dynamically adds an attribute to the object with optional validation.
+
+        Args:
+            name (str): The name of the attribute to add.
+            value (Any): The value to assign to the attribute.
+            validation (dict, optional): A dictionary containing validation rules.
+                Expected structure:
+                {
+                    "name": {
+                        "type": "int" | "float" | "list" | "timestamp",
+                        "min": int | float,  # Optional (for int/float)
+                        "max": int | float,  # Optional (for int/float)
+                        "odd": bool,         # Optional (for int, requires odd values)
+                        "values": list,     # Required (for list, allowed values)
+                    }
+                }
+
+        Raises:
+            ValueError: If validation fails (invalid value, out of range, etc.).
+            KeyError: If the validation rule for `name` is missing required keys.
+
+        Example:
+            >>> obj = MyClass()
+            >>> validation_rules = {"age": {"type": "int", "min": 0, "max": 120}}
+            >>> obj.add_attribute("age", 30, validation_rules)  # Valid
+            >>> obj.add_attribute("age", 150, validation_rules) # Raises ValueError
+        """
+        if validation is None:
+            setattr(self, name, value)
+            return
+
+        # Get validation rules for the attribute
+        rules = validation.get(name)
+        if not rules:
+            raise KeyError(f"Validation rule for '{name}' not found.")
+
+        var_type = rules.get('type')
+        if var_type is None:
+            raise KeyError(f"Missing 'type' in validation rules for '{name}'.")
+
+        try:
+            # --- List Validation ---
+            if var_type == 'list':
+                allowed_values = rules.get('values', [])
+                if value not in allowed_values:
+                    raise ValueError(
+                        f"Invalid value for '{name}': {value}. Allowed values: {allowed_values}"
+                    )
+
+            # --- Integer Validation ---
+            elif var_type == 'int':
+                value_int = int(value)
+                min_val = rules.get('min', float('-inf'))  # Default: no lower bound
+                max_val = rules.get('max', float('inf'))  # Default: no upper bound
+
+                if value_int < min_val or value_int > max_val:
+                    raise ValueError(
+                        f"Value for '{name}' ({value_int}) out of range. "
+                        f"Allowed: {min_val}..{max_val}"
+                    )
+                if rules.get('odd', False) and value_int % 2 == 0:
+                    raise ValueError(f"Value for '{name}' must be odd (got {value_int}).")
+
+            # --- Float Validation ---
+            elif var_type == 'float':
+                value_float = float(value)
+                min_val = rules.get('min', float('-inf'))
+                max_val = rules.get('max', float('inf'))
+
+                if value_float < min_val or value_float > max_val:
+                    raise ValueError(
+                        f"Value for '{name}' ({value_float}) out of range. "
+                        f"Allowed: {min_val}..{max_val}"
+                    )
+
+            # --- Timestamp Conversion ---
+            elif var_type == 'timestamp':
+                value = convert_to_timestamp(value)  # Assumes this function exists
+
+            # Set the attribute if validation passes
+            setattr(self, name, value)
+
+        except (ValueError, TypeError) as e:
+            raise ValueError(f"Validation failed for '{name}': {str(e)}")
 
     def __setattr__(self, name, value):
         if name in self.__dict__:
@@ -611,6 +715,8 @@ class Command:
             return self.set_focus_position(value)
         elif command in ['gain', 'set_gain']:
             return self.set_gain(value)
+        elif command in ['level_filter', 'set_level_filter']:
+            return self.set_level_filter(value)
         raise ValueError('Invalid command.')
 
     def enable_distortion_correction(self, fov: float, distortion_parameter1: float, distortion_parameter2: float):
@@ -651,6 +757,11 @@ class Command:
 
     def check_lens(self):
         command_data = {'command': Commands.CHECK_LENS.name.lower(), 'data': {}}
+        self.define(command_data)
+        return self.command_data
+
+    def set_level_filter(self, level: int):
+        command_data = {'command': Commands.SET_LEVEL_FILTER.name.lower(), 'data': {'level': level}}
         self.define(command_data)
         return self.command_data
 
@@ -719,6 +830,8 @@ if __name__ == "__main__":
         cmd.get('aperture_position'),
         cmd.chamber_mode('set', True),
         cmd.chamber_mode('get'),
+        cmd.set('level_filter', 6),
+        cmd.get('level_filter'),
     ]
     for cmd_dict in cmds:
         cmd = Command(cmd_dict)

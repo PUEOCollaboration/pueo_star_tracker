@@ -296,8 +296,8 @@ class PueoSocketClient:
                                                  help='Number of last solutions (default: %(default)s)')
 
         # Parameter get commands
-        get_list = ['aperture', 'aperture_position', 'focus', 'exposure', 'gain', 'settings']
-        set_list = ['aperture', 'aperture_position', 'focus', 'exposure', 'gain']
+        get_list = ['aperture', 'aperture_position', 'focus', 'exposure', 'gain', 'level_filter', 'settings']
+        set_list = ['aperture', 'aperture_position', 'focus', 'exposure', 'gain', 'level_filter']
         for param in get_list:
             subparsers.add_parser(f'get_{param}', help=f'Get current {param} value')
 
@@ -361,7 +361,7 @@ class PueoSocketClient:
                 return cmd.get(param)
             elif args.command.startswith('set_'):
                 param = args.command[4:]  # Remove 'set_' prefix
-                # Handle set_aperture, set_aperture_position, set_exposure, set_focus, set_gain
+                # Handle set_aperture, set_aperture_position, set_exposure, set_focus, set_gain, set_level_filter
                 return cmd.set(param, args.value)
             else:
                 raise ValueError(f"Unknown command: {args.command}")

@@ -423,6 +423,10 @@ class StarCommBridge:
             elif commands == Commands.CHECK_LENS:
                 result = self.server.camera_check_lens(cmd)
                 ret = Status.success({'data': {'result': result}}, f"Camera Check lens completed.")
+            elif commands == Commands.SET_LEVEL_FILTER:
+                # self.server.camera_set_gain(cmd)
+                self.server.camera_set_level_filter(cmd)
+                ret = Status.get_status(Status.SUCCESS, "Level filter set.")
             elif commands == Commands.CHAMBER_MODE:
                 if cmd.method == 'set':
                     self.server.chamber_mode = cmd.mode
@@ -439,6 +443,8 @@ class StarCommBridge:
                 elif cmd.param in ['exposure', 'gain']:
                     camera_settings = self.server.camera.get_control_values()
                     value = camera_settings['Gain'] if cmd.param == 'gain' else camera_settings['Exposure']
+                elif cmd.param == 'level_filter':
+                    value = self.server.level_filter
                 elif cmd.param == 'settings':
                     aperture_pos, aperture_f_val = self.server.focuser.get_aperture_position()
                     value = {

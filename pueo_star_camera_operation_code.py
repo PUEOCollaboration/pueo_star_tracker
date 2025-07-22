@@ -113,6 +113,8 @@ class PueoStarCameraOperation:
         self._flight_mode = self.cfg.flight_mode
         self._chamber_mode = self.cfg.run_chamber
 
+        self._level_filter = self.cfg.level_filter
+
         self.time_interval: int = self.cfg.time_interval
         self.cadence: float = self.time_interval / 1e6
 
@@ -224,7 +226,7 @@ class PueoStarCameraOperation:
 
         # Create camera object
         self.camera = PueoStarCamera(self.cfg)
-        self.camera_dummy = DummyCamera()
+        self.camera_dummy = DummyCamera(self.cfg)
 
         # Create focuser object
         self.focuser = Focuser(self.cfg)
@@ -972,7 +974,8 @@ class PueoStarCameraOperation:
         # read image in array format. From camera
         if is_array:
             # Scale the 16-bit values to 8-bit (0-255) range
-            scaled_data = ((img / 65535.0) * 255).astype(np.uint8)
+            scale_factor = float(2 ** self.cfg.pixel_well_depth) - 1
+            scaled_data = ((img / scale_factor) * 255).astype(np.uint8)
             # Create a BGR image
             img_bgr = cv2.merge([scaled_data, scaled_data, scaled_data])
         else:
@@ -1000,7 +1003,8 @@ class PueoStarCameraOperation:
         # local background estimation
         cleaned_img, background_img = local_levels_background_estimation(img=img, log_file_path=log_file_path,
                                                                          return_partial_images=return_partial_images,
-                                                                         leveling_filter_downscale_factor=self.cfg.leveling_filter_downscale_factor)
+                                                                         leveling_filter_downscale_factor=self.cfg.leveling_filter_downscale_factor,
+                                                                         level_filter=self.level_filter)
         self.logit("--------Find sources--------")
         bkg_threshold = self.cfg.img_bkg_threshold  # img_bkg_threshold = 3.1
         masked_image, estimated_noise = find_sources(img, background_img, bkg_threshold, return_partial_images,
@@ -1483,14 +1487,15 @@ class PueoStarCameraOperation:
 
         return gain_value
 
-    def info_add_image_info(self, camera_settings, curr_utc_timestamp, curr_serial_utc_timestamp):
+    def info_add_image_info(self, camera_settings, curr_utc_timestamp):
         unique_pixel_values = np.unique(self.curr_img)  # Get distinct pixel values
         median_pixel_value = np.median(unique_pixel_values)  # Median of unique counts
 
         with open(self.info_file, "a", encoding='utf-8') as file:
             file.write("Image type : Single standard operating image\n")
             file.write(f"system timestamp : {curr_utc_timestamp}\n")
-            file.write(f"serial timestamp : {curr_serial_utc_timestamp}\n")
+            # Removing the serial timestamp  -  not required.
+            # file.write(f"serial timestamp : {curr_serial_utc_timestamp}\n")
             file.write(f"exposure time (us) : {camera_settings['Exposure']}\n")
             file.write(f"gain (cB) : {camera_settings['Gain']}\n")
             file.write(f"focus position : {self.focuser.focus_position}\n")
@@ -1692,7 +1697,7 @@ class PueoStarCameraOperation:
         dt = datetime.datetime.now(timezone.utc)
         utc_time = dt.replace(tzinfo=timezone.utc)
         curr_utc_timestamp = utc_time.timestamp()
-        curr_serial_utc_timestamp = self.serial_utc_update + time.monotonic() - self.serial_time_datum
+        # curr_serial_utc_timestamp = self.serial_utc_update + time.monotonic() - self.serial_time_datum
         timestamp_string = dt.strftime(self.timestamp_fmt)  # Used for filename, ':' should not be used.
 
         self.info_file = f"{self.get_daily_path(self.cfg.final_path)}/log_{timestamp_string}.txt"
@@ -1735,7 +1740,7 @@ class PueoStarCameraOperation:
         self.logit(f"Max pixel: {np.max(self.curr_img)}, Min pixel: {np.min(self.curr_img)}. ")
 
         # Write image info to log
-        self.info_add_image_info(camera_settings, curr_utc_timestamp, curr_serial_utc_timestamp)
+        self.info_add_image_info(camera_settings, curr_utc_timestamp)
 
         # Periodic Autogain (in autonomous mode)
         # Single iteration keeps the camera in range.
@@ -1772,7 +1777,8 @@ class PueoStarCameraOperation:
             save_raws_result = self.pool.apply_async(
                 save_raws,
                 args=(self.curr_img, self.get_daily_path(self.cfg.ssd_path), self.get_daily_path(self.cfg.sd_card_path),
-                      image_file, self.cfg.scale_factors, self.cfg.resize_mode, self.cfg.png_compression, self.is_flight
+                      image_file, self.cfg.scale_factors, self.cfg.resize_mode, self.cfg.png_compression, self.is_flight,
+                      self.cfg.inspection_settings
                       )
             )
 
@@ -2163,6 +2169,21 @@ class PueoStarCameraOperation:
         result = self.focuser.check_lens_focus()
         self.logit(f'Check Lens completed: results: {result}')
         return result
+
+    def camera_set_level_filter(self, cmd):
+        level = cmd.level
+        self.level_filter = int(level)
+        self.logit(f'Changing star detection level filter to: {level} pixels')
+
+    @property
+    def level_filter(self):
+        """Getter for level_filter (no arguments allowed)."""
+        return self._level_filter
+
+    @level_filter.setter
+    def level_filter(self, value: bool):
+        """Setter for level_filter."""
+        self._level_filter = value
 
     @property
     def chamber_mode(self):

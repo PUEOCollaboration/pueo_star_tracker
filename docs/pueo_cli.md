@@ -75,6 +75,13 @@ Note: Number of solutions kept by server is defined in ```config.ini```, default
 fq_max_size = 1
 ```
 
+### Solver Settings
+
+| Command           | Description                          | Arguments                     |
+|-------------------|--------------------------------------|-------------------------------|
+| `get_level_filter` | Get current star level filter value. | None                          |
+| `set_level_filter`  | Set star level filter value.         | `<level>` |
+
 ### Parameter Access Commands
 
 #### Get Commands
@@ -84,6 +91,7 @@ pueo-cli.py get_aperture_position
 pueo-cli.py get_focus
 pueo-cli.py get_exposure
 pueo-cli.py get_gain
+pueo-cli.py get_filter_level
 pueo-cli.py get_settings
 ```
 
@@ -94,6 +102,8 @@ pueo-cli.py set_aperture_position <value>
 pueo-cli.py set_focus <value>
 pueo-cli.py set_exposure <value>
 pueo-cli.py set_gain <value>
+pueo-cli.py set_filter_level <value>
+
 ```
 
 ## Examples

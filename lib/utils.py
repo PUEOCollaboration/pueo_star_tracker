@@ -3,6 +3,8 @@ import time
 import logging
 import os
 import datetime
+from pathlib import Path
+from typing import Union, List, Tuple
 
 # External imports
 from astropy.io import fits
@@ -103,7 +105,7 @@ def read_image_grayscale(image_path: str) -> np.ndarray:
     return img
 
 
-def read_image_BGR(image_path: str) -> np.ndarray:
+def read_image_BGR(image_path: str, pixel_well_depth=14) -> np.ndarray:
     """Load JPGs, PNGs and FITs in BGR
 
     Args:
@@ -112,10 +114,11 @@ def read_image_BGR(image_path: str) -> np.ndarray:
     Returns:
         np.ndarray: image array
     """
+    scale_factor = float(2 ** pixel_well_depth) - 1
     if os.path.splitext(image_path)[1] == ".FIT":
         img = read_fits(image_path)
         # Normalize data
-        img = ((img / 65535.0) * 255).astype(np.uint8)
+        img = ((img /scale_factor) * 255).astype(np.uint8)
         # Create a BGR image
         img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
     elif os.path.splitext(image_path)[1] in [".PNG", ".png", ".jpg", ".JPEG"]:
@@ -123,7 +126,7 @@ def read_image_BGR(image_path: str) -> np.ndarray:
     elif os.path.splitext(image_path)[1] == ".tiff":
         img = cv2.imread(image_path, cv2.IMREAD_UNCHANGED)
         # Scale the 16-bit values to 8-bit (0-255) range
-        scaled_data = ((img / 65535.0) * 255).astype(np.uint8)
+        scaled_data = ((img / scale_factor) * 255).astype(np.uint8)
         # Create a BGR image
         img = cv2.merge([scaled_data, scaled_data, scaled_data])
     else:
@@ -416,8 +419,115 @@ def image_downscale_orig(img, downscale_factors, image_filename, overlay=None, d
     cv2.imwrite(image_filename,downscaled_img)
     log.debug(f'Saved downscaled image to sd path: {image_filename} in {get_dt(t0)}.')
 
+def convert_dummy_to_mono(img):
+    """
+    Convert dummy camera RGB image (2822x4144x3, uint8)
+    to monochrome (2822x4144, uint16) like real ASI camera.
 
-def image_resize(img, scale_factors, image_filename, overlay=None, resize_mode='downscale', png_compression=0):
+    Args:
+        img (np.ndarray): Input image (either real ASI mono or dummy RGB).
+
+    Returns:
+        np.ndarray: Monochrome image in ASI format (2822x4144, uint16).
+    """
+    # Check if image is from dummy (3-channel RGB)
+    if len(img.shape) == 3 and img.shape[2] == 3 and img.dtype == np.uint8:
+        print("Detected dummy camera RGB image. Converting to monochrome...")
+        # Convert RGB to grayscale (luminance formula)
+        mono = np.dot(img[..., :3], [0.299, 0.587, 0.114]).astype(np.uint16)
+        # Scale 8-bit (0-255) to 16-bit (0-65535) to mimic ASI RAW16
+        mono = (mono * 257).astype(np.uint16)  # 255 * 257 = 65535
+        return mono
+    else:
+        print("Image is already monochrome or not a dummy RGB.")
+        return img  # Return unchanged if not dummy RGB
+
+
+def save_as_jpeg_with_stretch(img_16bit, jpeg_path, quality=80, lower_percentile=1, upper_percentile=99):
+    """
+    Convert 16-bit monochrome ASI image to 8-bit JPEG with contrast stretching.
+
+    Args:
+        img_16bit (np.ndarray): 16-bit input image (shape: height × width).
+        jpeg_path (str): Output JPEG path.
+        quality (int): JPEG quality (0-100).
+        lower_percentile (float): Lower percentile for stretching (e.g., 1%).
+        upper_percentile (float): Upper percentile for stretching (e.g., 99%).
+    """
+    # Calculate percentiles to ignore outliers (e.g., hot pixels)
+    low_val = np.percentile(img_16bit, lower_percentile)
+    high_val = np.percentile(img_16bit, upper_percentile)
+
+    # Stretch contrast to [0, 255] and convert to 8-bit
+    img_stretched = np.clip((img_16bit - low_val) * (255.0 / (high_val - low_val)), 0, 255)
+    img_8bit = img_stretched.astype(np.uint8)
+
+    # Save as JPEG
+    cv2.imwrite(jpeg_path, img_8bit, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
+
+def delete_trash(
+    trash: Union[str, List[Tuple[float, str]]],
+    ext: str = '.txt',
+    keep: int = 5
+) -> None:
+    """
+    Deletes the oldest files, keeping the most recent 'keep' files.
+    Handles both folder paths and pre-processed file lists.
+
+    Args:
+        trash: Either:
+            - A folder path (str) to scan for files with given extension, or
+            - A list of tuples [(timestamp, filepath)] of files to process
+        ext: File extension to filter by (if trash is a folder path)
+        keep: Number of most recent files to preserve
+
+    Behavior:
+        - For folder input: Finds all files with given extension, gets their creation times,
+          and deletes oldest, keeping newest 'keep' files.
+        - For list input: Processes the given files directly using existing tuple logic.
+    """
+    if not trash:
+        log.debug("Trash is empty. Nothing to delete.")
+        return
+
+    if keep <= 0:
+        log.debug("Invalid keep value. Must be greater than 0.")
+        return
+
+    # Handle folder path input
+    if isinstance(trash, str):
+        folder_path = Path(trash)
+        if not folder_path.exists():
+            log.debug(f"Folder not found: {folder_path}")
+            return
+
+        # Create list of (creation_time, filepath) tuples
+        file_list = []
+        for file in folder_path.glob(f'*{ext}'):
+            try:
+                ctime = file.stat().st_ctime
+                file_list.append((ctime, str(file)))
+            except OSError as e:
+                log.debug(f"Error processing {file}: {e}")
+                continue
+
+        trash = file_list
+
+    # Original logic for processing file list
+    trash.sort(key=lambda item: item[0])  # Sort by timestamp (oldest first)
+    files_to_delete = trash[:-keep] if keep < len(trash) else []
+
+    for timestamp, file in files_to_delete:
+        try:
+            os.remove(file)
+            log.debug(f"Deleted: {file} (timestamp: {timestamp})")
+        except FileNotFoundError:
+            log.debug(f"File not found: {file}")
+        except OSError as e:
+            log.debug(f"Error deleting {file}: {e}")
+
+
+def image_resize(img, scale_factors, image_filename, overlay=None, resize_mode='downscale', png_compression=0, is_inspection=False, jpeg_settings: dict | None = None):
     """
     Resize an image using either downscaling (with interpolation or local mean) or downsampling.
 
@@ -449,7 +559,8 @@ def image_resize(img, scale_factors, image_filename, overlay=None, resize_mode='
     log.debug(f'scale_factors: {scale_factors} mode: {resize_mode}')
 
     print_img_info(img, 'orig')
-    img = convert_to_3d(img)
+    # TODO: Why did we convert to 3d?
+    # img = convert_to_3d(img)
 
     if resize_mode == 'local_mean':
         # Convert each element of the tuple to an integer
@@ -475,6 +586,7 @@ def image_resize(img, scale_factors, image_filename, overlay=None, resize_mode='
         # Resize the image using OpenCV's resize function with INTER_AREA interpolation
         resized_img = cv2.resize(img, new_dimensions, interpolation=cv2.INTER_AREA)
         log.debug(f'resized: {img.shape} -> {resized_img.shape}')
+        pass
     elif resize_mode == 'downsample':
         # Downsample by selecting every nth pixel
         resized_img = img[::int(scale_factors[0]), ::int(scale_factors[1])]
@@ -491,15 +603,35 @@ def image_resize(img, scale_factors, image_filename, overlay=None, resize_mode='
 
     print_img_info(resized_img, 'resized')
 
-
     cv2.imwrite(image_filename, resized_img, [int(cv2.IMWRITE_PNG_COMPRESSION), png_compression])
     # Get file size in MB (converted from bytes)
     file_size = os.path.getsize(image_filename) / (1024 * 1024)  # bytes to MB conversion
     log.debug(f'Saved resized image to sd path: {image_filename} compression: {png_compression} file_size: {file_size:.2f} Mb in {get_dt(t0)}.')
 
+    # Save as JPEG with 80% quality (add this line)
+    # Using the inspection settings
+    if is_inspection:
+        jpeg_settings = jpeg_settings if jpeg_settings else {}
+        images_keep = jpeg_settings.get('images_keep', 100)
+        inspection_path = jpeg_settings.get('path', 'inspection_images/')
+        quality = jpeg_settings.get('quality', 80)
+        lower_percentile = jpeg_settings.get('lower_percentile', 1)
+        upper_percentile = jpeg_settings.get('upper_percentile', 99)
+
+        # Ensure inspection_path exists
+        os.makedirs(inspection_path, exist_ok=True)
+
+        # Create proper path for JPEG file
+        base_filename = os.path.basename(image_filename)  # Get just the filename
+        jpeg_basename = base_filename.replace(".png", ".jpg")
+        jpeg_filename = os.path.join(inspection_path, jpeg_basename)  # Full path
+
+        save_as_jpeg_with_stretch(resized_img, jpeg_filename, quality, lower_percentile, upper_percentile)
+        delete_trash(inspection_path, ext='.jpg', keep=images_keep)
+
     return resized_img.shape
 
-def save_raws(img, ssd_path="", sd_card_path="", image_name="", scale_factors=(8, 8), resize_mode='downscale', png_compression=0, is_save=True):
+def save_raws(img, ssd_path="", sd_card_path="", image_name="", scale_factors=(8, 8), resize_mode='downscale', png_compression=0, is_save=True, jpeg_settings: dict | None = None):
     # Save original image to ssd
     img1 = img  # .copy()
     image_filename = f"{ssd_path}/{image_name}-raw.png"
@@ -507,13 +639,16 @@ def save_raws(img, ssd_path="", sd_card_path="", image_name="", scale_factors=(8
     # The IMWRITE_PNG_COMPRESSION - 0: The compression level (0 = no compression, 9 = maximum compression), see config.ini
     # Only save files in flight mode
     if is_save:
+        # img1 = convert_dummy_to_mono(img1) # if RGB it will convert, else nothing orig image is returned
         cv2.imwrite(image_filename, img1, [int(cv2.IMWRITE_PNG_COMPRESSION), png_compression])
     log.debug(f'Saved original image to ssd path: {image_filename} in {get_dt(t0)}.')
 
     # Save downscaled image to sd card
     # downscale_factors = (8, 8)
     image_resized_filename = f"{sd_card_path}/{image_name}-raw-ds.png"
-    image_resized_shape = image_resize(img1, scale_factors, image_resized_filename, 'Raw Image', resize_mode=resize_mode)
+    jpeg_settings = jpeg_settings if jpeg_settings else {}
+    image_resized_shape = image_resize(img1, scale_factors, image_resized_filename, 'Raw Image',
+                                       resize_mode=resize_mode, is_inspection=True, jpeg_settings=jpeg_settings)
 
     return image_filename, img.shape, image_resized_filename, image_resized_shape
 

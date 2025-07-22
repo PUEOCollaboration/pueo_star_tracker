@@ -512,7 +512,9 @@ class Astrometry:
         # read image in array format. From camera
         if is_array:
             # Scale the 16-bit values to 8-bit (0-255) range
-            scaled_data = ((img / 65535.0) * 255).astype(np.uint8)
+            # The scale_factor = 2**14 - 1 = 16383.0
+            scale_factor = float(2 ** self.cfg.pixel_well_depth) - 1
+            scaled_data = ((img / scale_factor) * 255).astype(np.uint8)
             # scaled_data = img
             # img = scaled_data
             # Create a BGR image

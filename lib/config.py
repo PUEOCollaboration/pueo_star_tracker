@@ -99,11 +99,12 @@ class Config:
     asi_flip = 0    # Flip: {'Name': 'Flip', 'Description': 'Flip: 0->None 1->Horiz 2->Vert 3->Both', 'MaxValue': 3, 'MinValue': 0, 'DefaultValue': 0, 'IsAutoSupported': False, 'IsWritable': True, 'ControlType': 9}
     roi_bins = 2
     pixel_saturated_value_raw8 = 255
-    pixel_saturated_value_raw16 = 65532
+    pixel_saturated_value_raw16 = 16383
     stdev_error_value = 9999
 
     camera_id_vendor = 0x03c3
     camera_id_product = 0x294a
+    pixel_well_depth = 14
 
     sbc_dio_camera_pin = 4
     sbc_dio_focuser_pin = 5
@@ -140,6 +141,7 @@ class Config:
     dilate_mask_iterations = 1
     dilation_radius = 5
     min_potential_source_distance = 100
+    level_filter = 9
 
     # [STARTRACKER]
     star_tracker_body_rates_max_distance = 100
@@ -193,6 +195,11 @@ class Config:
     scale_factor_y = 8
     scale_factors = (scale_factor_x, scale_factor_y)
 
+    inspection_images_keep = 100
+    inspection_quality = 80
+    inspection_lower_percentile = 1
+    inspection_upper_percentile = 99
+
     # [GENERAL]
     flight_mode = 'flight'
     solver = 'solver1'
@@ -223,6 +230,10 @@ class Config:
 
     calibration_params_file = 'calibration_params_best.txt'
     gui_images_path = 'images'
+
+    inspection_path = 'inspection_images/'
+
+    inspection_settings = {}
 
     # [DEVICES]
     focuser_port = '/dev/ttyUSB0'
@@ -426,6 +437,7 @@ class Config:
         self.camera_id_vendor = int(camera_id_vendor_hex, 16)
         camera_id_product_hex = self.config.get('CAMERA', 'camera_id_product', fallback=hex(self.camera_id_product))
         self.camera_id_product = int(camera_id_product_hex, 16)
+        self.pixel_well_depth = self.config.getint('CAMERA', 'pixel_well_depth', fallback=self.pixel_well_depth)
 
         self.sbc_dio_camera_pin = self.config.getint('CAMERA', 'sbc_dio_camera_pin', fallback=self.sbc_dio_camera_pin)
         self.sbc_dio_focuser_pin = self.config.getint('CAMERA', 'sbc_dio_focuser_pin',
@@ -471,6 +483,8 @@ class Config:
         self.dilation_radius = self.config.getint('SOURCES', 'dilation_radius', fallback=self.dilation_radius)
         self.min_potential_source_distance = self.config.getint('SOURCES', 'min_potential_source_distance',
                                                                 fallback=self.min_potential_source_distance)
+
+        self.level_filter = self.config.getint('SOURCES', 'level_filter', fallback=self.level_filter)
 
         # [STARTRACKER]
         self.star_tracker_body_rates_max_distance = self.config.getint('STARTRACKER',
@@ -536,6 +550,11 @@ class Config:
         self.scale_factor_y = self.config.getfloat('IMAGES', 'scale_factor_y', fallback=self.scale_factor_y)
         self.scale_factors = (self.scale_factor_x, self.scale_factor_y)
 
+        self.inspection_images_keep = self.config.getint('IMAGES', 'inspection_images_keep', fallback=self.inspection_images_keep)
+        self.inspection_quality = self.config.getint('IMAGES', 'inspection_quality', fallback=self.inspection_quality)
+        self.inspection_lower_percentile = self.config.getint('IMAGES', 'inspection_lower_percentile', fallback=self.inspection_lower_percentile)
+        self.inspection_upper_percentile = self.config.getint('IMAGES', 'inspection_upper_percentile', fallback=self.inspection_upper_percentile)
+
         # [GENERAL]
         self.flight_mode = self.config.get('GENERAL', 'flight_mode', fallback=self.flight_mode)
         self.solver = self.config.get('GENERAL', 'solver', fallback=self.solver)
@@ -571,6 +590,17 @@ class Config:
         self.calibration_params_file = self.config.get('PATHS', 'calibration_params_file',
                                                        fallback=self.calibration_params_file)
         self.gui_images_path = self.config.get('PATHS', 'gui_images_path', fallback=self.gui_images_path)
+
+        self.inspection_path = self.config.get('PATHS', 'inspection_path', fallback=self.inspection_path)
+
+        # Create inspection_settings dict
+        self.inspection_settings = {
+            'images_keep': self.inspection_images_keep,
+            'quality': self.inspection_quality,
+            'lower_percentile': self.inspection_lower_percentile,
+            'upper_percentile': self.inspection_upper_percentile,
+            'path': self.inspection_path
+        }
 
         # [DEVICES]
         self.focuser_port = self.config.get('DEVICES', 'focuser_port', fallback=self.focuser_port)
@@ -657,6 +687,7 @@ class Config:
             'stdev_error_value': self.stdev_error_value,
             'camera_id_vendor': hex(self.camera_id_vendor),
             'camera_id_product': hex(self.camera_id_product),
+            'pixel_well_depth': self.pixel_well_depth,
             'sbc_dio_camera_pin': self.sbc_dio_camera_pin,
             'sbc_dio_focuser_pin': self.sbc_dio_focuser_pin,
             'sbc_dio_default': self.sbc_dio_default,
@@ -685,7 +716,8 @@ class Config:
             'photutils_kernal_size': self.photutils_kernal_size,
             'dilate_mask_iterations': self.dilate_mask_iterations,
             'dilation_radius': self.dilation_radius,
-            'min_potential_source_distance': self.min_potential_source_distance
+            'min_potential_source_distance': self.min_potential_source_distance,
+            'level_filter': self.level_filter
         }
 
         config['STARTRACKER'] = {
@@ -734,7 +766,11 @@ class Config:
             'return_partial_images': self.return_partial_images,
             'resize_mode': self.resize_mode,
             'scale_factor_x': self.scale_factor_x,
-            'scale_factor_y': self.scale_factor_y
+            'scale_factor_y': self.scale_factor_y,
+            'inspection_images_keep': self.inspection_images_keep,
+            'inspection_quality': self.inspection_quality,
+            'inspection_lower_percentile': self.inspection_lower_percentile,
+            'inspection_upper_percentile': self.inspection_upper_percentile,
         }
 
         config['PATHS'] = {
@@ -748,6 +784,7 @@ class Config:
             'final_path': self.final_path,
             'calibration_params_file': self.calibration_params_file,
             'gui_images_path': self.gui_images_path,
+            'inspection_path': self.inspection_path
         }
 
         config['GENERAL'] = {

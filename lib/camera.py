@@ -56,7 +56,7 @@ class DummyCamera:
     image_cnt = 0
     filename = None
 
-    def __init__(self, camera=None):
+    def __init__(self, cfg, camera=None):
         """Initialize the dummy camera instance.
 
         Args:
@@ -65,6 +65,7 @@ class DummyCamera:
         """
         self.log = logging.getLogger('pueo')
         self.log.warning(f'Initializing DUMMY Camera')
+        self.cfg = cfg
         self.camera = camera
         if camera:
             camera.capture = self.capture
@@ -209,7 +210,9 @@ class DummyCamera:
         # Ensure the image is 16-bit
         if grayscale_img.dtype != np.uint16:
             # Scale the image to 16-bit range (0-65535)
-            grayscale_img = (grayscale_img / grayscale_img.max() * 65535).astype(np.uint16)
+            scale_factor = float(2 ** self.cfg.pixel_well_depth) - 1
+            # scaled_data = ((img / scale_factor) * 255).astype(np.uint8)
+            grayscale_img = (grayscale_img / grayscale_img.max() * scale_factor).astype(np.uint16)
 
         logit(f'Dummy Image: id: {self.image_idx}/{self.image_cnt} filename: {self.filename}', color='green')
         logit(f"      Shape: {img.shape}, Type: {img.dtype} Python Type: {type(img)}", color='yellow')
@@ -283,7 +286,7 @@ class PueoStarCamera(Camera):
                 self.log.warning("No cameras detected. Using mock behavior.")
                 self.simulated = True
                 # Load Dummy Camera
-                self.dummy_camera = DummyCamera(self)
+                self.dummy_camera = DummyCamera(self.cfg, self)
 
             else:
                 self.simulated = False

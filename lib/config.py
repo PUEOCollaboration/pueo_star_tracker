@@ -166,6 +166,7 @@ class Config:
     min_pattern_checking_stars = 10
     include_angular_velocity = True
     angular_velocity_timeout = 1.5
+    solve_timeout = 5000.0
 
     # [CEDAR]
     cedar_detect_host = 'localhost:50051'
@@ -191,9 +192,14 @@ class Config:
     return_partial_images = True
 
     resize_mode = 'downscale'
-    scale_factor_x = 8
-    scale_factor_y = 8
+    scale_factor_x = 16
+    scale_factor_y = 16
     scale_factors = (scale_factor_x, scale_factor_y)
+
+    raw_resize_mode = 'downscale'
+    raw_scale_factor_x = 8
+    raw_scale_factor_y = 8
+    raw_scale_factors = (raw_scale_factor_x, raw_scale_factor_y)
 
     inspection_images_keep = 100
     inspection_quality = 80
@@ -518,6 +524,8 @@ class Config:
         self.angular_velocity_timeout = self.config.getfloat('ASTROMETRY', 'angular_velocity_timeout',
                                                              fallback=self.angular_velocity_timeout)
 
+        self.solve_timeout = self.config.getfloat('ASTROMETRY', 'solve_timeout', fallback=self.solve_timeout)
+
         # [CEDAR}
         self.cedar_detect_host = self.config.get('CEDAR', 'host', fallback=self.cedar_detect_host)
         self.sigma = self.config.get('CEDAR', 'sigma', fallback=self.sigma)
@@ -544,11 +552,17 @@ class Config:
         self.sigma_error_value = self.config.getint('IMAGES', 'sigma_error_value', fallback=self.sigma_error_value)
         self.return_partial_images = self.config.getboolean('IMAGES', 'return_partial_images',
                                                             fallback=self.return_partial_images)
-        # Downscale - raw images
+        # Downscale - SD images
         self.resize_mode = self.config.get('IMAGES', 'resize_mode', fallback=self.resize_mode)
         self.scale_factor_x = self.config.getfloat('IMAGES', 'scale_factor_x', fallback=self.scale_factor_x)
         self.scale_factor_y = self.config.getfloat('IMAGES', 'scale_factor_y', fallback=self.scale_factor_y)
         self.scale_factors = (self.scale_factor_x, self.scale_factor_y)
+
+        # Downscale - RAW images
+        self.raw_resize_mode = self.config.get('IMAGES', 'raw_resize_mode', fallback=self.raw_resize_mode)
+        self.raw_scale_factor_x = self.config.getfloat('IMAGES', 'raw_scale_factor_x', fallback=self.raw_scale_factor_x)
+        self.raw_scale_factor_y = self.config.getfloat('IMAGES', 'raw_scale_factor_y', fallback=self.raw_scale_factor_y)
+        self.raw_scale_factors = (self.raw_scale_factor_x, self.raw_scale_factor_y)
 
         self.inspection_images_keep = self.config.getint('IMAGES', 'inspection_images_keep', fallback=self.inspection_images_keep)
         self.inspection_quality = self.config.getint('IMAGES', 'inspection_quality', fallback=self.inspection_quality)
@@ -740,7 +754,8 @@ class Config:
             'ast_max_size': self.img_max_size,
             'min_pattern_checking_stars': self.min_pattern_checking_stars,
             'include_angular_velocity': self.include_angular_velocity,
-            'angular_velocity_timeout': self.angular_velocity_timeout
+            'angular_velocity_timeout': self.angular_velocity_timeout,
+            'solve_timeout': self.solve_timeout
         }
 
         config['CEDAR'] = {
@@ -764,9 +779,15 @@ class Config:
             'min_count': self.min_count,
             'sigma_error_value': self.sigma_error_value,
             'return_partial_images': self.return_partial_images,
+
             'resize_mode': self.resize_mode,
             'scale_factor_x': self.scale_factor_x,
             'scale_factor_y': self.scale_factor_y,
+
+            'raw_resize_mode': self.raw_resize_mode,
+            'raw_scale_factor_x': self.raw_scale_factor_x,
+            'raw_scale_factor_y': self.raw_scale_factor_y,
+
             'inspection_images_keep': self.inspection_images_keep,
             'inspection_quality': self.inspection_quality,
             'inspection_lower_percentile': self.inspection_lower_percentile,

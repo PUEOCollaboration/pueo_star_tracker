@@ -527,7 +527,8 @@ def delete_trash(
             log.debug(f"Error deleting {file}: {e}")
 
 
-def image_resize(img, scale_factors, image_filename, overlay=None, resize_mode='downscale', png_compression=0, is_inspection=False, jpeg_settings: dict | None = None):
+def image_resize(img, scale_factors, image_filename, overlay=None, resize_mode='downscale', png_compression=0,
+                 is_inspection=False, jpeg_settings: dict | None = None):
     """
     Resize an image using either downscaling (with interpolation or local mean) or downsampling.
 
@@ -536,12 +537,14 @@ def image_resize(img, scale_factors, image_filename, overlay=None, resize_mode='
         scale_factors (tuple): A tuple of (height_factor, width_factor) for resizing.
         image_filename (str): The filename to save the resized image.
         overlay (numpy.ndarray, optional): An optional overlay image to apply after resizing.
+        png_compression (int): PNG Compression value for IMWRITE_PNG_COMPRESSION
         resize_mode (str, optional): The resizing mode. Options are:
             - 'downscale': Uses interpolation (cv2.INTER_AREA) for high-quality downscaling.
             - 'downsample': Selects every nth pixel for fast downsampling.
             - 'local_mean': Uses local mean averaging for downscaling.
             Default is 'downscale'.
-
+        is_inspection (bool): Create inspection jpg file
+        jpeg_settings (dict|None): jpeg settings
     Returns:
         tuple: A tuple representing the image dimensions.
                For grayscale images: (height, width)
@@ -606,7 +609,7 @@ def image_resize(img, scale_factors, image_filename, overlay=None, resize_mode='
     cv2.imwrite(image_filename, resized_img, [int(cv2.IMWRITE_PNG_COMPRESSION), png_compression])
     # Get file size in MB (converted from bytes)
     file_size = os.path.getsize(image_filename) / (1024 * 1024)  # bytes to MB conversion
-    log.debug(f'Saved resized image to sd path: {image_filename} compression: {png_compression} file_size: {file_size:.2f} Mb in {get_dt(t0)}.')
+    log.debug(f'Saved resized image to path: {image_filename} compression: {png_compression} file_size: {file_size:.2f} Mb in {get_dt(t0)}.')
 
     # Save as JPEG with 80% quality (add this line)
     # Using the inspection settings
@@ -631,7 +634,11 @@ def image_resize(img, scale_factors, image_filename, overlay=None, resize_mode='
 
     return resized_img.shape
 
-def save_raws(img, ssd_path="", sd_card_path="", image_name="", scale_factors=(8, 8), resize_mode='downscale', png_compression=0, is_save=True, jpeg_settings: dict | None = None):
+def save_raws(img, ssd_path="", sd_card_path="", image_name="",
+              scale_factors=(16, 16), resize_mode='downscale',
+              raw_scale_factors=(8,8),  raw_resize_mode='downscale',
+              png_compression=0, is_save=True,
+              jpeg_settings: dict | None = None):
     # Save original image to ssd
     img1 = img  # .copy()
     image_filename = f"{ssd_path}/{image_name}-raw.png"
@@ -639,17 +646,23 @@ def save_raws(img, ssd_path="", sd_card_path="", image_name="", scale_factors=(8
     # The IMWRITE_PNG_COMPRESSION - 0: The compression level (0 = no compression, 9 = maximum compression), see config.ini
     # Only save files in flight mode
     if is_save:
+        # Save RAW Image
+        raw_image_resized_shape = image_resize(img1, raw_scale_factors, image_filename, None,
+                                           resize_mode=raw_resize_mode, png_compression=png_compression,
+                                           is_inspection=False)
         # img1 = convert_dummy_to_mono(img1) # if RGB it will convert, else nothing orig image is returned
-        cv2.imwrite(image_filename, img1, [int(cv2.IMWRITE_PNG_COMPRESSION), png_compression])
-    log.debug(f'Saved original image to ssd path: {image_filename} in {get_dt(t0)}.')
+        # cv2.imwrite(image_filename, img1, [int(cv2.IMWRITE_PNG_COMPRESSION), png_compression])
+        log.debug(f'Saved original image to ssd path: {image_filename} in {get_dt(t0)}.')
 
     # Save downscaled image to sd card
     # downscale_factors = (8, 8)
+    # NOTE: The SD version of image will be CREATED for exchange with GUI!!! AND  deleted in .write if preflight mode
     image_resized_filename = f"{sd_card_path}/{image_name}-raw-ds.png"
     jpeg_settings = jpeg_settings if jpeg_settings else {}
     image_resized_shape = image_resize(img1, scale_factors, image_resized_filename, 'Raw Image',
-                                       resize_mode=resize_mode, is_inspection=True, jpeg_settings=jpeg_settings)
-
+                                       resize_mode=resize_mode, png_compression=png_compression,
+                                       is_inspection=True, jpeg_settings=jpeg_settings)
+    log.debug(f'Saved downscaled image to sd path: {image_resized_filename} in {get_dt(t0)}.')
     return image_filename, img.shape, image_resized_filename, image_resized_shape
 
 

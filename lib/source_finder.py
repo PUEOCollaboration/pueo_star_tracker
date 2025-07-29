@@ -178,19 +178,20 @@ def local_levels_background_estimation(
     """
     # (9 × 9 px) local leveling filter
     # 28 is the SUM of the ones in the actual array
-    level_filter_array = (1 / 28.0) * np.array(
-        [
-            [0, 1, 1, 1, 1, 1, 1, 1, 0],
-            [1, 0, 0, 0, 0, 0, 0, 0, 1],
-            [1, 0, 0, 0, 0, 0, 0, 0, 1],
-            [1, 0, 0, 0, 0, 0, 0, 0, 1],
-            [1, 0, 0, 0, 0, 0, 0, 0, 1],
-            [1, 0, 0, 0, 0, 0, 0, 0, 1],
-            [1, 0, 0, 0, 0, 0, 0, 0, 1],
-            [1, 0, 0, 0, 0, 0, 0, 0, 1],
-            [0, 1, 1, 1, 1, 1, 1, 1, 0],
-        ]
-    )
+    if False:
+        level_filter_array = (1 / 28.0) * np.array(
+            [
+                [0, 1, 1, 1, 1, 1, 1, 1, 0],
+                [1, 0, 0, 0, 0, 0, 0, 0, 1],
+                [1, 0, 0, 0, 0, 0, 0, 0, 1],
+                [1, 0, 0, 0, 0, 0, 0, 0, 1],
+                [1, 0, 0, 0, 0, 0, 0, 0, 1],
+                [1, 0, 0, 0, 0, 0, 0, 0, 1],
+                [1, 0, 0, 0, 0, 0, 0, 0, 1],
+                [1, 0, 0, 0, 0, 0, 0, 0, 1],
+                [0, 1, 1, 1, 1, 1, 1, 1, 0],
+            ]
+        )
 
     level_filter_array = create_level_filter(level_filter)
     # Downsample the image using local mean
@@ -664,6 +665,7 @@ def source_finder(
         is_trail=False,
         return_partial_images=False,
         partial_results_path="./partial_results/",
+        level_filter: int = 9
 ):
     """Function combining the source finding pipeline for faster execution time.
 
@@ -697,6 +699,7 @@ def source_finder(
             background and background-subtracted image). Defaults to False.
         partial_results_path (str, optional): The directory path where intermediate results will be saved
         if `return_partial_images` is True. Defaults to "./partial_results/".
+        level_filter (int): The size of the star level filter, shall be 5..199 and an odd number.
 
     Returns:
         tuple: A tuple containing three elements:
@@ -708,19 +711,23 @@ def source_finder(
     # local_levels_background_estimation
     ########
     # (9 × 9 px) local leveling filter
-    level_filter = (1 / 28.0) * np.array(
-        [
-            [0, 1, 1, 1, 1, 1, 1, 1, 0],
-            [1, 0, 0, 0, 0, 0, 0, 0, 1],
-            [1, 0, 0, 0, 0, 0, 0, 0, 1],
-            [1, 0, 0, 0, 0, 0, 0, 0, 1],
-            [1, 0, 0, 0, 0, 0, 0, 0, 1],
-            [1, 0, 0, 0, 0, 0, 0, 0, 1],
-            [1, 0, 0, 0, 0, 0, 0, 0, 1],
-            [1, 0, 0, 0, 0, 0, 0, 0, 1],
-            [0, 1, 1, 1, 1, 1, 1, 1, 0],
-        ]
-    )
+    # TODO: Cleanup, not used. Just delete
+    if False:
+        level_filter = (1 / 28.0) * np.array(
+            [
+                [0, 1, 1, 1, 1, 1, 1, 1, 0],
+                [1, 0, 0, 0, 0, 0, 0, 0, 1],
+                [1, 0, 0, 0, 0, 0, 0, 0, 1],
+                [1, 0, 0, 0, 0, 0, 0, 0, 1],
+                [1, 0, 0, 0, 0, 0, 0, 0, 1],
+                [1, 0, 0, 0, 0, 0, 0, 0, 1],
+                [1, 0, 0, 0, 0, 0, 0, 0, 1],
+                [1, 0, 0, 0, 0, 0, 0, 0, 1],
+                [0, 1, 1, 1, 1, 1, 1, 1, 0],
+            ]
+        )
+
+    level_filter_array = create_level_filter(level_filter)
 
     # Downsample the image using local mean
     # TODO: Done leveling_filter_downscale_factor = 4
@@ -728,7 +735,7 @@ def source_finder(
     downsampled_img = downscale_local_mean(img, (downscale_factor, downscale_factor))
 
     # Calculate the local level of the downsampled image
-    local_levels = convolve2d(downsampled_img, level_filter, boundary="symm", mode="same")
+    local_levels = convolve2d(downsampled_img, level_filter_array, boundary="symm", mode="same")
 
     # write background info to log
     with open(log_file_path, "a") as file:

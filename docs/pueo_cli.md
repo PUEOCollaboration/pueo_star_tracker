@@ -299,6 +299,7 @@ INFO: Response time: 4.4ms Response:
         "solver": "solver2",
         "status": "initializing (autofocus)"
         "cadence": 5.0,
+        "level_filter": 9,
         "Gain": 120,
         "Exposure": 30000,
         "Offset": 0,

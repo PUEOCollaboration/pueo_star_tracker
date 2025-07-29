@@ -153,7 +153,7 @@ class Astrometry:
             # pattern_checking_stars=pattern_checking_stars,
             # match_radius=0.01,  # Default 0.01
             # match_threshold=1e-3,
-            solve_timeout=5000.0, # Default None milliseconds
+            solve_timeout=self.cfg.solve_timeout, # 5000.0, # Default None milliseconds
             # distortion=distortion,
             return_matches=True,
             # return_visual=False,
@@ -197,7 +197,8 @@ class Astrometry:
             src_dst=1,
             dilate_mask_iterations=1,
             scale_factors=(8, 8),
-            resize_mode='downscale'
+            resize_mode='downscale',
+            level_filter: int = 9
     ):
         """Optimize camera calibration parameters based on astrometry analysis of
         calibration images.
@@ -316,6 +317,7 @@ class Astrometry:
                     src_dst=src_dst,
                     return_partial_images=False,
                     dilate_mask_iterations=dilate_mask_iterations,
+                    level_filter=level_filter
                 )
                 print(f"Astrometry : {astrometry}")
                 # display overlay image
@@ -365,6 +367,7 @@ class Astrometry:
                 src_dst=src_dst,
                 return_partial_images=False,
                 dilate_mask_iterations=dilate_mask_iterations,
+                level_filter=level_filter
             )
             set_RMSE.append(astrometry["RMSE"])
         curr_best_params["RMSE"] = sum(set_RMSE) / len(set_RMSE)
@@ -419,7 +422,8 @@ class Astrometry:
             dilate_mask_iterations=1,
             return_partial_images=False,
             partial_results_path="./partial_results",
-            solver='solver1'
+            solver='solver1',
+            level_filter: int = 9
     ):
         """Perform astrometry on an input image to determine celestial coordinates.
 
@@ -463,6 +467,7 @@ class Astrometry:
             partial_results_path (str, optional): The directory path where intermediate results will be saved
                 if `return_partial_images` is True. Defaults to "./partial_results/".
             solver (str, optional): solver1|solver2: genuine or cedar solver.
+            level_filter (int): The size of the star level filter, shall be 5..199 and an odd number.
         Returns:
             tuple: A tuple containing:
                 - astrometry (dict): A dictionary with astrometric solutions including matched centroids and
@@ -532,9 +537,9 @@ class Astrometry:
         print_img_info(img)
         print_img_info(img_bgr, 'bgr')
 
-        # save image. For debugging
+        # Save Partial image. For debugging
         if return_partial_images:
-            # create partial results folder. For debugging
+            # Create partial results folder. For debugging
             if not os.path.exists(partial_results_path):
                 os.makedirs(partial_results_path)
             # save input image
@@ -622,6 +627,7 @@ class Astrometry:
                     is_trail,
                     return_partial_images,
                     partial_results_path,
+                    level_filter
                 )
 
                 # Compute source centroids
@@ -652,7 +658,7 @@ class Astrometry:
                         float(source_finder_exec_time)
                         + float(centroids_exec_time)
                 )
-        elif self.solver == 'solver2':
+        if self.solver == 'solver2':
             solver2_t0 = time.monotonic()
             contours_img = img_bgr
             self.cedar.tetra3_solver = self.tetra3_solver
@@ -801,7 +807,8 @@ class Astrometry:
             cfg.src_sigma_x,
             return_partial_images=cfg.return_partial_images,
             partial_results_path=img_partial_results_path,
-            solver='solver2'
+            solver='solver2',
+            level_filter=9
         )
         # display overlay image
         timestamp_string = current_timestamp("%d-%m-%Y-%H-%M-%S")

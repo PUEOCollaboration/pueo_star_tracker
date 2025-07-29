@@ -459,7 +459,8 @@ class StarCommBridge:
                         'autonomous': self.server.operation_enabled,
                         'solver': self.server.solver,
                         'status': str(self.server.status).lower(),
-                        'cadence': self.server.time_interval / 1e6
+                        'cadence': self.server.time_interval / 1e6,
+                        'level_filter': self.server.level_filter
                     }
                     camera_settings = self.server.camera.get_control_values()
                     value.update(camera_settings)

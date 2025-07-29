@@ -718,6 +718,7 @@ class PueoStarCameraOperation:
             img = self.curr_img if max_iterations is not None and max_iterations == 1 else None
             img, basename = self.capture_timestamp_save(auto_gain_image_path, inserted_string, img)
             bins = np.linspace(0, pixel_saturated_value, self.cfg.autogain_num_bins)
+            # Creating a histogram requires flatten + histrogram
             arr = img.flatten()
             counts, bins = np.histogram(arr, bins=bins)
             # There is one counts less than bins, therefore we iterate over counts, not bins
@@ -1652,7 +1653,8 @@ class PueoStarCameraOperation:
             self.cfg.dilate_mask_iterations,
             self.cfg.return_partial_images,
             self.cfg.partial_results_path,
-            self.solver
+            self.solver,
+            self.level_filter  # This can be dynamically change, we need to use property and not a cfg.level_filter
         )
 
         if is_multiprocessing:
@@ -1773,11 +1775,15 @@ class PueoStarCameraOperation:
         # Step 1: SAVE RAW Images
         if self.save_raw:
             # Use a multiprocessing Pool
-            # Save image to SSD & SD card
+            # Save image to SSD, SD card, inspection_images
             save_raws_result = self.pool.apply_async(
                 save_raws,
-                args=(self.curr_img, self.get_daily_path(self.cfg.ssd_path), self.get_daily_path(self.cfg.sd_card_path),
-                      image_file, self.cfg.scale_factors, self.cfg.resize_mode, self.cfg.png_compression, self.is_flight,
+                args=(self.curr_img,
+                      self.get_daily_path(self.cfg.ssd_path), self.get_daily_path(self.cfg.sd_card_path),
+                      image_file,
+                      self.cfg.scale_factors, self.cfg.resize_mode,
+                      self.cfg.raw_scale_factors, self.cfg.raw_resize_mode,
+                      self.cfg.png_compression, self.is_flight,
                       self.cfg.inspection_settings
                       )
             )
@@ -2095,7 +2101,8 @@ class PueoStarCameraOperation:
             src_dst=self.cfg.src_dst,
             dilate_mask_iterations=self.cfg.dilate_mask_iterations,
             scale_factors=self.cfg.scale_factors,
-            resize_mode=self.cfg.resize_mode
+            resize_mode=self.cfg.resize_mode,
+            level_filter=self.level_filter
         )
         self.server.write("Checking distortion.")
 

@@ -10,6 +10,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import cv2
 import numpy as np
+from scipy.optimize import linear_sum_assignment
 
 from tqdm import tqdm
 
@@ -395,136 +396,126 @@ class Astrometry:
 
         return curr_best_params
 
-    def calculate_rms_errors_from_centroids(self, result: dict, image_size: tuple, plot_vectors=False,
-                                            plot_histograms=False) -> dict:
+    def remove_unmatched(self, precomputed_star_centroids, matched_centroids, epsilon=10.0):
         """
-        Calculate RMS errors in RA, Dec, and Roll using 3D unit vectors and matched centroids.
+        Filter and reorder using Hungarian algorithm for optimal assignment.
+        """
+        if precomputed_star_centroids.size == 0 or not matched_centroids:
+            return []
 
-        Parameters:
-            result : dict
-                Result from tetra3.solve_from_centroids(..., return_matches=True)
-            image_size : (int, int)
-                Image shape (height, width)
-            plot_vectors : bool
-                If True, plots residual vectors in image space
-            plot_histograms : bool
-                If True, shows histograms of RA, Dec, and Roll residuals
+        matched_arr = np.array(matched_centroids)
+        precomputed_yx = precomputed_star_centroids[:, :2]
+
+        # Calculate distance matrix
+        diff = precomputed_yx[:, np.newaxis, :] - matched_arr[np.newaxis, :, :]
+        distances = np.sqrt(np.sum(diff ** 2, axis=2))
+
+        # Use Hungarian algorithm for optimal assignment
+        row_ind, col_ind = linear_sum_assignment(distances)
+
+        result = [None] * len(matched_arr)
+
+        for i, j in zip(row_ind, col_ind):
+            if distances[i, j] <= epsilon:
+                result[j] = precomputed_star_centroids[i].tolist()
+
+        return result
+
+    def calculate_rms_errors_from_centroids(self,
+                                            precomputed_star_centroids,
+                                            result,
+                                            image_size,
+                                            plate_scale_arcsec_per_pix=None
+                                            ):
+        """
+        Compute RA, Dec, and Roll RMS directly from tetra3 pixel-space outputs.
+
+        Assumptions / Inputs (from tetra3.solve_from_centroids(..., return_matches=True)):
+          - result['matched_centroids']     : (N,2) measured (y, x) pixels
+          - result['matched_predicted_xy']  : (N,2) predicted (y, x) pixels (tetra3's image-plane match)
+          - result['Roll']                  : roll [deg], image axes vs local sky tangent-plane (east/north)
+          - Optional: result['FOV']         : width field of view [deg] (used if plate_scale not given)
+        image_size : (H, W)                 : original image shape in pixels
+        plate_scale_arcsec_per_pix : float  : arcsec per pixel; if None, estimated as (FOV_deg * 3600) / W
 
         Returns:
-            dict with RMS values in arcseconds:
-                - RA_RMS_arcsec
-                - Dec_RMS_arcsec
-                - Roll_RMS_arcsec
+          dict with:
+            - RA_RMS_arcsec, Dec_RMS_arcsec, Roll_RMS_arcsec
+            - Pixel_RMS_x, Pixel_RMS_y
+            - plate_scale_arcsec_per_pix
+            - (optional) per_star: dx_pix, dy_pix, ra_err_arcsec, dec_err_arcsec, roll_err_arcsec
+
+        Notes:
+          • Rotation by Roll decomposes pixel residuals into local RA/Dec directions (tangent-plane).
+          • Roll RMS uses small-rotation model: α_i ≈ (r_perp · e) / |r|^2 about image center.
         """
+        H, W = image_size
 
-        def radec_to_unit(ra, dec):
-            return np.stack([
-                np.cos(dec) * np.cos(ra),
-                np.cos(dec) * np.sin(ra),
-                np.sin(dec)
-            ], axis=-1)
+        # Plate scale
+        if plate_scale_arcsec_per_pix is None:
+            if 'FOV' not in result:
+                raise ValueError("Provide plate_scale_arcsec_per_pix or include result['FOV'].")
+            plate_scale_arcsec_per_pix = (float(result['FOV']) * 3600.0) / float(W)
 
-        height, width = image_size
-        fov_rad = np.deg2rad(result['FOV'])
-        roll = np.deg2rad(result['Roll'])
-        ra0 = np.deg2rad(result['RA'])
-        dec0 = np.deg2rad(result['Dec'])
+        # Measured and predicted in (y, x)
+        meas_yx = np.asarray(result['matched_centroids'], dtype=float) # Our precomputed_star_centroids
+        matched_precomputed_star_centroids = self.remove_unmatched(precomputed_star_centroids, result['matched_centroids'], epsilon=2.0)
 
-        # Precompute trigonometric terms
-        scale = fov_rad / width
-        cos_roll, sin_roll = np.cos(roll), np.sin(roll)
-        cos_dec0, sin_dec0 = np.cos(dec0), np.sin(dec0)
+        pred_yx = np.asarray(matched_precomputed_star_centroids, dtype=float)[:, :2]
+        if meas_yx.shape != pred_yx.shape:
+            raise ValueError("matched_centroids and matched_predicted_xy shapes differ.")
 
-        # Pixel offsets (image center = 0)
-        # centroids = result['matched_centroids']
-        # Convert the list of centroids to a NumPy array
-        centroids = np.array(result['matched_centroids'])
-        dx = (centroids[:, 1] - width / 2) * scale
-        dy = (centroids[:, 0] - height / 2) * scale
+        # Pixel residuals (y down, x right)
+        dy = meas_yx[:, 0] - pred_yx[:, 0]
+        dx = meas_yx[:, 1] - pred_yx[:, 1]
 
-        # Apply image-plane rotation
-        x_rot = dx * cos_roll - dy * sin_roll
-        y_rot = dx * sin_roll + dy * cos_roll
+        # Rotate residuals by tetra3 Roll so x' ~ RA (east), y' ~ Dec (north)
+        R = np.deg2rad(float(result['Roll']))
+        c, s = np.cos(R), np.sin(R)
+        ex_ra = c * dx + s * dy
+        ey_dec = -s * dx + c * dy
 
-        # Gnomonic projection
-        denom = cos_dec0 - y_rot * sin_dec0
-        ra_pred = ra0 + np.arctan2(x_rot, denom)
-        dec_pred = np.arctan2(
-            y_rot * cos_dec0 + sin_dec0,
-            np.sqrt(denom ** 2 + x_rot ** 2)
-        )
+        # Convert to arcsec (signs irrelevant for RMS)
+        ra_err_arcsec = ex_ra * plate_scale_arcsec_per_pix
+        dec_err_arcsec = (-ey_dec) * plate_scale_arcsec_per_pix
 
-        # Catalog stars
-        matched_stars = np.array(result['matched_stars'])  # Convert to NumPy array
-        ra_cat = np.deg2rad(matched_stars[:, 0])
-        dec_cat = np.deg2rad(matched_stars[:, 1])
-        cos_dec_cat = np.cos(dec_cat)
+        # Pixel RMS (debug)
+        pixel_rms_x = float(np.sqrt(np.mean(dx ** 2)))
+        pixel_rms_y = float(np.sqrt(np.mean(dy ** 2)))
 
-        # Residuals
-        delta_ra = (ra_pred - ra_cat) * cos_dec_cat
-        delta_dec = dec_pred - dec_cat
-        ra_error_arcsec = delta_ra * (180 / np.pi) * 3600
-        dec_error_arcsec = delta_dec * (180 / np.pi) * 3600
-
-        # Convert to 3D unit vectors
-        v_pred = radec_to_unit(ra_pred, dec_pred)
-        v_cat = radec_to_unit(ra_cat, dec_cat)
-        v_diff = v_pred - v_cat
-
-        # Roll axis = cross product of North and pointing
-        north = np.array([0.0, 0.0, 1.0])
-        v_center = radec_to_unit(ra0, dec0)
-        roll_axis = np.cross(north, v_center)
-        roll_axis /= np.linalg.norm(roll_axis)
-
-        # Project residual vector onto roll direction
-        roll_error_arcsec = np.dot(v_diff, roll_axis) * (180 / np.pi) * 3600
+        # Roll RMS from small-rotation model about image center
+        cx, cy = W / 2.0, H / 2.0
+        rx = pred_yx[:, 1] - cx  # x offset (pixels)
+        ry = pred_yx[:, 0] - cy  # y offset (pixels)
+        r2 = rx * rx + ry * ry
+        mask = r2 > 1e-9
+        # α_i ≈ (r_perp · e)/|r|^2, with r_perp = [-ry, rx]
+        r_perp_dot_e = (-ry[mask]) * dx[mask] + (rx[mask]) * dy[mask]
+        alpha_rad_i = np.zeros_like(dx)
+        alpha_rad_i[mask] = r_perp_dot_e / r2[mask]
+        roll_err_arcsec = alpha_rad_i * (180 / np.pi) * 3600.0
 
         # RMS values
-        ra_rms = np.sqrt(np.mean(ra_error_arcsec ** 2))
-        dec_rms = np.sqrt(np.mean(dec_error_arcsec ** 2))
-        roll_rms = np.sqrt(np.mean(roll_error_arcsec ** 2))
+        RA_RMS_arcsec = float(np.sqrt(np.mean(ra_err_arcsec ** 2)))
+        Dec_RMS_arcsec = float(np.sqrt(np.mean(dec_err_arcsec ** 2)))
+        Roll_RMS_arcsec = float(np.sqrt(np.mean(roll_err_arcsec ** 2)))
 
-        # Optional plots
-        if plot_vectors:
-            plt.figure(figsize=(6, 6))
-            plt.quiver(
-                centroids[:, 1], centroids[:, 0],
-                ra_error_arcsec, -dec_error_arcsec,
-                angles='xy', scale_units='xy', scale=0.2, color='red'
-            )
-            plt.gca().invert_yaxis()
-            plt.title("Residual Vectors (RA/Dec) in Image Pixels")
-            plt.xlabel("x (pixels)")
-            plt.ylabel("y (pixels)")
-            plt.axis('equal')
-            plt.grid(True)
-            plt.show()
-
-        if plot_histograms:
-            plt.figure(figsize=(12, 3))
-            plt.subplot(1, 3, 1)
-            plt.hist(ra_error_arcsec, bins=30, color='blue', alpha=0.7)
-            plt.title(f"RA Errors\nRMS = {ra_rms:.2f}\"")
-            plt.xlabel("RA residual (arcsec)")
-
-            plt.subplot(1, 3, 2)
-            plt.hist(dec_error_arcsec, bins=30, color='green', alpha=0.7)
-            plt.title(f"Dec Errors\nRMS = {dec_rms:.2f}\"")
-            plt.xlabel("Dec residual (arcsec)")
-
-            plt.subplot(1, 3, 3)
-            plt.hist(roll_error_arcsec, bins=30, color='purple', alpha=0.7)
-            plt.title(f"Roll Errors\nRMS = {roll_rms:.2f}\"")
-            plt.xlabel("Roll residual (arcsec)")
-            plt.tight_layout()
-            plt.show()
-
-        return {
-            'RA_RMS': ra_rms,
-            'Dec_RMS': dec_rms,
-            'Roll_RMS': roll_rms
+        out = {
+            "RA_RMS": RA_RMS_arcsec,
+            "Dec_RMS": Dec_RMS_arcsec,
+            "Roll_RMS": Roll_RMS_arcsec,
+            # "Pixel_RMS_x": pixel_rms_x,
+            # "Pixel_RMS_y": pixel_rms_y,
+            # "plate_scale_arcsec_per_pix": float(plate_scale_arcsec_per_pix),
         }
+
+        return out
+
+    #        return {
+#            'RA_RMS': ra_rms,
+#            'Dec_RMS': dec_rms,
+#            'Roll_RMS': roll_rms
+#        }
 
     # TODO: Windell: The variables with hard coded values here should be put in the config file.
     # TODO:   Milan: All params when using do_astrometry from pueo_star_camera_operation_code.py pass all vars ...
@@ -881,7 +872,8 @@ class Astrometry:
             height, width = img.shape
             image_size = (int(height / resize_factor), int(width / resize_factor))
             with suppress(TypeError):
-                rms = self.calculate_rms_errors_from_centroids(astrometry, image_size)
+                #                                              DETECT                      ASTRO RESULTS
+                rms = self.calculate_rms_errors_from_centroids(precomputed_star_centroids, astrometry, image_size)
                 astrometry = astrometry | rms   # Merge - union two dicts
         else:
             astrometry = {}

@@ -458,10 +458,10 @@ class Astrometry:
             plate_scale_arcsec_per_pix = (float(result['FOV']) * 3600.0) / float(W)
 
         # Measured and predicted in (y, x)
-        meas_yx = np.asarray(result['matched_centroids'], dtype=float) # Our precomputed_star_centroids
         matched_precomputed_star_centroids = self.remove_unmatched(precomputed_star_centroids, result['matched_centroids'], epsilon=2.0)
+        meas_yx = np.asarray(matched_precomputed_star_centroids, dtype=float)[:, :2]
+        pred_yx = np.asarray(result['matched_centroids'], dtype=float) # Our precomputed_star_centroids
 
-        pred_yx = np.asarray(matched_precomputed_star_centroids, dtype=float)[:, :2]
         if meas_yx.shape != pred_yx.shape:
             raise ValueError("matched_centroids and matched_predicted_xy shapes differ.")
 

@@ -100,7 +100,6 @@ class Commands(Enum):
     FLIGHT_MODE = 99
     FLIGHT_TELEMETRY = 100
 
-
     @classmethod
     def from_string(cls, string: str):
         for member in cls:
@@ -134,6 +133,7 @@ class Command:
     method = None
     mode = None
     param = None
+    metadata: bool = None
 
     settings = {
         Commands.CHECK_STATUS.value: {
@@ -389,6 +389,10 @@ class Command:
                     'min': 0,
                     'max': 100,
                     'default': 0
+                },
+                'metadata': {
+                    'type': 'bool',
+                    'default': False
                 }
             }
         }
@@ -495,6 +499,10 @@ class Command:
             if 'limit' not in self.data:
                 self.data['limit'] = validation['params']['limit']['default']
             self.add_attribute('limit', self.data['limit'], validation['params'])
+            if 'metadata' not in self.data:
+                self.data['metadata'] = validation['params']['metadata']['default']
+            self.add_attribute('metadata', self.data['metadata'], validation['params'])
+
 
     def add_attribute_old(self, name, value, validation=None):
         if validation is not None:
@@ -784,8 +792,8 @@ class Command:
         self.define(command_data)
         return self.command_data
 
-    def flight_telemetry(self, limit: int = 0):
-        command_data = {'command': Commands.FLIGHT_TELEMETRY.name.lower(), 'data': {'limit': limit}}
+    def flight_telemetry(self, limit: int = 0, metadata: bool = False):
+        command_data = {'command': Commands.FLIGHT_TELEMETRY.name.lower(), 'data': {'limit': limit, 'metadata': metadata}}
         self.define(command_data)
         return self.command_data
 
@@ -831,7 +839,7 @@ if __name__ == "__main__":
         cmd.chamber_mode('set', True),
         cmd.chamber_mode('get'),
         cmd.set('level_filter', 6),
-        cmd.get('level_filter'),
+        # cmd.get('level_filter'),
     ]
     for cmd_dict in cmds:
         cmd = Command(cmd_dict)
@@ -848,7 +856,7 @@ if __name__ == "__main__":
         elif cmd.command == Commands.UPDATE_TIME:
             print(cmd.new_time)
         elif cmd.command == Commands.FLIGHT_TELEMETRY:
-            print(f'{cmd.limit}, {cmd.command_name}, {cmd.data}')
+            print(f'{cmd.limit}, {cmd.metadata}, {cmd.command_name}, {cmd.data}')
 
         elif cmd.command == Commands.FLIGHT_MODE:
             print(f'{cmd.method}, {cmd.command_name}, {cmd.data}')

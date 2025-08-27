@@ -1,18 +1,19 @@
 import os
 import time
 from configparser import ConfigParser
+from lib.dynamic import Dynamic
 
-
-class Config:
+class Config(Dynamic):
     """
     This class holds configuration values for your application.
     """
 
-    config: ConfigParser = None
+    _config: ConfigParser = None
 
     # Vars...
 
-    config_file = 'conf/config.ini'  # Note this file can only be changed HERE!!! IT is still config.ini, but just for ref.
+    config_file = 'conf/config.ini'  # Note this file can only be changed HERE!!! It is still config.ini, but just for ref.
+    dynamic_file = 'conf/dynamic.ini'
 
     test = False
     debug = False
@@ -68,6 +69,7 @@ class Config:
     autogain_desired_max_pixel_value = 100  # TODO: Add correct value Windell
     autoexposure_desired_max_pixel_value = 100 # TODO: Add correct value Windell
 
+    lab_best_aperture_position = 0
     lab_best_focus = 8352
     lab_best_gain = 120
     # microseconds
@@ -142,6 +144,7 @@ class Config:
     dilation_radius = 5
     min_potential_source_distance = 100
     level_filter = 9
+    level_filter_type = 'median'
 
     # [STARTRACKER]
     star_tracker_body_rates_max_distance = 100
@@ -165,7 +168,8 @@ class Config:
     # min_pattern_checking_stars = 15
     min_pattern_checking_stars = 10
     include_angular_velocity = True
-    angular_velocity_timeout = 1.5
+    angular_velocity_timeout: float = 10.0  # seconds
+
     solve_timeout = 5000.0
 
     # [CEDAR]
@@ -212,7 +216,7 @@ class Config:
     time_interval = 1000000  # Microseconds
     max_processes = 4
     operation_timeout = 60
-    current_timeout = 200
+    current_timeout: float = 200.0 # Angular velocity timeout
     run_autofocus = True
     enable_autogain_with_autofocus = True
     run_autonomous = False
@@ -263,15 +267,25 @@ class Config:
     log_reverse = False  # # Set ti Tru to have the Server Log shown in reverse
 
     # Member functions
-    def __init__(self, config_file="conf/config.ini"):
+    def __init__(self, config_file="conf/config.ini", dynamic_file="conf/dynamic.ini"):
         """
         Reads configuration values from a specified file.
 
         Args:
             config_file (str, optional): Path to the configuration file. Defaults to "config.ini".
         """
+        # Initialize dynamic configuration first
+        super().__init__(dynamic_file)
+
+        # Then set Config-specific attributes
         self.config_file = config_file
+        self.dynamic_file = dynamic_file
+
+        # Then load the main configuration
         self.reload()
+
+        # Now mark as initialized - future attribute changes will save to dynamic.ini
+        self._is_initialized = True
 
     def get(self, section, key):
         """
@@ -284,8 +298,8 @@ class Config:
         Returns:
             str: The value associated with the key, or None if not found.
         """
-        if self.config.has_section(section):
-            return self.config.get(section, key)
+        if self._config.has_section(section):
+            return self._config.get(section, key)
         else:
             return None
 
@@ -329,8 +343,11 @@ class Config:
 
     def reload(self):
         """Read config and then load and update all vars"""
-        self.config = self.read(self.config_file)
-        self.load()
+        self._config = self.read(self.config_file)
+        self.load()  # This loads static config values into attributes
+
+        # Now update from dynamic (will create dynamic.ini if first time)
+        super().update_from_dynamic()
 
     def load(self):
         """
@@ -338,274 +355,277 @@ class Config:
         """
 
         # Loading section: [LENS_FOCUS_CONSTANTS]
-        # config = self.config.getint('GLOBAL', 'config', fallback=self.config)
+        # config = self._config.getint('GLOBAL', 'config', fallback=self.config)
 
-        self.test = self.config.getboolean('GLOBAL', 'test', fallback=self.test)
-        self.debug = self.config.getboolean('GLOBAL', 'debug', fallback=self.debug)
-        self.log_file_path = self.config.get('GLOBAL', 'log_file_path', fallback=self.log_file_path)
-        self.log_path = self.config.get('LOG', 'path', fallback=self.log_path)
-        self.telemetry_log = self.config.get('LOG', 'telemetry_log', fallback=self.telemetry_log)
+        self.test = self._config.getboolean('GLOBAL', 'test', fallback=self.test)
+        self.debug = self._config.getboolean('GLOBAL', 'debug', fallback=self.debug)
+        self.log_file_path = self._config.get('GLOBAL', 'log_file_path', fallback=self.log_file_path)
+        self.log_path = self._config.get('LOG', 'path', fallback=self.log_path)
+        self.telemetry_log = self._config.get('LOG', 'telemetry_log', fallback=self.telemetry_log)
         # Example of adding new var
-        # self.new_var = self.config.get('GLOBAL', 'new_var', fallback=self.new_var)
+        # self.new_var = self._config.get('GLOBAL', 'new_var', fallback=self.new_var)
 
-        self.trial_focus_pos = self.config.getint('LENS_FOCUS_CONSTANTS', 'trial_focus_pos',
+        self.trial_focus_pos = self._config.getint('LENS_FOCUS_CONSTANTS', 'trial_focus_pos',
                                                   fallback=self.trial_focus_pos)
 
-        self.autofocus_start_position = self.config.getint('LENS_FOCUS_CONSTANTS', 'autofocus_start_position', fallback=self.autofocus_start_position)
-        self.autofocus_stop_position = self.config.getint('LENS_FOCUS_CONSTANTS', 'autofocus_stop_position', fallback=self.autofocus_stop_position)
-        self.autofocus_step_count = self.config.getint('LENS_FOCUS_CONSTANTS', 'autofocus_step_count', fallback=self.autofocus_step_count)
-        self.autofocus_method = self.config.get('LENS_FOCUS_CONSTANTS', 'autofocus_method', fallback=self.autofocus_method)
+        self.autofocus_start_position = self._config.getint('LENS_FOCUS_CONSTANTS', 'autofocus_start_position', fallback=self.autofocus_start_position)
+        self.autofocus_stop_position = self._config.getint('LENS_FOCUS_CONSTANTS', 'autofocus_stop_position', fallback=self.autofocus_stop_position)
+        self.autofocus_step_count = self._config.getint('LENS_FOCUS_CONSTANTS', 'autofocus_step_count', fallback=self.autofocus_step_count)
+        self.autofocus_method = self._config.get('LENS_FOCUS_CONSTANTS', 'autofocus_method', fallback=self.autofocus_method)
 
-        self.top_end_span_percentage = self.config.getfloat('LENS_FOCUS_CONSTANTS', 'top_end_span_percentage',
+        self.top_end_span_percentage = self._config.getfloat('LENS_FOCUS_CONSTANTS', 'top_end_span_percentage',
                                                             fallback=self.top_end_span_percentage)
-        self.bottom_end_span_percentage = self.config.getfloat('LENS_FOCUS_CONSTANTS', 'bottom_end_span_percentage',
+        self.bottom_end_span_percentage = self._config.getfloat('LENS_FOCUS_CONSTANTS', 'bottom_end_span_percentage',
                                                                fallback=self.bottom_end_span_percentage)
-        self.coarse_focus_step_count = self.config.getint('LENS_FOCUS_CONSTANTS', 'coarse_focus_step_count',
+        self.coarse_focus_step_count = self._config.getint('LENS_FOCUS_CONSTANTS', 'coarse_focus_step_count',
                                                           fallback=self.coarse_focus_step_count)
 
-        self.fine_focus_step_count = self.config.getint('LENS_FOCUS_CONSTANTS', 'fine_focus_step_count',
+        self.fine_focus_step_count = self._config.getint('LENS_FOCUS_CONSTANTS', 'fine_focus_step_count',
                                                         fallback=self.fine_focus_step_count)
-        self.lens_focus_homed = self.config.getboolean('LENS_FOCUS_CONSTANTS', 'lens_focus_homed',
+        self.lens_focus_homed = self._config.getboolean('LENS_FOCUS_CONSTANTS', 'lens_focus_homed',
                                                        fallback=self.lens_focus_homed)
-        self.exposure_time = self.config.getint('LENS_FOCUS_CONSTANTS', 'exposure_time', fallback=self.exposure_time)
-        self.pixel_bias = self.config.getint('LENS_FOCUS_CONSTANTS', 'pixel_bias', fallback=self.pixel_bias)
+        self.exposure_time = self._config.getint('LENS_FOCUS_CONSTANTS', 'exposure_time', fallback=self.exposure_time)
+        self.pixel_bias = self._config.getint('LENS_FOCUS_CONSTANTS', 'pixel_bias', fallback=self.pixel_bias)
 
-        env_filename = self.config.get('LENS_FOCUS_CONSTANTS', 'env_filename', fallback=self.env_filename)
+        env_filename = self._config.get('LENS_FOCUS_CONSTANTS', 'env_filename', fallback=self.env_filename)
         self.env_filename = os.path.abspath(os.path.expanduser(env_filename))
 
-        self.autogain_update_interval = self.config.getint('LENS_FOCUS_CONSTANTS', 'autogain_update_interval',
+        self.autogain_update_interval = self._config.getint('LENS_FOCUS_CONSTANTS', 'autogain_update_interval',
                                                            fallback=self.autogain_update_interval)
-        self.autogain_num_bins = self.config.getint('LENS_FOCUS_CONSTANTS', 'autogain_num_bins',
+        self.autogain_num_bins = self._config.getint('LENS_FOCUS_CONSTANTS', 'autogain_num_bins',
                                                     fallback=self.autogain_num_bins)
-        self.autoexposure_num_bins = self.config.getint('LENS_FOCUS_CONSTANTS', 'autoexposure_num_bins',
+        self.autoexposure_num_bins = self._config.getint('LENS_FOCUS_CONSTANTS', 'autoexposure_num_bins',
                                                     fallback=self.autoexposure_num_bins)
-        self.max_autogain_iterations = self.config.getint('LENS_FOCUS_CONSTANTS',
+        self.max_autogain_iterations = self._config.getint('LENS_FOCUS_CONSTANTS',
                                                           'max_autogain_iterations',
                                                           fallback=self.max_autogain_iterations)
-        self.max_autoexposure_iterations = self.config.getint('LENS_FOCUS_CONSTANTS',
+        self.max_autoexposure_iterations = self._config.getint('LENS_FOCUS_CONSTANTS',
                                                               'max_autoexposure_iterations',
                                                               fallback=self.max_autoexposure_iterations)
 
-        self.max_gain_setting = self.config.getint('LENS_FOCUS_CONSTANTS', 'max_gain_setting',
+        self.max_gain_setting = self._config.getint('LENS_FOCUS_CONSTANTS', 'max_gain_setting',
                                                    fallback=self.max_gain_setting)
-        self.min_gain_setting = self.config.getint('LENS_FOCUS_CONSTANTS', 'min_gain_setting',
+        self.min_gain_setting = self._config.getint('LENS_FOCUS_CONSTANTS', 'min_gain_setting',
                                                    fallback=self.min_gain_setting)
 
-        self.max_exposure_setting = self.config.getint('LENS_FOCUS_CONSTANTS', 'max_exposure_setting',
+        self.max_exposure_setting = self._config.getint('LENS_FOCUS_CONSTANTS', 'max_exposure_setting',
                                                    fallback=self.max_exposure_setting)
-        self.min_exposure_setting = self.config.getint('LENS_FOCUS_CONSTANTS', 'min_exposure_setting',
+        self.min_exposure_setting = self._config.getint('LENS_FOCUS_CONSTANTS', 'min_exposure_setting',
                                                    fallback=self.min_exposure_setting)
 
-        self.autogain_desired_max_pixel_value = self.config.getint('LENS_FOCUS_CONSTANTS', 'autogain_desired_max_pixel_value',
+        self.autogain_desired_max_pixel_value = self._config.getint('LENS_FOCUS_CONSTANTS', 'autogain_desired_max_pixel_value',
                                                                    fallback=self.autogain_desired_max_pixel_value)
-        self.autoexposure_desired_max_pixel_value = self.config.getint('LENS_FOCUS_CONSTANTS', 'autoexposure_desired_max_pixel_value',
+        self.autoexposure_desired_max_pixel_value = self._config.getint('LENS_FOCUS_CONSTANTS', 'autoexposure_desired_max_pixel_value',
                                                                        fallback=self.autoexposure_desired_max_pixel_value)
-        self.lab_best_focus = self.config.getint('LENS_FOCUS_CONSTANTS', 'lab_best_focus', fallback=self.lab_best_focus)
-        self.lab_best_gain = self.config.getint('LENS_FOCUS_CONSTANTS', 'lab_best_gain', fallback=self.lab_best_gain)
-        self.lab_best_exposure = self.config.getint('LENS_FOCUS_CONSTANTS', 'lab_best_exposure',
+        self.lab_best_aperture_position = self._config.getint('LENS_FOCUS_CONSTANTS', 'lab_best_aperture_position',
+                                                     fallback=self.lab_best_aperture_position)
+        self.lab_best_focus = self._config.getint('LENS_FOCUS_CONSTANTS', 'lab_best_focus', fallback=self.lab_best_focus)
+        self.lab_best_gain = self._config.getint('LENS_FOCUS_CONSTANTS', 'lab_best_gain', fallback=self.lab_best_gain)
+        self.lab_best_exposure = self._config.getint('LENS_FOCUS_CONSTANTS', 'lab_best_exposure',
                                                     fallback=self.lab_best_exposure)
 
-        self.autofocus_max_deviation = self.config.getfloat('LENS_FOCUS_CONSTANTS', 'autofocus_max_deviation',
+        self.autofocus_max_deviation = self._config.getfloat('LENS_FOCUS_CONSTANTS', 'autofocus_max_deviation',
                                                             fallback=self.autofocus_max_deviation)
 
-        focus_tolerance_percentage = self.config.getfloat('LENS_FOCUS_CONSTANTS', 'focus_tolerance_percentage',
+        focus_tolerance_percentage = self._config.getfloat('LENS_FOCUS_CONSTANTS', 'focus_tolerance_percentage',
                                                             fallback=self.focus_tolerance_percentage)
 
-        self.fit_points_init = self.config.getint('LENS_FOCUS_CONSTANTS', 'fit_points_init',
+        self.fit_points_init = self._config.getint('LENS_FOCUS_CONSTANTS', 'fit_points_init',
                                                   fallback=self.fit_points_init)
-        self.lab_fov = self.config.getfloat('LENS_FOCUS_CONSTANTS', 'lab_fov', fallback=self.lab_fov)
-        self.lab_distortion_coefficient_1 = self.config.getfloat('LENS_FOCUS_CONSTANTS', 'lab_distortion_coefficient_1',
+        self.lab_fov = self._config.getfloat('LENS_FOCUS_CONSTANTS', 'lab_fov', fallback=self.lab_fov)
+        self.lab_distortion_coefficient_1 = self._config.getfloat('LENS_FOCUS_CONSTANTS', 'lab_distortion_coefficient_1',
                                                                  fallback=self.lab_distortion_coefficient_1)
-        self.lab_distortion_coefficient_2 = self.config.getfloat('LENS_FOCUS_CONSTANTS', 'lab_distortion_coefficient_2',
+        self.lab_distortion_coefficient_2 = self._config.getfloat('LENS_FOCUS_CONSTANTS', 'lab_distortion_coefficient_2',
                                                                  fallback=self.lab_distortion_coefficient_2)
 
         # Buttons GUI increments
-        self.delta_focus_steps = self.config.getint('LENS_FOCUS_CONSTANTS', 'delta_focus_steps',
+        self.delta_focus_steps = self._config.getint('LENS_FOCUS_CONSTANTS', 'delta_focus_steps',
                                                     fallback=self.delta_focus_steps)
-        self.delta_aperture = self.config.getint('LENS_FOCUS_CONSTANTS', 'delta_aperture', fallback=self.delta_aperture)
-        self.delta_exposure_time = self.config.getint('LENS_FOCUS_CONSTANTS', 'delta_exposure_time',
+        self.delta_aperture = self._config.getint('LENS_FOCUS_CONSTANTS', 'delta_aperture', fallback=self.delta_aperture)
+        self.delta_exposure_time = self._config.getint('LENS_FOCUS_CONSTANTS', 'delta_exposure_time',
                                                       fallback=self.delta_exposure_time)
-        self.delta_gain = self.config.getint('LENS_FOCUS_CONSTANTS', 'delta_gain', fallback=self.delta_gain)
+        self.delta_gain = self._config.getint('LENS_FOCUS_CONSTANTS', 'delta_gain', fallback=self.delta_gain)
 
         # [CAMERA] section
-        self.asi_gama = self.config.getint('CAMERA', 'asi_gama', fallback=self.asi_gama)
-        self.asi_exposure = self.config.getint('CAMERA', 'asi_exposure', fallback=self.asi_exposure)
-        self.asi_gain = self.config.getint('CAMERA', 'asi_gain', fallback=self.asi_gain)
-        self.asi_flip = self.config.getint('CAMERA', 'asi_flip', fallback=self.asi_flip)
-        self.roi_bins = self.config.getint('CAMERA', 'roi_bins', fallback=self.roi_bins)
-        self.pixel_saturated_value_raw8 = self.config.getint('CAMERA', 'pixel_saturated_value_raw8',
+        self.asi_gama = self._config.getint('CAMERA', 'asi_gama', fallback=self.asi_gama)
+        self.asi_exposure = self._config.getint('CAMERA', 'asi_exposure', fallback=self.asi_exposure)
+        self.asi_gain = self._config.getint('CAMERA', 'asi_gain', fallback=self.asi_gain)
+        self.asi_flip = self._config.getint('CAMERA', 'asi_flip', fallback=self.asi_flip)
+        self.roi_bins = self._config.getint('CAMERA', 'roi_bins', fallback=self.roi_bins)
+        self.pixel_saturated_value_raw8 = self._config.getint('CAMERA', 'pixel_saturated_value_raw8',
                                                              fallback=self.pixel_saturated_value_raw8)
-        self.pixel_saturated_value_raw16 = self.config.getint('CAMERA', 'pixel_saturated_value_raw16',
+        self.pixel_saturated_value_raw16 = self._config.getint('CAMERA', 'pixel_saturated_value_raw16',
                                                               fallback=self.pixel_saturated_value_raw16)
-        self.stdev_error_value = self.config.getint('CAMERA', 'stdev_error_value', fallback=self.stdev_error_value)
+        self.stdev_error_value = self._config.getint('CAMERA', 'stdev_error_value', fallback=self.stdev_error_value)
 
-        camera_id_vendor_hex = self.config.get('CAMERA', 'camera_id_vendor', fallback=hex(self.camera_id_vendor))
+        camera_id_vendor_hex = self._config.get('CAMERA', 'camera_id_vendor', fallback=hex(self.camera_id_vendor))
         self.camera_id_vendor = int(camera_id_vendor_hex, 16)
-        camera_id_product_hex = self.config.get('CAMERA', 'camera_id_product', fallback=hex(self.camera_id_product))
+        camera_id_product_hex = self._config.get('CAMERA', 'camera_id_product', fallback=hex(self.camera_id_product))
         self.camera_id_product = int(camera_id_product_hex, 16)
-        self.pixel_well_depth = self.config.getint('CAMERA', 'pixel_well_depth', fallback=self.pixel_well_depth)
+        self.pixel_well_depth = self._config.getint('CAMERA', 'pixel_well_depth', fallback=self.pixel_well_depth)
 
-        self.sbc_dio_camera_pin = self.config.getint('CAMERA', 'sbc_dio_camera_pin', fallback=self.sbc_dio_camera_pin)
-        self.sbc_dio_focuser_pin = self.config.getint('CAMERA', 'sbc_dio_focuser_pin',
+        self.sbc_dio_camera_pin = self._config.getint('CAMERA', 'sbc_dio_camera_pin', fallback=self.sbc_dio_camera_pin)
+        self.sbc_dio_focuser_pin = self._config.getint('CAMERA', 'sbc_dio_focuser_pin',
                                                       fallback=self.sbc_dio_focuser_pin)
-        self.sbc_dio_default = self.config.getboolean('CAMERA', 'sbc_dio_default', fallback=self.sbc_dio_default)
-        self.sbc_dio_cycle_delay = self.config.getint('CAMERA', 'sbc_dio_cycle_delay',
+        self.sbc_dio_default = self._config.getboolean('CAMERA', 'sbc_dio_default', fallback=self.sbc_dio_default)
+        self.sbc_dio_cycle_delay = self._config.getint('CAMERA', 'sbc_dio_cycle_delay',
                                                       fallback=self.sbc_dio_cycle_delay)
 
-        self.power_cycle_wait = self.config.getint('CAMERA', 'power_cycle_wait', fallback=self.power_cycle_wait)
+        self.power_cycle_wait = self._config.getint('CAMERA', 'power_cycle_wait', fallback=self.power_cycle_wait)
 
         # [SOURCES]
-        self.img_bkg_threshold = self.config.getfloat('SOURCES', 'img_bkg_threshold', fallback=self.img_bkg_threshold)
-        self.img_number_sources = self.config.getint('SOURCES', 'img_number_sources', fallback=self.img_number_sources)
-        self.img_min_size = self.config.getint('SOURCES', 'img_min_size', fallback=self.img_min_size)
-        self.img_max_size = self.config.getint('SOURCES', 'img_max_size', fallback=self.img_max_size)
+        self.img_bkg_threshold = self._config.getfloat('SOURCES', 'img_bkg_threshold', fallback=self.img_bkg_threshold)
+        self.img_number_sources = self._config.getint('SOURCES', 'img_number_sources', fallback=self.img_number_sources)
+        self.img_min_size = self._config.getint('SOURCES', 'img_min_size', fallback=self.img_min_size)
+        self.img_max_size = self._config.getint('SOURCES', 'img_max_size', fallback=self.img_max_size)
 
         # source_finder.py
-        self.local_sigma_cell_size = self.config.getint('SOURCES', 'local_sigma_cell_size',
+        self.local_sigma_cell_size = self._config.getint('SOURCES', 'local_sigma_cell_size',
                                                         fallback=self.local_sigma_cell_size)
-        self.sigma_clipped_sigma = self.config.getfloat('SOURCES', 'sigma_clipped_sigma',
+        self.sigma_clipped_sigma = self._config.getfloat('SOURCES', 'sigma_clipped_sigma',
                                                         fallback=self.sigma_clipped_sigma)
-        self.sigma_clip_sigma = self.config.getfloat('SOURCES', 'sigma_clip_sigma', fallback=self.sigma_clip_sigma)
-        self.leveling_filter_downscale_factor = self.config.getint('SOURCES', 'leveling_filter_downscale_factor',
+        self.sigma_clip_sigma = self._config.getfloat('SOURCES', 'sigma_clip_sigma', fallback=self.sigma_clip_sigma)
+        self.leveling_filter_downscale_factor = self._config.getint('SOURCES', 'leveling_filter_downscale_factor',
                                                                    fallback=self.leveling_filter_downscale_factor)
 
-        self.src_box_size_x = self.config.getint('SOURCES', 'src_box_size_x', fallback=self.src_box_size_x)
-        self.src_box_size_y = self.config.getint('SOURCES', 'src_box_size_y', fallback=self.src_box_size_y)
-        self.src_filter_size_x = self.config.getint('SOURCES', 'src_filter_size_x', fallback=self.src_filter_size_x)
-        self.src_filter_size_y = self.config.getint('SOURCES', 'src_filter_size_y', fallback=self.src_filter_size_y)
+        self.src_box_size_x = self._config.getint('SOURCES', 'src_box_size_x', fallback=self.src_box_size_x)
+        self.src_box_size_y = self._config.getint('SOURCES', 'src_box_size_y', fallback=self.src_box_size_y)
+        self.src_filter_size_x = self._config.getint('SOURCES', 'src_filter_size_x', fallback=self.src_filter_size_x)
+        self.src_filter_size_y = self._config.getint('SOURCES', 'src_filter_size_y', fallback=self.src_filter_size_y)
 
-        self.src_kernal_size_x = self.config.getint('SOURCES', 'src_kernal_size_x', fallback=self.src_kernal_size_x)
-        self.src_kernal_size_y = self.config.getint('SOURCES', 'src_kernal_size_y', fallback=self.src_kernal_size_y)
-        self.src_sigma_x = self.config.getint('SOURCES', 'src_sigma_x', fallback=self.src_sigma_x)
-        self.src_dst = self.config.getint('SOURCES', 'src_dst', fallback=self.src_dst)
+        self.src_kernal_size_x = self._config.getint('SOURCES', 'src_kernal_size_x', fallback=self.src_kernal_size_x)
+        self.src_kernal_size_y = self._config.getint('SOURCES', 'src_kernal_size_y', fallback=self.src_kernal_size_y)
+        self.src_sigma_x = self._config.getint('SOURCES', 'src_sigma_x', fallback=self.src_sigma_x)
+        self.src_dst = self._config.getint('SOURCES', 'src_dst', fallback=self.src_dst)
 
-        self.photutils_gaussian_kernal_fwhm = self.config.getfloat('SOURCES', 'photutils_gaussian_kernal_fwhm',
+        self.photutils_gaussian_kernal_fwhm = self._config.getfloat('SOURCES', 'photutils_gaussian_kernal_fwhm',
                                                                    fallback=self.photutils_gaussian_kernal_fwhm)
-        self.photutils_kernal_size = self.config.getfloat('SOURCES', 'photutils_kernal_size',
+        self.photutils_kernal_size = self._config.getfloat('SOURCES', 'photutils_kernal_size',
                                                           fallback=self.photutils_kernal_size)
-        self.dilate_mask_iterations = self.config.getint('SOURCES', 'dilate_mask_iterations',
+        self.dilate_mask_iterations = self._config.getint('SOURCES', 'dilate_mask_iterations',
                                                          fallback=self.dilate_mask_iterations)
 
-        self.dilation_radius = self.config.getint('SOURCES', 'dilation_radius', fallback=self.dilation_radius)
-        self.min_potential_source_distance = self.config.getint('SOURCES', 'min_potential_source_distance',
+        self.dilation_radius = self._config.getint('SOURCES', 'dilation_radius', fallback=self.dilation_radius)
+        self.min_potential_source_distance = self._config.getint('SOURCES', 'min_potential_source_distance',
                                                                 fallback=self.min_potential_source_distance)
 
-        self.level_filter = self.config.getint('SOURCES', 'level_filter', fallback=self.level_filter)
+        self.level_filter = self._config.getint('SOURCES', 'level_filter', fallback=self.level_filter)
+        self.level_filter_type = self._config.get('SOURCES', 'level_filter_type', fallback=self.level_filter_type)
 
         # [STARTRACKER]
-        self.star_tracker_body_rates_max_distance = self.config.getint('STARTRACKER',
+        self.star_tracker_body_rates_max_distance = self._config.getint('STARTRACKER',
                                                                        'star_tracker_body_rates_max_distance',
                                                                        fallback=self.star_tracker_body_rates_max_distance)
-        self.focal_ratio = self.config.getfloat('STARTRACKER', 'focal_ratio', fallback=self.focal_ratio)
-        self.x_pixel_count = self.config.getint('STARTRACKER', 'x_pixel_count', fallback=self.x_pixel_count)
-        self.y_pixel_count = self.config.getint('STARTRACKER', 'y_pixel_count', fallback=self.y_pixel_count)
+        self.focal_ratio = self._config.getfloat('STARTRACKER', 'focal_ratio', fallback=self.focal_ratio)
+        self.x_pixel_count = self._config.getint('STARTRACKER', 'x_pixel_count', fallback=self.x_pixel_count)
+        self.y_pixel_count = self._config.getint('STARTRACKER', 'y_pixel_count', fallback=self.y_pixel_count)
 
         # [ASTROMETRY]
-        self.ast_t3_database = self.config.get('ASTROMETRY', 'ast_t3_database', fallback=self.ast_t3_database)
-        self.ast_is_array = self.config.getboolean('ASTROMETRY', 'ast_is_array', fallback=self.ast_is_array)
-        self.ast_is_trail = self.config.getboolean('ASTROMETRY', 'ast_is_trail', fallback=self.ast_is_trail)
-        self.ast_use_photoutils = self.config.getboolean('ASTROMETRY', 'ast_use_photoutils',
+        self.ast_t3_database = self._config.get('ASTROMETRY', 'ast_t3_database', fallback=self.ast_t3_database)
+        self.ast_is_array = self._config.getboolean('ASTROMETRY', 'ast_is_array', fallback=self.ast_is_array)
+        self.ast_is_trail = self._config.getboolean('ASTROMETRY', 'ast_is_trail', fallback=self.ast_is_trail)
+        self.ast_use_photoutils = self._config.getboolean('ASTROMETRY', 'ast_use_photoutils',
                                                          fallback=self.ast_use_photoutils)
-        self.ast_substract_global_bkg = self.config.getboolean('ASTROMETRY', 'ast_substract_global_bkg',
+        self.ast_substract_global_bkg = self._config.getboolean('ASTROMETRY', 'ast_substract_global_bkg',
                                                                fallback=self.ast_substract_global_bkg)
-        self.ast_fast = self.config.getboolean('ASTROMETRY', 'ast_fast', fallback=self.ast_fast)
-        self.ast_bkg_threshold = self.config.getfloat('ASTROMETRY', 'ast_bkg_threshold',
+        self.ast_fast = self._config.getboolean('ASTROMETRY', 'ast_fast', fallback=self.ast_fast)
+        self.ast_bkg_threshold = self._config.getfloat('ASTROMETRY', 'ast_bkg_threshold',
                                                       fallback=self.ast_bkg_threshold)
-        self.ast_number_sources = self.config.getint('ASTROMETRY', 'ast_number_sources',
+        self.ast_number_sources = self._config.getint('ASTROMETRY', 'ast_number_sources',
                                                      fallback=self.ast_number_sources)
-        self.ast_min_size = self.config.getint('ASTROMETRY', 'ast_min_size', fallback=self.ast_min_size)
-        self.ast_max_size = self.config.getint('ASTROMETRY', 'ast_max_size', fallback=self.ast_max_size)
+        self.ast_min_size = self._config.getint('ASTROMETRY', 'ast_min_size', fallback=self.ast_min_size)
+        self.ast_max_size = self._config.getint('ASTROMETRY', 'ast_max_size', fallback=self.ast_max_size)
 
-        self.min_pattern_checking_stars = self.config.getint('ASTROMETRY', 'min_pattern_checking_stars',
+        self.min_pattern_checking_stars = self._config.getint('ASTROMETRY', 'min_pattern_checking_stars',
                                                              fallback=self.min_pattern_checking_stars)
-        self.include_angular_velocity = self.config.getboolean('ASTROMETRY', 'include_angular_velocity',
+        self.include_angular_velocity = self._config.getboolean('ASTROMETRY', 'include_angular_velocity',
                                                                fallback=self.include_angular_velocity)
 
-        self.angular_velocity_timeout = self.config.getfloat('ASTROMETRY', 'angular_velocity_timeout',
+        self.angular_velocity_timeout = self._config.getfloat('ASTROMETRY', 'angular_velocity_timeout',
                                                              fallback=self.angular_velocity_timeout)
 
-        self.solve_timeout = self.config.getfloat('ASTROMETRY', 'solve_timeout', fallback=self.solve_timeout)
+        self.solve_timeout = self._config.getfloat('ASTROMETRY', 'solve_timeout', fallback=self.solve_timeout)
 
         # [CEDAR}
-        self.cedar_detect_host = self.config.get('CEDAR', 'host', fallback=self.cedar_detect_host)
-        self.sigma = self.config.get('CEDAR', 'sigma', fallback=self.sigma)
-        self.max_size = self.config.getint('CEDAR', 'max_size', fallback=self.max_size)
-        self.binning = self.config.getint('CEDAR', 'binning', fallback=self.binning)
+        self.cedar_detect_host = self._config.get('CEDAR', 'host', fallback=self.cedar_detect_host)
+        self.sigma = self._config.get('CEDAR', 'sigma', fallback=self.sigma)
+        self.max_size = self._config.getint('CEDAR', 'max_size', fallback=self.max_size)
+        self.binning = self._config.getint('CEDAR', 'binning', fallback=self.binning)
         self.binning = self.binning or self.binning != 0
-        self.return_binned = self.config.getboolean('CEDAR', 'return_binned', fallback=self.return_binned)
-        self.use_binned_for_star_candidates = self.config.getboolean('CEDAR', 'use_binned_for_star_candidates',
+        self.return_binned = self._config.getboolean('CEDAR', 'return_binned', fallback=self.return_binned)
+        self.use_binned_for_star_candidates = self._config.getboolean('CEDAR', 'use_binned_for_star_candidates',
                                                                      fallback=self.use_binned_for_star_candidates)
-        self.detect_hot_pixels = self.config.getboolean('CEDAR', 'detect_hot_pixels',
+        self.detect_hot_pixels = self._config.getboolean('CEDAR', 'detect_hot_pixels',
                                                         fallback=self.detect_hot_pixels)
 
         # Custom Pixel Count and Spatial Filtering
-        self.pixel_count_min = self.config.getint('CEDAR', 'pixel_count_min', fallback=self.pixel_count_min)
-        self.pixel_count_max = self.config.getint('CEDAR', 'pixel_count_max', fallback=self.pixel_count_max)
-        self.spatial_distance_px = self.config.getint('CEDAR', 'spatial_distance_px', fallback=self.spatial_distance_px)
-        self.gaussian_fwhm = self.config.getfloat('CEDAR', 'gaussian_fwhm', fallback=self.gaussian_fwhm)
-        self.cedar_downscale = self.config.getfloat('CEDAR', 'cedar_downscale', fallback=self.cedar_downscale)
+        self.pixel_count_min = self._config.getint('CEDAR', 'pixel_count_min', fallback=self.pixel_count_min)
+        self.pixel_count_max = self._config.getint('CEDAR', 'pixel_count_max', fallback=self.pixel_count_max)
+        self.spatial_distance_px = self._config.getint('CEDAR', 'spatial_distance_px', fallback=self.spatial_distance_px)
+        self.gaussian_fwhm = self._config.getfloat('CEDAR', 'gaussian_fwhm', fallback=self.gaussian_fwhm)
+        self.cedar_downscale = self._config.getfloat('CEDAR', 'cedar_downscale', fallback=self.cedar_downscale)
 
         # [IMAGES]
-        self.png_compression = self.config.getint('IMAGES', 'png_compression', fallback=self.png_compression)
-        self.save_raw = self.config.getboolean('IMAGES', 'save_raw', fallback=self.save_raw)
-        self.min_count = self.config.getint('IMAGES', 'min_count', fallback=self.min_count)
-        self.sigma_error_value = self.config.getint('IMAGES', 'sigma_error_value', fallback=self.sigma_error_value)
-        self.return_partial_images = self.config.getboolean('IMAGES', 'return_partial_images',
+        self.png_compression = self._config.getint('IMAGES', 'png_compression', fallback=self.png_compression)
+        self.save_raw = self._config.getboolean('IMAGES', 'save_raw', fallback=self.save_raw)
+        self.min_count = self._config.getint('IMAGES', 'min_count', fallback=self.min_count)
+        self.sigma_error_value = self._config.getint('IMAGES', 'sigma_error_value', fallback=self.sigma_error_value)
+        self.return_partial_images = self._config.getboolean('IMAGES', 'return_partial_images',
                                                             fallback=self.return_partial_images)
         # Downscale - SD images
-        self.resize_mode = self.config.get('IMAGES', 'resize_mode', fallback=self.resize_mode)
-        self.scale_factor_x = self.config.getfloat('IMAGES', 'scale_factor_x', fallback=self.scale_factor_x)
-        self.scale_factor_y = self.config.getfloat('IMAGES', 'scale_factor_y', fallback=self.scale_factor_y)
+        self.resize_mode = self._config.get('IMAGES', 'resize_mode', fallback=self.resize_mode)
+        self.scale_factor_x = self._config.getfloat('IMAGES', 'scale_factor_x', fallback=self.scale_factor_x)
+        self.scale_factor_y = self._config.getfloat('IMAGES', 'scale_factor_y', fallback=self.scale_factor_y)
         self.scale_factors = (self.scale_factor_x, self.scale_factor_y)
 
         # Downscale - RAW images
-        self.raw_resize_mode = self.config.get('IMAGES', 'raw_resize_mode', fallback=self.raw_resize_mode)
-        self.raw_scale_factor_x = self.config.getfloat('IMAGES', 'raw_scale_factor_x', fallback=self.raw_scale_factor_x)
-        self.raw_scale_factor_y = self.config.getfloat('IMAGES', 'raw_scale_factor_y', fallback=self.raw_scale_factor_y)
+        self.raw_resize_mode = self._config.get('IMAGES', 'raw_resize_mode', fallback=self.raw_resize_mode)
+        self.raw_scale_factor_x = self._config.getfloat('IMAGES', 'raw_scale_factor_x', fallback=self.raw_scale_factor_x)
+        self.raw_scale_factor_y = self._config.getfloat('IMAGES', 'raw_scale_factor_y', fallback=self.raw_scale_factor_y)
         self.raw_scale_factors = (self.raw_scale_factor_x, self.raw_scale_factor_y)
 
-        self.inspection_images_keep = self.config.getint('IMAGES', 'inspection_images_keep', fallback=self.inspection_images_keep)
-        self.inspection_quality = self.config.getint('IMAGES', 'inspection_quality', fallback=self.inspection_quality)
-        self.inspection_lower_percentile = self.config.getint('IMAGES', 'inspection_lower_percentile', fallback=self.inspection_lower_percentile)
-        self.inspection_upper_percentile = self.config.getint('IMAGES', 'inspection_upper_percentile', fallback=self.inspection_upper_percentile)
+        self.inspection_images_keep = self._config.getint('IMAGES', 'inspection_images_keep', fallback=self.inspection_images_keep)
+        self.inspection_quality = self._config.getint('IMAGES', 'inspection_quality', fallback=self.inspection_quality)
+        self.inspection_lower_percentile = self._config.getint('IMAGES', 'inspection_lower_percentile', fallback=self.inspection_lower_percentile)
+        self.inspection_upper_percentile = self._config.getint('IMAGES', 'inspection_upper_percentile', fallback=self.inspection_upper_percentile)
 
         # [GENERAL]
-        self.flight_mode = self.config.get('GENERAL', 'flight_mode', fallback=self.flight_mode)
-        self.solver = self.config.get('GENERAL', 'solver', fallback=self.solver)
-        self.time_interval = self.config.getint('GENERAL', 'time_interval', fallback=self.time_interval)
-        self.max_processes = self.config.getint('GENERAL', 'max_processes', fallback=self.max_processes)
-        self.operation_timeout = self.config.getint('GENERAL', 'operation_timeout', fallback=self.operation_timeout)
-        self.current_timeout = self.config.getint('GENERAL', 'current_timeout', fallback=self.current_timeout)
-        self.run_autofocus = self.config.getboolean('GENERAL', 'run_autofocus', fallback=self.run_autofocus)
-        self.enable_autogain_with_autofocus = self.config.getboolean('GENERAL', 'enable_autogain_with_autofocus', fallback=self.enable_autogain_with_autofocus)
+        self.flight_mode = self._config.get('GENERAL', 'flight_mode', fallback=self.flight_mode)
+        self.solver = self._config.get('GENERAL', 'solver', fallback=self.solver)
+        self.time_interval = self._config.getint('GENERAL', 'time_interval', fallback=self.time_interval)
+        self.max_processes = self._config.getint('GENERAL', 'max_processes', fallback=self.max_processes)
+        self.operation_timeout = self._config.getint('GENERAL', 'operation_timeout', fallback=self.operation_timeout)
+        self.current_timeout = self._config.getfloat('GENERAL', 'current_timeout', fallback=self.current_timeout)
+        self.run_autofocus = self._config.getboolean('GENERAL', 'run_autofocus', fallback=self.run_autofocus)
+        self.enable_autogain_with_autofocus = self._config.getboolean('GENERAL', 'enable_autogain_with_autofocus', fallback=self.enable_autogain_with_autofocus)
 
-        self.run_autonomous = self.config.getboolean('GENERAL', 'run_autonomous', fallback=self.run_autonomous)
-        self.run_telemetry = self.config.getboolean('GENERAL', 'run_telemetry', fallback=self.run_telemetry)
-        self.run_chamber = self.config.getboolean('GENERAL', 'run_chamber', fallback=self.run_chamber)
-        self.run_test = self.config.getboolean('GENERAL', 'run_test', fallback=self.run_test)
+        self.run_autonomous = self._config.getboolean('GENERAL', 'run_autonomous', fallback=self.run_autonomous)
+        self.run_telemetry = self._config.getboolean('GENERAL', 'run_telemetry', fallback=self.run_telemetry)
+        self.run_chamber = self._config.getboolean('GENERAL', 'run_chamber', fallback=self.run_chamber)
+        self.run_test = self._config.getboolean('GENERAL', 'run_test', fallback=self.run_test)
 
         # [PATHS] section
         # auto_gain_image_path
-        self.auto_gain_image_path_tmpl = self.config.get('PATHS', 'auto_gain_image_path_tmpl',
+        self.auto_gain_image_path_tmpl = self._config.get('PATHS', 'auto_gain_image_path_tmpl',
                                                          fallback=self.auto_gain_image_path_tmpl)
-        self.focus_image_path_tmpl = self.config.get('PATHS', 'focus_image_path_tmpl',
+        self.focus_image_path_tmpl = self._config.get('PATHS', 'focus_image_path_tmpl',
                                                      fallback=self.focus_image_path_tmpl)
-        self.ultrafine_focus_image_path_tmpl = self.config.get('PATHS', 'ultrafine_focus_image_path_tmpl',
+        self.ultrafine_focus_image_path_tmpl = self._config.get('PATHS', 'ultrafine_focus_image_path_tmpl',
                                                                fallback=self.ultrafine_focus_image_path_tmpl)
 
-        self.partial_results_path = self.config.get('PATHS', 'partial_results_path', fallback=self.partial_results_path)
-        self.partial_image_name = self.config.get('PATHS', 'partial_image_name', fallback=self.partial_image_name)
-        self.astro_path = self.config.get('PATHS', 'astro_path', fallback=self.astro_path)
+        self.partial_results_path = self._config.get('PATHS', 'partial_results_path', fallback=self.partial_results_path)
+        self.partial_image_name = self._config.get('PATHS', 'partial_image_name', fallback=self.partial_image_name)
+        self.astro_path = self._config.get('PATHS', 'astro_path', fallback=self.astro_path)
 
-        self.ssd_path = self.config.get('PATHS', 'ssd_path', fallback=self.ssd_path)
-        self.sd_card_path = self.config.get('PATHS', 'sd_card_path', fallback=self.sd_card_path)
-        self.final_path = self.config.get('PATHS', 'final_path', fallback=self.final_path)
+        self.ssd_path = self._config.get('PATHS', 'ssd_path', fallback=self.ssd_path)
+        self.sd_card_path = self._config.get('PATHS', 'sd_card_path', fallback=self.sd_card_path)
+        self.final_path = self._config.get('PATHS', 'final_path', fallback=self.final_path)
 
-        self.calibration_params_file = self.config.get('PATHS', 'calibration_params_file',
+        self.calibration_params_file = self._config.get('PATHS', 'calibration_params_file',
                                                        fallback=self.calibration_params_file)
-        self.gui_images_path = self.config.get('PATHS', 'gui_images_path', fallback=self.gui_images_path)
+        self.gui_images_path = self._config.get('PATHS', 'gui_images_path', fallback=self.gui_images_path)
 
-        self.inspection_path = self.config.get('PATHS', 'inspection_path', fallback=self.inspection_path)
+        self.inspection_path = self._config.get('PATHS', 'inspection_path', fallback=self.inspection_path)
 
         # Create inspection_settings dict
         self.inspection_settings = {
@@ -617,26 +637,26 @@ class Config:
         }
 
         # [DEVICES]
-        self.focuser_port = self.config.get('DEVICES', 'focuser_port', fallback=self.focuser_port)
-        self.computer_port = self.config.get('DEVICES', 'computer_port', fallback=self.computer_port)
-        self.baud_rate = self.config.getint('DEVICES', 'baud_rate', fallback=self.baud_rate)
-        self.telemetry_port = self.config.get('DEVICES', 'telemetry_port', fallback=self.telemetry_port)
-        self.telemetry_baud_rate = self.config.getint('DEVICES', 'telemetry_baud_rate',
+        self.focuser_port = self._config.get('DEVICES', 'focuser_port', fallback=self.focuser_port)
+        self.computer_port = self._config.get('DEVICES', 'computer_port', fallback=self.computer_port)
+        self.baud_rate = self._config.getint('DEVICES', 'baud_rate', fallback=self.baud_rate)
+        self.telemetry_port = self._config.get('DEVICES', 'telemetry_port', fallback=self.telemetry_port)
+        self.telemetry_baud_rate = self._config.getint('DEVICES', 'telemetry_baud_rate',
                                                       fallback=self.telemetry_baud_rate)
 
         # [STAR_COMM_BRIDGE]
-        self.pueo_server_ip = self.config.get('STAR_COMM_BRIDGE', 'pueo_server_ip', fallback=self.pueo_server_ip)
-        self.server_ip = self.config.get('STAR_COMM_BRIDGE', 'server_ip', fallback=self.server_ip)
-        self.port = self.config.getint('STAR_COMM_BRIDGE', 'port', fallback=self.port)
-        self.socket_timeout = self.config.getint('STAR_COMM_BRIDGE', 'socket_timeout', fallback=self.socket_timeout)
-        self.max_retry = self.config.getint('STAR_COMM_BRIDGE', 'max_retry', fallback=self.max_retry)
-        self.retry_delay = self.config.getint('STAR_COMM_BRIDGE', 'retry_delay', fallback=self.retry_delay)
-        self.fq_max_size = self.config.getint('STAR_COMM_BRIDGE', 'fq_max_size', fallback=self.fq_max_size)
-        self.msg_max_size = self.config.getint('STAR_COMM_BRIDGE', 'msg_max_size', fallback=self.msg_max_size)
+        self.pueo_server_ip = self._config.get('STAR_COMM_BRIDGE', 'pueo_server_ip', fallback=self.pueo_server_ip)
+        self.server_ip = self._config.get('STAR_COMM_BRIDGE', 'server_ip', fallback=self.server_ip)
+        self.port = self._config.getint('STAR_COMM_BRIDGE', 'port', fallback=self.port)
+        self.socket_timeout = self._config.getint('STAR_COMM_BRIDGE', 'socket_timeout', fallback=self.socket_timeout)
+        self.max_retry = self._config.getint('STAR_COMM_BRIDGE', 'max_retry', fallback=self.max_retry)
+        self.retry_delay = self._config.getint('STAR_COMM_BRIDGE', 'retry_delay', fallback=self.retry_delay)
+        self.fq_max_size = self._config.getint('STAR_COMM_BRIDGE', 'fq_max_size', fallback=self.fq_max_size)
+        self.msg_max_size = self._config.getint('STAR_COMM_BRIDGE', 'msg_max_size', fallback=self.msg_max_size)
 
         # [GUI]
-        self.images_keep = self.config.getint('GUI', 'images_keep', fallback=self.images_keep)
-        self.log_reverse = self.config.getboolean('GUI', 'log_reverse', fallback=self.log_reverse)
+        self.images_keep = self._config.getint('GUI', 'images_keep', fallback=self.images_keep)
+        self.log_reverse = self._config.getboolean('GUI', 'log_reverse', fallback=self.log_reverse)
 
     def save(self, config_file='conf/config.ini'):
         """Load config and update only the ones applicable"""
@@ -675,6 +695,7 @@ class Config:
             'min_gain_setting': self.min_gain_setting,
             'autogain_desired_max_pixel_value': self.autogain_desired_max_pixel_value,
             'autoexposure_desired_max_pixel_value': self.autoexposure_desired_max_pixel_value,
+            'lab_best_aperture_position': self.lab_best_aperture_position,
             'lab_best_focus': self.lab_best_focus,
             'lab_best_gain': self.lab_best_gain,
             'lab_best_exposure': self.lab_best_exposure,
@@ -731,7 +752,8 @@ class Config:
             'dilate_mask_iterations': self.dilate_mask_iterations,
             'dilation_radius': self.dilation_radius,
             'min_potential_source_distance': self.min_potential_source_distance,
-            'level_filter': self.level_filter
+            'level_filter': self.level_filter,
+            'level_filter_type': self.level_filter_type
         }
 
         config['STARTRACKER'] = {
@@ -855,7 +877,7 @@ class Config:
 
 # Example usage (optional)
 if __name__ == "__main__":
-    cfg = Config()
+    cfg = Config(config_file="../conf/config.ini", dynamic_file="../conf/dynamic.ini")
 
     # Access configuration values
     # my_value = cfg.get("database", "host")
@@ -864,4 +886,15 @@ if __name__ == "__main__":
 
     # Example of adding new var
     # cfg.new_var = 'Super happy'
-    cfg.save()
+    # cfg.save()
+    def log():
+        print(f'lab_best_focus: {cfg.lab_best_focus}')
+        print(f'  solver: {cfg.solver}')
+        print(f'  run_autonomous: {cfg.run_autonomous}')
+
+    print(f'Orig')
+    log()
+
+    print(f'Updated')
+    cfg.set_dynamic(solver='solver1', run_autonomous=True, lab_best_focus=8355)
+    log()

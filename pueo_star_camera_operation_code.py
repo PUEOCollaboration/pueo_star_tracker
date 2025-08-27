@@ -41,6 +41,7 @@ import cv2
 # import imageio.v3 as iio
 # from astropy import modeling
 from scipy.optimize import curve_fit
+from scipy.spatial.transform import Rotation
 from PIL import Image
 import matplotlib.pyplot as plt
 import numpy as np
@@ -69,6 +70,7 @@ from lib.commands import Command
 
 # CONFIG - [GLOBAL]
 config_file = 'config.ini'  # Note this file can only be changed HERE!!! IT is still config.ini, but just for ref.
+dynamic_file = 'dynamic.ini'
 
 __version__ = '1.00b'
 __created_modified__ = '2024-10-22'
@@ -103,6 +105,7 @@ class PueoStarCameraOperation:
 
         self.log = logging.getLogger('pueo')
         self.cfg = cfg
+        self.cfg._log = self.log    # Add loger to the config object
 
         # Params
         self.start_t0 = time.monotonic()
@@ -187,6 +190,7 @@ class PueoStarCameraOperation:
         self.image_filename_list = []
 
         self.astrometry = {}
+        self.prev_astrometry = {}
         self.curr_star_centroids = None
         self.contours_img = None
 
@@ -718,7 +722,7 @@ class PueoStarCameraOperation:
             img = self.curr_img if max_iterations is not None and max_iterations == 1 else None
             img, basename = self.capture_timestamp_save(auto_gain_image_path, inserted_string, img)
             bins = np.linspace(0, pixel_saturated_value, self.cfg.autogain_num_bins)
-            # Creating a histogram requires flatten + histrogram
+            # Creating a histogram requires flatten + histogram
             arr = img.flatten()
             counts, bins = np.histogram(arr, bins=bins)
             # There is one counts less than bins, therefore we iterate over counts, not bins
@@ -1005,7 +1009,8 @@ class PueoStarCameraOperation:
         cleaned_img, background_img = local_levels_background_estimation(img=img, log_file_path=log_file_path,
                                                                          return_partial_images=return_partial_images,
                                                                          leveling_filter_downscale_factor=self.cfg.leveling_filter_downscale_factor,
-                                                                         level_filter=self.level_filter)
+                                                                         level_filter=self.level_filter,
+                                                                         level_filter_type=self.cfg.level_filter_type)
         self.logit("--------Find sources--------")
         bkg_threshold = self.cfg.img_bkg_threshold  # img_bkg_threshold = 3.1
         masked_image, estimated_noise = find_sources(img, background_img, bkg_threshold, return_partial_images,
@@ -1193,7 +1198,7 @@ class PueoStarCameraOperation:
                 self.logit('Opening Aperture.', color='magenta')
                 self.focuser.open_aperture()
 
-            #create autgain sequence image path
+            # create autgain sequence image path
             timestamp_string = current_timestamp(self.timestamp_fmt)
             auto_gain_image_path = self.cfg.auto_gain_image_path_tmpl.format(timestamp_string=timestamp_string)
             os.mkdir(auto_gain_image_path)
@@ -1397,7 +1402,7 @@ class PueoStarCameraOperation:
 
         # astrometry vars
         self.is_array = True
-        self.is_trail = False
+        self.is_trail = self.cfg.ast_is_trail
         self.save_raw = self.cfg.save_raw
         self.number_sources = self.cfg.ast_number_sources
         self.min_size = self.cfg.ast_min_size
@@ -1586,10 +1591,13 @@ class PueoStarCameraOperation:
             available_space_gb = available_space / (1024 ** 3)
             file.write(f"Available disk space: {available_space_gb:.2f} GB\n")
             # astrometry result
-            file.write("y coordinates, x coordinates, flux, std:\n")
+            file.write("y coordinates, x coordinates, flux, std, fwhm:\n")
+            # fwhm ~ Full Width Half Max
             with suppress(IndexError, TypeError):
                 for i in range(len(self.curr_star_centroids)):
-                    file.write(f"{self.curr_star_centroids[i][0]},{self.curr_star_centroids[i][1]}, {self.curr_star_centroids[i][2]}, {self.curr_star_centroids[i][3]}\n")
+                    std = self.curr_star_centroids[i][3]
+                    fwhm = self.curr_star_centroids[i][4]
+                    file.write(f"{self.curr_star_centroids[i][0]},{self.curr_star_centroids[i][1]}, {self.curr_star_centroids[i][2]}, {std}, {fwhm}\n")
             file.write("\nAstrometry:\n")
             for key, value in self.astrometry.items():
                 file.write(f"{key}: {value}\n")
@@ -1621,11 +1629,36 @@ class PueoStarCameraOperation:
             file.write(f"omegay: {omega_y}\n")
             file.write(f"omegaz: {omega_z}\n")
             file.write("\n")
-            file.write(f"Covariance Matrix:\n{pk} (deg/sec)^2")
-            file.write("\n")
+            # Do not print Covariance Matrix
+            if False:
+                file.write(f"Covariance Matrix:\n{pk} (deg/sec)^2")
+                file.write("\n")
             if len(self.prev_img) != 0:
                 file.write(f"name of previous image: {self.prev_image_name}\n")
                 file.write(f"time difference between images: {self.curr_time - self.prev_time}")
+
+    def info_add_angular_velocity_info(self, angular_velocity, delta_t_sec):
+        """
+        Add angular velocity information to the info file.
+
+        Args:
+            angular_velocity (dict): Dictionary containing 'roll_rate', 'az_rate', 'el_rate' in deg/s
+            delta_t_sec (float): Time difference between solutions in seconds
+        """
+        with open(self.info_file, "a", encoding='utf-8') as file:
+            file.write(f"Body rotation rate:\n")
+            file.write(f"omega_roll: {angular_velocity.get('roll_rate', 'N/A')} deg/s\n")
+            file.write(f"omega_az: {angular_velocity.get('az_rate', 'N/A')} deg/s\n")
+            file.write(f"omega_el: {angular_velocity.get('el_rate', 'N/A')} deg/s\n")
+            file.write(f"time difference between solutions: {delta_t_sec} seconds\n")
+            file.write("\n")
+
+            if hasattr(self, 'prev_image_name') and self.prev_image_name:
+                file.write(f"name of previous image: {self.prev_image_name}\n")
+
+            if hasattr(self, 'prev_time') and hasattr(self, 'curr_time'):
+                file.write(f"time difference between images: {delta_t_sec} seconds\n")
+
 
     def do_astrometry(self, is_multiprocessing=True):
         """astro.do_astrometry wrapper function."""
@@ -1688,6 +1721,7 @@ class PueoStarCameraOperation:
         else:
             is_raw = cmd.mode == 'raw'  # cmd.mode == Raw
             self.solver = self.solver if is_raw else cmd.mode  # cmd.mode == solver1  or solver2
+            self.cfg.set_dynamic(solver=self.solver)
 
         dt = datetime.datetime.now().isoformat()  # Get current ISO timestamp
         if is_raw:
@@ -1826,7 +1860,24 @@ class PueoStarCameraOperation:
 
         # Append additional image metadata log to a file.
         self.info_add_astro_info()
-        self.calc_angular_velocity(curr_utc_timestamp)
+
+        # Calculate Angular velocity
+        # Old implementation using images
+        # self.calc_angular_velocity(curr_utc_timestamp)
+        # New implementation using two astrometry results
+        solutions_dt = self.curr_time - self.prev_time
+        angular_velocity = {}
+        with suppress(KeyError, ValueError, TypeError):
+            angular_velocity = self.compute_angular_velocity(self.astrometry, self.prev_astrometry, solutions_dt)
+        # Debug Variant
+        if False:
+            try:
+                angular_velocity = self.compute_angular_velocity(self.astrometry, self.prev_astrometry, solutions_dt)
+            except Exception as e:
+                self.log.error(f"Failed to compute angular velocity: {e}")
+                self.log.error(f"Exception type: {type(e).__name__}")
+                self.log.error(f"Stack trace:\n{traceback.format_exc()}")
+                angular_velocity = {}
 
         # Display overlay image
         # foi ~ Final Overlay Image
@@ -1848,8 +1899,10 @@ class PueoStarCameraOperation:
                 self.log.error('foi_scaled_name was None, no downscaled image generated.')
             self.prev_time = self.curr_time
             self.prev_img = self.curr_img
+            self.prev_astrometry = self.astrometry
             self.prev_star_centroids = self.curr_star_centroids
             self.prev_image_name = self.curr_image_name
+
 
         # Send the file to clients
         #  Flight computer ASTRO POSITION:
@@ -1861,17 +1914,21 @@ class PueoStarCameraOperation:
             'astro_position': [None, None, None],
             'FOV': None,
             'RMSE': None,
+            'RMS': [None, None, None],
             'sources': 0,
             'matched_stars': 0,
-            'probability': 1
+            'probability': 1,
+            'angular_velocity': [None, None, None]  # Initialize empty angular velocity dict
         }
         if self.astrometry is not None:
             position['astro_position'] = [self.astrometry.get('RA'), self.astrometry.get('Dec'), self.astrometry.get('Roll')]
             position['FOV'] = self.astrometry.get('FOV')
             position['RMSE'] = self.astrometry.get('RMSE')
+            position['RMS'] = [self.astrometry.get('RA_RMS'), self.astrometry.get('Dec_RMS'),  self.astrometry.get('Roll_RMS')]
             position['sources'] = self.astrometry.get('precomputed_star_centroids')
             position['matched_stars'] = self.astrometry.get('Matches')
             position['probability'] = self.astrometry.get('Prob')
+            position['angular_velocity'] = [angular_velocity.get('roll_rate'), angular_velocity.get('az_rate'), angular_velocity.get('el_rate')]
         # Add position to the positions queue
         self.positions_queue.put(position)
         # Save to astro file
@@ -1926,6 +1983,136 @@ class PueoStarCameraOperation:
         self.server.write(f'{curr_utc_timestamp}, RA: {ra}, DEC: {dec}, ROLL {roll} [deg]')
         self.server.write(f'{curr_utc_timestamp}, Ωx: {omega_x}, Ωy: {omega_y}, Ωz: {omega_z} [deg/sec]')
 
+
+    def _radec_roll_to_rotation(self, ra_deg, dec_deg, roll_deg):
+        """
+        Convert RA, Dec, and Roll angles to a rotation matrix.
+
+        Args:
+            ra_deg (float): Right Ascension in degrees
+            dec_deg (float): Declination in degrees
+            roll_deg (float): Roll angle in degrees
+
+        Returns:
+            numpy.ndarray: 3x3 rotation matrix
+        """
+        ra = np.deg2rad(ra_deg)
+        dec = np.deg2rad(dec_deg)
+        roll = np.deg2rad(roll_deg)
+
+        # Forward vector (pointing direction)
+        x = np.cos(dec) * np.cos(ra)
+        y = np.cos(dec) * np.sin(ra)
+        z = np.sin(dec)
+        forward = np.array([x, y, z])
+
+        # Arbitrary up vector not aligned with forward
+        up = np.array([0, 0, 1]) if abs(forward[2]) < 0.99 else np.array([0, 1, 0])
+        right = np.cross(forward, up)
+        right /= np.linalg.norm(right)
+        true_up = np.cross(right, forward)
+        true_up /= np.linalg.norm(true_up)
+
+        base_rot = np.column_stack((right, true_up, forward))
+        roll_rot = Rotation.from_rotvec(roll * forward).as_matrix()
+        return roll_rot @ base_rot
+
+    def _decompose_rotation_to_local_axes(self, R1, R2):
+        """
+        Decompose relative rotation between two matrices into local axes components.
+
+        Args:
+            R1 (numpy.ndarray): First 3x3 rotation matrix
+            R2 (numpy.ndarray): Second 3x3 rotation matrix
+
+        Returns:
+            tuple: (d_roll_rad, d_az_rad, d_el_rad) rotation components in radians
+        """
+        R_rel = R2 @ R1.T
+        rotvec = Rotation.from_matrix(R_rel).as_rotvec()
+        angle = np.linalg.norm(rotvec)
+        axis = rotvec / angle if angle > 1e-6 else np.zeros(3)
+
+        forward = R1[:, 2]  # z axis (pointing direction)
+        right = R1[:, 0]    # x axis (azimuth/right direction)
+        up = R1[:, 1]       # y axis (elevation/up direction)
+
+        d_roll = np.dot(axis, forward) * angle
+        d_az = np.dot(axis, right) * angle
+        d_el = np.dot(axis, up) * angle
+
+        return d_roll, d_az, d_el
+
+    def compute_angular_velocity(self, astrometry_curr: dict, astrometry_prev: dict, delta_t_sec) -> dict:
+        """
+        Compute angular velocity between two astrometry solutions.
+
+        Args:
+            astrometry_curr (dict): Current astrometry solution dictionary with
+                                   keys 'RA', 'Dec', 'Roll' (in degrees)
+            astrometry_prev (dict): Previous astrometry solution dictionary with
+                                   keys 'RA', 'Dec', 'Roll' (in degrees)
+            delta_t_sec (float): Time difference between solutions in seconds
+
+        Returns:
+            dict: Dictionary containing angular velocities in deg/s for:
+                 - roll_velocity_deg_per_s: Roll axis velocity
+                 - az_velocity_deg_per_s: Azimuth (right) axis velocity
+                 - el_velocity_deg_per_s: Elevation (up) axis velocity
+            or empty
+        Raises:
+            KeyError: If required keys are missing from input dictionaries
+            ValueError: If delta_t_sec is zero or negative or angular_velocity_timeout exceeded
+        """
+        if delta_t_sec <= 0:
+            self.log.warning(f"delta_t_sec must be positive")
+            raise ValueError("delta_t_sec must be positive")
+
+        if delta_t_sec > self.cfg.angular_velocity_timeout:  # e.g. assume images are taken less than 200s apart
+            self.log.warning(f"Invalid time difference: {delta_t_sec}")
+            raise ValueError(f"Invalid time difference: {delta_t_sec}")
+
+        self.log.debug(f'Computing angular velocity: dt: {delta_t_sec}')
+        # Extract orientation parameters
+        try:
+            ra1, dec1, roll1 = (astrometry_prev['RA'], astrometry_prev['Dec'], astrometry_prev['Roll'])
+            ra2, dec2, roll2 = (astrometry_curr['RA'], astrometry_curr['Dec'], astrometry_curr['Roll'])
+        except KeyError as e:
+            self.log.warning(f"Missing required key in astrometry dict: {e}")
+            raise KeyError(f"Missing required key in astrometry dict: {e}")
+
+        self.log.debug(f'1: RA: {ra1}, DEC: {dec1}, ROLL: {roll1} [deg]')
+        self.log.debug(f'2: RA: {ra2}, DEC: {dec2}, ROLL: {roll2} [deg]')
+
+        # Convert to rotation matrices
+        R1 = self._radec_roll_to_rotation(ra1, dec1, roll1)
+        R2 = self._radec_roll_to_rotation(ra2, dec2, roll2)
+
+        # Decompose relative rotation into local axes components
+        d_roll_rad, d_az_rad, d_el_rad = self._decompose_rotation_to_local_axes(R1, R2)
+
+        # Convert to angular velocities (rad/s to deg/s)
+        # Returned values are in deg/s
+        angular_velocity = a_v = {
+            "roll_rate": np.rad2deg(d_roll_rad) / delta_t_sec,
+            "az_rate": np.rad2deg(d_az_rad) / delta_t_sec,
+            "el_rate": np.rad2deg(d_el_rad) / delta_t_sec
+        }
+
+        # Write results to a file
+        self.info_add_angular_velocity_info(angular_velocity, delta_t_sec)
+        # Get current orientation for logging
+        ra = astrometry_curr.get('RA', 'N/A')
+        dec = astrometry_curr.get('Dec', 'N/A')
+        roll = astrometry_curr.get('Roll', 'N/A')
+
+        # Log the results
+        self.log.debug(f'Angular velocity: {angular_velocity}')
+        self.server.write(f'{self.curr_time}, RA: {ra}, DEC: {dec}, ROLL: {roll} [deg]')
+        self.server.write(f'{self.curr_time}, Ω_roll: {a_v["roll_rate"]}, Ω_az: {a_v["az_rate"]}, Ω_el: {a_v["el_rate"]} [deg/sec]')
+        self.log.debug(f'done')
+        return angular_velocity
+
     def camera_run_autogain(self, cmd):
         """
         TODO: Check if using native zwoasi auto_exposure could be of use
@@ -1974,6 +2161,7 @@ class PueoStarCameraOperation:
         self.astro.solver = self.solver  # Update also the astro instance
         self.cadence = float(cmd.cadence)
         self.time_interval = int(self.cadence * 1e6)  # Convert cadence [s] into time_interval [micros]
+        self.cfg.set_dynamic(solver=self.solver, time_interval=self.time_interval, run_autonomous=self.operation_enabled)
         self.server.write(f"Operation resumed. Solver: {self.solver}  cadence: {self.cadence}s")
 
     def camera_pause(self):
@@ -1982,6 +2170,7 @@ class PueoStarCameraOperation:
         time.sleep(1)
         if self.focuser.aperture_position == 'opened':
             self.focuser.close_aperture()
+        self.cfg.set_dynamic(run_autonomous=self.operation_enabled)
         self.server.write("Operation paused.")
 
     def camera_run_autofocus(self, cmd):
@@ -2031,6 +2220,7 @@ class PueoStarCameraOperation:
         self.logit(f'Changing focuser aperture to: {aperture_position} [{f_val}]', color='blue')
         self.server.write(f'Changing focuser aperture to: {aperture_position} [{f_val}]')
         self.focuser.move_aperture_absolute(aperture_position)
+        self.cfg.set_dynamic(lab_best_aperture_position=aperture_position)
         pos = f_val = None
         with suppress(Exception):
             pos, f_val = self.focuser.get_aperture_position()
@@ -2045,11 +2235,13 @@ class PueoStarCameraOperation:
         self.logit(f'Changing camera exposure to: {manual_exposure_time} [us]')
         self.server.write(f"Changing camera exposure to: {manual_exposure_time}")
         self.camera.set_control_value(asi.ASI_EXPOSURE, int(manual_exposure_time))  # units microseconds,
+        self.cfg.set_dynamic(lab_best_exposure=int(manual_exposure_time))  # Update dynamic lab_best_exposure
 
     def camera_set_gain(self, cmd):
         gain_setting = cmd.gain
         self.camera.set_control_value(asi.ASI_GAIN, int(gain_setting))
         self.logit(f'Changing camera gain to: {gain_setting} [cB]')
+        self.cfg.set_dynamic(lab_best_gain=int(gain_setting))  # Update dynamic lab_best_gain
 
     def camera_get_values(self):
         r = self.camera.get_control_values()
@@ -2067,6 +2259,7 @@ class PueoStarCameraOperation:
 
     def camera_set_focus_position(self, cmd):
         focus_position = int(cmd.focus_position)
+        self.cfg.set_dynamic(lab_best_focus=focus_position)  # Update dynamic lab_best_focus
         self.logit(f'Changing focus to: {focus_position} [counts]')
         focus_position = self.focuser.move_focus_position(focus_position)
         self.logit(f'New Focus Position: {focus_position}')
@@ -2077,6 +2270,7 @@ class PueoStarCameraOperation:
         curr_focus_position = self.focuser.get_focus_position()
         new_focus_position = curr_focus_position + int(delta_focus)
         adjusted_focus_position = self.focuser.move_focus_position(new_focus_position)
+        self.cfg.set_dynamic(lab_best_focus=adjusted_focus_position)  # Update dynamic lab_best_focus
         self.logit(f'Actual adjusted focus position: {adjusted_focus_position}')
 
     def camera_sample_distortion(self):
@@ -2181,6 +2375,7 @@ class PueoStarCameraOperation:
         level = cmd.level
         self.level_filter = int(level)
         self.logit(f'Changing star detection level filter to: {level} pixels')
+        self.cfg.set_dynamic(level_filter=self.level_filter)
 
     @property
     def level_filter(self):
@@ -2466,7 +2661,7 @@ def init():
 
 if __name__ == "__main__":
     init()
-    cfg1 = Config(f'conf/{config_file}')
+    cfg1 = Config(f'conf/{config_file}', f'conf/{dynamic_file}')
     server = PueoStarCameraOperation(cfg1)
     server.run()
 

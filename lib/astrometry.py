@@ -395,6 +395,137 @@ class Astrometry:
 
         return curr_best_params
 
+    def calculate_rms_errors_from_centroids(self, result: dict, image_size: tuple, plot_vectors=False,
+                                            plot_histograms=False) -> dict:
+        """
+        Calculate RMS errors in RA, Dec, and Roll using 3D unit vectors and matched centroids.
+
+        Parameters:
+            result : dict
+                Result from tetra3.solve_from_centroids(..., return_matches=True)
+            image_size : (int, int)
+                Image shape (height, width)
+            plot_vectors : bool
+                If True, plots residual vectors in image space
+            plot_histograms : bool
+                If True, shows histograms of RA, Dec, and Roll residuals
+
+        Returns:
+            dict with RMS values in arcseconds:
+                - RA_RMS_arcsec
+                - Dec_RMS_arcsec
+                - Roll_RMS_arcsec
+        """
+
+        def radec_to_unit(ra, dec):
+            return np.stack([
+                np.cos(dec) * np.cos(ra),
+                np.cos(dec) * np.sin(ra),
+                np.sin(dec)
+            ], axis=-1)
+
+        height, width = image_size
+        fov_rad = np.deg2rad(result['FOV'])
+        roll = np.deg2rad(result['Roll'])
+        ra0 = np.deg2rad(result['RA'])
+        dec0 = np.deg2rad(result['Dec'])
+
+        # Precompute trigonometric terms
+        scale = fov_rad / width
+        cos_roll, sin_roll = np.cos(roll), np.sin(roll)
+        cos_dec0, sin_dec0 = np.cos(dec0), np.sin(dec0)
+
+        # Pixel offsets (image center = 0)
+        # centroids = result['matched_centroids']
+        # Convert the list of centroids to a NumPy array
+        centroids = np.array(result['matched_centroids'])
+        dx = (centroids[:, 1] - width / 2) * scale
+        dy = (centroids[:, 0] - height / 2) * scale
+
+        # Apply image-plane rotation
+        x_rot = dx * cos_roll - dy * sin_roll
+        y_rot = dx * sin_roll + dy * cos_roll
+
+        # Gnomonic projection
+        denom = cos_dec0 - y_rot * sin_dec0
+        ra_pred = ra0 + np.arctan2(x_rot, denom)
+        dec_pred = np.arctan2(
+            y_rot * cos_dec0 + sin_dec0,
+            np.sqrt(denom ** 2 + x_rot ** 2)
+        )
+
+        # Catalog stars
+        matched_stars = np.array(result['matched_stars'])  # Convert to NumPy array
+        ra_cat = np.deg2rad(matched_stars[:, 0])
+        dec_cat = np.deg2rad(matched_stars[:, 1])
+        cos_dec_cat = np.cos(dec_cat)
+
+        # Residuals
+        delta_ra = (ra_pred - ra_cat) * cos_dec_cat
+        delta_dec = dec_pred - dec_cat
+        ra_error_arcsec = delta_ra * (180 / np.pi) * 3600
+        dec_error_arcsec = delta_dec * (180 / np.pi) * 3600
+
+        # Convert to 3D unit vectors
+        v_pred = radec_to_unit(ra_pred, dec_pred)
+        v_cat = radec_to_unit(ra_cat, dec_cat)
+        v_diff = v_pred - v_cat
+
+        # Roll axis = cross product of North and pointing
+        north = np.array([0.0, 0.0, 1.0])
+        v_center = radec_to_unit(ra0, dec0)
+        roll_axis = np.cross(north, v_center)
+        roll_axis /= np.linalg.norm(roll_axis)
+
+        # Project residual vector onto roll direction
+        roll_error_arcsec = np.dot(v_diff, roll_axis) * (180 / np.pi) * 3600
+
+        # RMS values
+        ra_rms = np.sqrt(np.mean(ra_error_arcsec ** 2))
+        dec_rms = np.sqrt(np.mean(dec_error_arcsec ** 2))
+        roll_rms = np.sqrt(np.mean(roll_error_arcsec ** 2))
+
+        # Optional plots
+        if plot_vectors:
+            plt.figure(figsize=(6, 6))
+            plt.quiver(
+                centroids[:, 1], centroids[:, 0],
+                ra_error_arcsec, -dec_error_arcsec,
+                angles='xy', scale_units='xy', scale=0.2, color='red'
+            )
+            plt.gca().invert_yaxis()
+            plt.title("Residual Vectors (RA/Dec) in Image Pixels")
+            plt.xlabel("x (pixels)")
+            plt.ylabel("y (pixels)")
+            plt.axis('equal')
+            plt.grid(True)
+            plt.show()
+
+        if plot_histograms:
+            plt.figure(figsize=(12, 3))
+            plt.subplot(1, 3, 1)
+            plt.hist(ra_error_arcsec, bins=30, color='blue', alpha=0.7)
+            plt.title(f"RA Errors\nRMS = {ra_rms:.2f}\"")
+            plt.xlabel("RA residual (arcsec)")
+
+            plt.subplot(1, 3, 2)
+            plt.hist(dec_error_arcsec, bins=30, color='green', alpha=0.7)
+            plt.title(f"Dec Errors\nRMS = {dec_rms:.2f}\"")
+            plt.xlabel("Dec residual (arcsec)")
+
+            plt.subplot(1, 3, 3)
+            plt.hist(roll_error_arcsec, bins=30, color='purple', alpha=0.7)
+            plt.title(f"Roll Errors\nRMS = {roll_rms:.2f}\"")
+            plt.xlabel("Roll residual (arcsec)")
+            plt.tight_layout()
+            plt.show()
+
+        return {
+            'RA_RMS': ra_rms,
+            'Dec_RMS': dec_rms,
+            'Roll_RMS': roll_rms
+        }
+
     # TODO: Windell: The variables with hard coded values here should be put in the config file.
     # TODO:   Milan: All params when using do_astrometry from pueo_star_camera_operation_code.py pass all vars ...
     def do_astrometry(
@@ -746,6 +877,12 @@ class Astrometry:
             if astrometry.get('FOV') is not None:
                 draw_centroids(astrometry['matched_centroids'], color_green, 80)
 
+            # Calculate and add RMS to astrometry result
+            height, width = img.shape
+            image_size = (int(height / resize_factor), int(width / resize_factor))
+            with suppress(TypeError):
+                rms = self.calculate_rms_errors_from_centroids(astrometry, image_size)
+                astrometry = astrometry | rms   # Merge - union two dicts
         else:
             astrometry = {}
 

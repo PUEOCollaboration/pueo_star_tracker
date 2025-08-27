@@ -57,7 +57,7 @@ class Focuser:
                 # self.f_stops = []
                 self.define_aperture()
                 self.initialize_aperture()
-                self.move_aperture_absolute(0)
+                self.move_aperture_absolute(self.cfg.lab_best_aperture_position)
                 self._aperture_pos, self._aperture_f_val = self.get_aperture_position()
                 status = True
                 break

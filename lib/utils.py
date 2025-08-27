@@ -5,6 +5,7 @@ import os
 import datetime
 from pathlib import Path
 from typing import Union, List, Tuple
+from contextlib import suppress
 
 # External imports
 from astropy.io import fits
@@ -462,8 +463,17 @@ def save_as_jpeg_with_stretch(img_16bit, jpeg_path, quality=80, lower_percentile
     img_stretched = np.clip((img_16bit - low_val) * (255.0 / (high_val - low_val)), 0, 255)
     img_8bit = img_stretched.astype(np.uint8)
 
-    # Save as JPEG
-    cv2.imwrite(jpeg_path, img_8bit, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
+    # Save as JPEG into .temp file then renaming to target filename
+
+    # Extract directory path and filename
+    directory = os.path.dirname(jpeg_path)
+    filename = os.path.basename(jpeg_path)
+    # Create temp filename by adding "temp_" prefix
+    temp_filename = "temp_" + filename
+    temp_path = os.path.join(directory, temp_filename)
+    cv2.imwrite(temp_path, img_8bit, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
+    with suppress(OSError):
+        os.rename(temp_path, jpeg_path)
 
 def delete_trash(
     trash: Union[str, List[Tuple[float, str]]],
@@ -600,17 +610,6 @@ def image_resize(img, scale_factors, image_filename, overlay=None, resize_mode='
     if np.issubdtype(resized_img.dtype, np.floating):
         resized_img = (resized_img * 255 / resized_img.max()).astype(np.uint8)
 
-    if overlay is not None:
-        log.debug(f'Adding an overlay over the resized image: {overlay}')
-        resized_img = overlay_raw(resized_img, scale_factors, overlay)
-
-    print_img_info(resized_img, 'resized')
-
-    cv2.imwrite(image_filename, resized_img, [int(cv2.IMWRITE_PNG_COMPRESSION), png_compression])
-    # Get file size in MB (converted from bytes)
-    file_size = os.path.getsize(image_filename) / (1024 * 1024)  # bytes to MB conversion
-    log.debug(f'Saved resized image to path: {image_filename} compression: {png_compression} file_size: {file_size:.2f} Mb in {get_dt(t0)}.')
-
     # Save as JPEG with 80% quality (add this line)
     # Using the inspection settings
     if is_inspection:
@@ -631,6 +630,17 @@ def image_resize(img, scale_factors, image_filename, overlay=None, resize_mode='
 
         save_as_jpeg_with_stretch(resized_img, jpeg_filename, quality, lower_percentile, upper_percentile)
         delete_trash(inspection_path, ext='.jpg', keep=images_keep)
+
+    if overlay is not None:
+        log.debug(f'Adding an overlay over the resized image: {overlay}')
+        resized_img = overlay_raw(resized_img, scale_factors, overlay)
+
+    print_img_info(resized_img, 'resized')
+
+    cv2.imwrite(image_filename, resized_img, [int(cv2.IMWRITE_PNG_COMPRESSION), png_compression])
+    # Get file size in MB (converted from bytes)
+    file_size = os.path.getsize(image_filename) / (1024 * 1024)  # bytes to MB conversion
+    log.debug(f'Saved resized image to path: {image_filename} compression: {png_compression} file_size: {file_size:.2f} Mb in {get_dt(t0)}.')
 
     return resized_img.shape
 

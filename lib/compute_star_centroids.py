@@ -156,7 +156,8 @@ def compute_centroids_from_still(
         # Calculate variance and standard deviation
         variance = np.mean(squared_distances)
         standard_deviation = np.sqrt(variance)
-        detected_sources.append({"length": radius * 2, "centroid": center, "flux": flux, "std": standard_deviation})
+        fwhm = 2.3548 * standard_deviation
+        detected_sources.append({"length": radius * 2, "centroid": center, "flux": flux, "std": standard_deviation, 'fwhm': fwhm})
         # Draw contours -
         color_red = (0, 0, 255)  # Red OpenCV BGR
         if return_partial_images:
@@ -477,7 +478,7 @@ def compute_centroids_from_trail(
     detected_sources = []
     for source in extracted:
         detected_sources.append(
-            {"length": source[7], "centroid": (source[2], source[1]), "flux": source[0], "std": source[9]}
+            {"length": source[7], "centroid": (source[2], source[1]), "flux": source[0], "std": source[9], "fwhm":  2.3548 * source[9]}
         )
         # Draw circle around detected sources red
         color_red = (0, 0, 255)  # Red (BGR)
@@ -495,10 +496,10 @@ def compute_centroids_from_trail(
     if return_partial_images:
         box_plot_compare(length_values, length_filtred, "4.1 - Sources Lengths")
 
-    filtred_sources = []
+    filtered_sources = []
     for detected_source in detected_sources:
         if detected_source["length"] < upper_bound and detected_source["length"] > lower_bound:
-            filtred_sources.append(detected_source)
+            filtered_sources.append(detected_source)
             # Draw circle around possible star - valid source (Red Circle)
             color_blue = (255, 0, 0)  # Red OpenCV uses BGR
             if return_partial_images:
@@ -520,21 +521,22 @@ def compute_centroids_from_trail(
     with open(log_file_path, "a") as file:
         file.write(f"mean centroid diameter : {np.mean(length_values)}\n")
         file.write(f"number of potential sources : {len(length_values)}\n")
-        file.write(f"number of filtred sources : {len(filtred_sources)}\n")
-        file.write(f"number of rejected sources : {len(length_values) - len(filtred_sources)}\n")
+        file.write(f"number of filtered sources : {len(filtered_sources)}\n")
+        file.write(f"number of rejected sources : {len(length_values) - len(filtered_sources)}\n")
 
     # order sources by flux
-    sorted_flux_x_y = sorted(filtred_sources, key=lambda x: x["flux"], reverse=True)
+    sorted_flux_x_y = sorted(filtered_sources, key=lambda x: x["flux"], reverse=True)
     # generate output
     precomputed_star_centroids = []
     for i in range(len(sorted_flux_x_y)):
-        # y coordiantes, x coordinates, flux, std
+        # y coordinates, x coordinates, flux, std
         precomputed_star_centroids.append(
             [
                 sorted_flux_x_y[i]["centroid"][1],
                 sorted_flux_x_y[i]["centroid"][0],
                 sorted_flux_x_y[i]["flux"],
                 sorted_flux_x_y[i]["std"],
+                sorted_flux_x_y[i]["fwhm"],
             ]
         )
 

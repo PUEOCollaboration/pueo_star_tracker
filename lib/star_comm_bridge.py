@@ -56,7 +56,7 @@ from lib.commands import Command, Commands
 from lib.common import get_dt, current_timestamp, logit
 from lib.status import Status
 from lib.messages import MessageHandler
-
+from lib.position_meta import position_meta
 
 class StarCommBridge:
     """
@@ -327,6 +327,7 @@ class StarCommBridge:
             # self.log.debug(f'Status check response: {message}')
             # res = Status.get_status(Status.SUCCESS, message)
             limit = cmd.limit
+            metadata = bool(cmd.metadata)
             position_elements = self.server.positions_queue.get_all(limit)
             telemetry_elements = self.server.telemetry_queue.get_all(limit)
             ts = datetime.now().isoformat()
@@ -335,7 +336,8 @@ class StarCommBridge:
                 'position': {
                     'timestamp': ts,
                     'size': len(position_elements),
-                    'data': position_elements
+                    'data': position_elements,
+                    'metadata': position_meta if metadata else {}, # TOOO: Only include this token if metadata
                 },
                 'telemetry': {
                     'timestamp': ts,
@@ -430,6 +432,7 @@ class StarCommBridge:
             elif commands == Commands.CHAMBER_MODE:
                 if cmd.method == 'set':
                     self.server.chamber_mode = cmd.mode
+                    self.server.cfg.set_dynamic(run_chamber=self.server.chamber_mode)
                 ret = Status.success({'data': {'mode': self.server.chamber_mode}}, f"Chamber mode {cmd.method}.")
             elif commands == Commands.GET:
                 value = None
@@ -470,6 +473,7 @@ class StarCommBridge:
             elif commands == Commands.FLIGHT_MODE:
                 if cmd.method == 'set':
                     self.server.flight_mode = cmd.mode
+                    self.server.cfg.set_dynamic(flight_mode=self.server.flight_mode)
                 ret = Status.success({'data': {'mode': self.server.flight_mode}}, f"Flight mode {cmd.method}.")
             else:
                 self.log.warning("Unknown command received: %s", commands)
@@ -673,6 +677,7 @@ class DummyPueoServer:
     def camera_resume(self, cmd):
         self.operation_enabled = True
         self.solver = cmd.solver
+        self.server.cfg.set_dynamic(solver=self.solver)
 
     def camera_pause(self):
         self.operation_enabled = False

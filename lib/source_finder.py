@@ -149,7 +149,8 @@ def local_levels_background_estimation(
         leveling_filter_downscale_factor: int = 4,
         return_partial_images=False,
         partial_results_path="./partial_results/",
-        level_filter: int = 9
+        level_filter: int = 9,
+        level_filter_type: str = 'mean'
 ):
     """Estimate and subtract local background levels in an image by applying a leveling
     filter.
@@ -192,15 +193,23 @@ def local_levels_background_estimation(
                 [0, 1, 1, 1, 1, 1, 1, 1, 0],
             ]
         )
+    level_filter_type = str(level_filter_type).lower()
+    if level_filter_type == 'mean':
+        level_filter_array = create_level_filter(level_filter)
+        # Downsample the image using local mean
+        # TODO: Done leveling_filter_downscale_factor = 4
+        downscale_factor = leveling_filter_downscale_factor
+        downsampled_img = downscale_local_mean(img, (downscale_factor, downscale_factor))
 
-    level_filter_array = create_level_filter(level_filter)
-    # Downsample the image using local mean
-    # TODO: Done leveling_filter_downscale_factor = 4
-    downscale_factor = leveling_filter_downscale_factor
-    downsampled_img = downscale_local_mean(img, (downscale_factor, downscale_factor))
+        # Calculate the local level of the downsampled image
+        local_levels = convolve2d(downsampled_img, level_filter_array, boundary="symm", mode="same")
 
-    # Calculate the local level of the downsampled image
-    local_levels = convolve2d(downsampled_img, level_filter_array, boundary="symm", mode="same")
+    elif level_filter_type == 'median':
+        # TODO: Create the local_levels
+        # Code goes here:
+        local_levels = None
+
+
     # Resize using nearest-neighbor interpolation
     local_levels_resized = cv2.resize(local_levels, (img.shape[1], img.shape[0]), interpolation=cv2.INTER_LINEAR)
 

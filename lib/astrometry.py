@@ -421,101 +421,186 @@ class Astrometry:
 
         return result
 
-    def calculate_rms_errors_from_centroids(self,
-                                            precomputed_star_centroids,
-                                            result,
-                                            image_size,
-                                            plate_scale_arcsec_per_pix=None
-                                            ):
+   import numpy as np
+
+def calculate_rms_errors_from_centroids(self,
+                                        result,
+                                        image_size,
+                                        plate_scale_arcsec_per_pix=None  # unused; FOV-based mapping is used
+                                        ):
+    """
+    Compute RA, Dec, and Roll RMS (arcseconds) from tetra3 outputs.
+
+    Expects (from tetra3.solve_from_centroids(..., return_matches=True)):
+      - result['matched_centroids'] : (N,2) matched image centroids in (y, x) pixels
+      - result['matched_stars']     : (N,2 or N,3) matched (RA_deg, Dec_deg [, mag])
+      - result['RA'], result['Dec'] : field center (deg)
+      - result['Roll']              : roll (deg), image axes vs local East/North
+      - result['FOV']               : horizontal field of view (deg)
+      - result.get('distortion')    : optional single scalar (neg=barrel, pos=pincushion),
+                                      defined at radius = image width / 2
+
+    image_size : (H, W) in pixels
+
+    Returns:
+      {
+        "RA_RMS":   <arcsec>,
+        "Dec_RMS":  <arcsec>,
+        "Roll_RMS": <arcsec>
+      }
+    """
+    ARCSEC_PER_RAD = 206264.80624709636
+
+    # ---------- helpers ----------
+    def _gnomonic_project(ra, dec, ra0, dec0):
+        """(ra,dec)->(xi,eta) on tangent plane at (ra0,dec0), radians."""
+        dra = ra - ra0
+        dra = (dra + np.pi) % (2*np.pi) - np.pi  # wrap to [-pi, pi]
+        sd, cd = np.sin(dec), np.cos(dec)
+        s0, c0 = np.sin(dec0), np.cos(dec0)
+        denom = s0*sd + c0*cd*np.cos(dra)
+        xi  = (cd * np.sin(dra)) / denom
+        eta = (c0*sd - s0*cd*np.cos(dra)) / denom
+        return xi, eta
+
+    def _best_fit_theta(xi_ref, eta_ref, xi_meas, eta_meas):
+        """Small in-plane rotation theta (radians) mapping ref->meas after mean-centering."""
+        X = np.stack([xi_ref, eta_ref], axis=1)
+        Y = np.stack([xi_meas, eta_meas], axis=1)
+        Xc = X - X.mean(axis=0, keepdims=True)
+        Yc = Y - Y.mean(axis=0, keepdims=True)
+        H = Xc.T @ Yc
+        return np.arctan2(H[0,1] - H[1,0], H[0,0] + H[1,1])
+
+    def _rotate(xi, eta, theta):
+        c, s = np.cos(theta), np.sin(theta)
+        return c*xi - s*eta, s*xi + c*eta
+
+    def _pixels_to_plane_fov(x, y, W, H, fovx_rad):
         """
-        Compute RA, Dec, and Roll RMS directly from tetra3 pixel-space outputs.
-
-        Assumptions / Inputs (from tetra3.solve_from_centroids(..., return_matches=True)):
-          - result['matched_centroids']     : (N,2) measured (y, x) pixels
-          - result['matched_predicted_xy']  : (N,2) predicted (y, x) pixels (tetra3's image-plane match)
-          - result['Roll']                  : roll [deg], image axes vs local sky tangent-plane (east/north)
-          - Optional: result['FOV']         : width field of view [deg] (used if plate_scale not given)
-        image_size : (H, W)                 : original image shape in pixels
-        plate_scale_arcsec_per_pix : float  : arcsec per pixel; if None, estimated as (FOV_deg * 3600) / W
-
-        Returns:
-          dict with:
-            - RA_RMS_arcsec, Dec_RMS_arcsec, Roll_RMS_arcsec
-            - Pixel_RMS_x, Pixel_RMS_y
-            - plate_scale_arcsec_per_pix
-            - (optional) per_star: dx_pix, dy_pix, ra_err_arcsec, dec_err_arcsec, roll_err_arcsec
-
-        Notes:
-          • Rotation by Roll decomposes pixel residuals into local RA/Dec directions (tangent-plane).
-          • Roll RMS uses small-rotation model: α_i ≈ (r_perp · e) / |r|^2 about image center.
+        Pinhole (no distortion): normalize by half-size and scale by tan(FOV/2).
+        Uses horizontal FOV; vertical FOV is inferred via aspect ratio (square pixels).
+        y is flipped to make +eta point North (up).
         """
-        H, W = image_size
+        cx, cy = (W-1)/2.0, (H-1)/2.0
+        nx = (x - cx) / (W/2.0)   # [-1,1]
+        ny = (y - cy) / (H/2.0)   # [-1,1]
+        ny = -ny                  # flip so +eta is up/North
+        xi  = np.tan(0.5*fovx_rad) * nx
+        # infer vertical FOV from aspect ratio: FOVy = FOVx * (H/W)
+        fovy_rad = fovx_rad * (H / float(W))
+        eta = np.tan(0.5*fovy_rad) * ny
+        return xi, eta
 
-        # Plate scale
-        if plate_scale_arcsec_per_pix is None:
-            if 'FOV' not in result:
-                raise ValueError("Provide plate_scale_arcsec_per_pix or include result['FOV'].")
-            plate_scale_arcsec_per_pix = (float(result['FOV']) * 3600.0) / float(W)
+    def _undistort_oneparam_xy(x, y, W, H, d):
+        """
+        Invert tetra3's single-parameter radial distortion.
+        Model (normalized by R = W/2): r_d = r_u * (1 + d * r_u^2)
+        Given distorted pixels (x,y), solve for undistorted radius r_u via Newton, then rescale.
+        """
+        if d is None or abs(d) < 1e-12:
+            return x, y  # no meaningful distortion
 
-        # Measured and predicted in (y, x)
-        matched_precomputed_star_centroids = self.remove_unmatched(precomputed_star_centroids, result['matched_centroids'], epsilon=2.0)
-        meas_yx = np.asarray(matched_precomputed_star_centroids, dtype=float)[:, :2]
-        pred_yx = np.asarray(result['matched_centroids'], dtype=float) # Our precomputed_star_centroids
+        cx, cy = (W-1)/2.0, (H-1)/2.0
+        R = W/2.0  # reference radius per tetra3 convention
+        rx = x - cx
+        ry = y - cy
+        r  = np.sqrt(rx*rx + ry*ry)
 
-        if meas_yx.shape != pred_yx.shape:
-            raise ValueError("matched_centroids and matched_predicted_xy shapes differ.")
+        outx, outy = x.copy(), y.copy()
+        nz = r > 1e-12
+        if not np.any(nz):
+            return outx, outy
 
-        # Pixel residuals (y down, x right)
-        dy = meas_yx[:, 0] - pred_yx[:, 0]
-        dx = meas_yx[:, 1] - pred_yx[:, 1]
+        r_d_norm = (r[nz] / R)
 
-        # Rotate residuals by tetra3 Roll so x' ~ RA (east), y' ~ Dec (north)
-        R = np.deg2rad(float(result['Roll']))
-        c, s = np.cos(R), np.sin(R)
-        ex_ra = c * dx + s * dy
-        ey_dec = -s * dx + c * dy
+        # Newton iterations to invert: u + d*u^3 = r_d_norm  (solve for u)
+        u = r_d_norm.copy()
+        for _ in range(5):
+            f  = u * (1 + d * u*u) - r_d_norm
+            fp = 1 + 3 * d * u*u
+            u -= f / fp
 
-        # Convert to arcsec (signs irrelevant for RMS)
-        ra_err_arcsec = ex_ra * plate_scale_arcsec_per_pix
-        dec_err_arcsec = (-ey_dec) * plate_scale_arcsec_per_pix
+        scale = np.ones_like(r)
+        scale[nz] = (u / r_d_norm)  # r_u / r_d
+        outx[nz] = cx + scale[nz] * rx[nz]
+        outy[nz] = cy + scale[nz] * ry[nz]
+        return outx, outy
 
-        # Pixel RMS (debug)
-        pixel_rms_x = float(np.sqrt(np.mean(dx ** 2)))
-        pixel_rms_y = float(np.sqrt(np.mean(dy ** 2)))
+    # ---------- parse inputs ----------
+    H, W = image_size
+    if 'matched_centroids' not in result or 'matched_stars' not in result:
+        raise ValueError("result must contain 'matched_centroids' and 'matched_stars' (tetra3 return_matches=True).")
 
-        # Roll RMS from small-rotation model about image center
-        cx, cy = W / 2.0, H / 2.0
-        rx = pred_yx[:, 1] - cx  # x offset (pixels)
-        ry = pred_yx[:, 0] - cy  # y offset (pixels)
-        r2 = rx * rx + ry * ry
-        mask = r2 > 1e-9
-        # α_i ≈ (r_perp · e)/|r|^2, with r_perp = [-ry, rx]
-        r_perp_dot_e = (-ry[mask]) * dx[mask] + (rx[mask]) * dy[mask]
-        alpha_rad_i = np.zeros_like(dx)
-        alpha_rad_i[mask] = r_perp_dot_e / r2[mask]
-        roll_err_arcsec = alpha_rad_i * (180 / np.pi) * 3600.0
+    # Matched centroids: (y,x) -> (x,y)
+    yx = np.asarray(result['matched_centroids'], dtype=float)
+    xy = yx[:, [1, 0]]
+    if xy.shape[0] < 2:
+        return {"RA_RMS": np.nan, "Dec_RMS": np.nan, "Roll_RMS": np.nan}
 
-        # RMS values
-        RA_RMS_arcsec = float(np.sqrt(np.mean(ra_err_arcsec ** 2)))
-        Dec_RMS_arcsec = float(np.sqrt(np.mean(dec_err_arcsec ** 2)))
-        Roll_RMS_arcsec = float(np.sqrt(np.mean(roll_err_arcsec ** 2)))
+    # Matched stars: RA/Dec in degrees (ignore magnitude if present)
+    ms = np.asarray(result['matched_stars'], dtype=float)
+    radec_deg = ms[:, :2]
 
-        out = {
-            "RA_RMS": RA_RMS_arcsec,
-            "Dec_RMS": Dec_RMS_arcsec,
-            "Roll_RMS": Roll_RMS_arcsec,
-            # "Pixel_RMS_x": pixel_rms_x,
-            # "Pixel_RMS_y": pixel_rms_y,
-            # "plate_scale_arcsec_per_pix": float(plate_scale_arcsec_per_pix),
-        }
+    # Center & roll (deg -> rad)
+    ra0_deg  = float(result.get('RA',  result.get('RA0')))
+    dec0_deg = float(result.get('Dec', result.get('Dec0')))
+    roll_deg = float(result['Roll'])
+    ra0, dec0, roll = np.deg2rad([ra0_deg, dec0_deg, roll_deg])
 
-        return out
+    # Horizontal FOV only (deg) from tetra3; vertical inferred by aspect
+    if 'FOV' not in result:
+        raise ValueError("result must contain 'FOV' (horizontal field of view, degrees).")
+    fovx_rad = np.deg2rad(float(result['FOV']))
 
-    #        return {
-#            'RA_RMS': ra_rms,
-#            'Dec_RMS': dec_rms,
-#            'Roll_RMS': roll_rms
-#        }
+    # Optional single-parameter distortion (neg=barrel, pos=pincushion)
+    d = result.get('distortion', None)
+    d = None if d is None else float(d)
+
+    # ---------- pixels -> (undistorted) plane ----------
+    x = xy[:, 0].copy()
+    y = xy[:, 1].copy()
+    if d is not None:
+        x, y = _undistort_oneparam_xy(x, y, W, H, d)
+
+    # Map to tangent plane using FOV
+    xi_m, eta_m = _pixels_to_plane_fov(x, y, W, H, fovx_rad)
+
+    # Un-roll by estimated roll so axes are East/North
+    cR, sR = np.cos(-roll), np.sin(-roll)
+    xi_m, eta_m = cR*xi_m - sR*eta_m, sR*xi_m + cR*eta_m
+
+    # ---------- catalog -> plane ----------
+    ra_rad  = np.deg2rad(radec_deg[:, 0])
+    dec_rad = np.deg2rad(radec_deg[:, 1])
+    xi_c, eta_c = _gnomonic_project(ra_rad, dec_rad, ra0, dec0)
+
+    # Best-fit tiny residual in-plane rotation (residual roll)
+    theta = _best_fit_theta(xi_c, eta_c, xi_m, eta_m)
+
+    # Plane residuals
+    xi_c_rot, eta_c_rot = _rotate(xi_c, eta_c, theta)
+    dxi  = xi_m  - xi_c_rot
+    deta = eta_m - eta_c_rot
+
+    # Plane -> RA/Dec residuals (small-angle)
+    cosd0 = np.cos(dec0)
+    dra_rad  = dxi  / cosd0
+    ddec_rad = deta
+
+    # RMS (arcseconds)
+    RA_RMS_arcsec  = float(np.sqrt(np.mean(dra_rad**2))  * ARCSEC_PER_RAD)
+    Dec_RMS_arcsec = float(np.sqrt(np.mean(ddec_rad**2)) * ARCSEC_PER_RAD)
+
+    # Roll RMS: local rotational component about boresight
+    v2 = xi_c_rot**2 + eta_c_rot**2
+    mask = v2 > 1e-16
+    rot_local = np.zeros_like(v2)
+    rot_local[mask] = (xi_c_rot[mask]*deta[mask] - eta_c_rot[mask]*dxi[mask]) / v2[mask]  # radians
+    Roll_RMS_arcsec = float(np.sqrt(np.mean(rot_local[mask]**2)) * ARCSEC_PER_RAD) if np.any(mask) else np.nan
+
+    return {"RA_RMS": RA_RMS_arcsec, "Dec_RMS": Dec_RMS_arcsec, "Roll_RMS": Roll_RMS_arcsec}
+
 
     # TODO: Windell: The variables with hard coded values here should be put in the config file.
     # TODO:   Milan: All params when using do_astrometry from pueo_star_camera_operation_code.py pass all vars ...

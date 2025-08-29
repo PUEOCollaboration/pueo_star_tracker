@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 import cv2
 import numpy as np
 from scipy.optimize import linear_sum_assignment
+from skimage.color.rgb_colors import silver
 
 from tqdm import tqdm
 
@@ -27,6 +28,7 @@ from lib.utils import get_files, split_path
 from lib.tetra3 import Tetra3
 from lib.cedar_solve import Tetra3 as Tetra3Cedar  # , cedar_detect_client
 from lib.cedar import Cedar
+from lib.astrometry_net import  AstrometryNet
 
 # from lib.tetra3_cedar_old import Tetra3 as Tetra3Cedar # , cedar_detect_client
 
@@ -75,7 +77,14 @@ class Astrometry:
 
     @property
     def solver_name(self):
-        return 'Cedar Tetra3' if self.solver == 'solver2' else 'ESA Tetra3'
+        if self.solver == 'solver1':
+            return 'ESA Tetra3'
+        elif self.solver == 'solver2':
+            return 'Cedar Tetra3'
+        elif self.solver == 'solver3':
+            return 'astrometry.net'
+        else:
+            return 'Undefined solver'
 
     @property
     def t3(self):
@@ -462,6 +471,11 @@ class Astrometry:
         meas_yx = np.asarray(matched_precomputed_star_centroids, dtype=float)[:, :2]
         pred_yx = np.asarray(result['matched_centroids'], dtype=float) # Our precomputed_star_centroids
 
+        if False:
+            self.log.debug(f'precomputed_star_centroids: {precomputed_star_centroids}')
+            self.log.debug(f'meas_yx: {meas_yx}')
+            self.log.debug(f'pred_yx: {pred_yx}')
+
         if meas_yx.shape != pred_yx.shape:
             raise ValueError("matched_centroids and matched_predicted_xy shapes differ.")
 
@@ -681,7 +695,7 @@ class Astrometry:
 
         # This is False in config.ini as ast_use_photoutils param
         # TODO: This is forced for now until cedar detect is implemented
-        if self.solver == 'solver1': #  or True:
+        if self.solver in ['solver1', 'solver3']: #  or True:
             if use_photutils:
                 # Local background estimation
                 (cleaned_img, background_img), local_exec_time = timed_function(
@@ -780,6 +794,9 @@ class Astrometry:
                         float(source_finder_exec_time)
                         + float(centroids_exec_time)
                 )
+
+                # Save centroids
+
         if self.solver == 'solver2':
             solver2_t0 = time.monotonic()
             contours_img = img_bgr
@@ -791,7 +808,7 @@ class Astrometry:
             self.cedar.partial_results_path = partial_results_path
             self.cedar.distortion_calibration_params = distortion_calibration_params
             self.cedar.min_pattern_checking_stars = min_pattern_checking_stars
-            precomputed_star_centroids, cedar_star_centroids, resize_factor, astrometry, tetra3_exec_time = self.cedar.get_centroids(img_bgr, img)
+            precomputed_star_centroids, cedar_star_centroids, resize_factor, astrometry, solver_exec_time = self.cedar.get_centroids(img_bgr, img)
             total_exec_time += (time.monotonic() - solver2_t0)
         # Solve image using precomputed centroids
         # TODO: ERROR> precomputed_star_centroids != []:
@@ -803,13 +820,13 @@ class Astrometry:
         # if precomputed_star_centroids != []:
         # Milan: Check if the array is not empty effectively
         if isinstance(precomputed_star_centroids, np.ndarray) and precomputed_star_centroids.shape[0]:
-            print("--------Get direction in the sky using tetra3--------")
+            print("--------Get direction in the sky using solver of tetra3/astrometry.net --------")
             print(
                 f'Image: {img.shape[0]}x{img.shape[1]} {img.dtype} {img.size} distortion: {distortion_calibration_params}')
 
             max_c = 0 or precomputed_star_centroids.shape[0]
             if distortion_calibration_params and solver == 'solver1':
-                astrometry, tetra3_exec_time = timed_function(
+                astrometry, solver_exec_time = timed_function(
                     self.tetra3_solver,
                     img,
                     precomputed_star_centroids[:max_c, :2],
@@ -818,15 +835,37 @@ class Astrometry:
                     min_pattern_checking_stars=min_pattern_checking_stars,
                     resize_factor=resize_factor
                 )
-            else:
+            elif solver == 'solver2':
                 # Astrometry already created as part of cedar_detect (self.cedar.get_centroids)
+                pass
+            elif solver == 'solver3':
+                # Process the centroids with configuration
+                solver_exec_time = 0.0
+                astrometry = {}
+                solver = AstrometryNet(self.cfg, self.log)
+                try:
+                    astrometry, solver_exec_time = timed_function(
+                        solver.process_centroids,
+                        precomputed_star_centroids[:max_c],
+                        output_base="test_field",
+                        output_dir=self.cfg.partial_results_path  # "./astrometry_results"
+                    )
+
+                    print(f"Processing successful: {astrometry['success']}")
+                    if astrometry['success']:
+                        print("Solution files created:")
+                        for name, path in astrometry['solution_files'].items():
+                            print(f"  {name}: {path}")
+                except Exception as e:
+                    cprint(f"Error processing centroids: {e}", color='red')
+            else:
                 pass
 
             # Add execution time
             astrometry["precomputed_star_centroids"] = precomputed_star_centroids.shape[0]
             astrometry['cedar_detect'] = self.cedar.cd_solutions.copy()
             astrometry["params"] = get_params()
-            astrometry["tetra3_exec_time"] = tetra3_exec_time
+            astrometry["solver_exec_time"] = solver_exec_time
             print("Astrometry: " + str(astrometry))
 
             # Draw valid matched star contours (Green)
@@ -871,7 +910,7 @@ class Astrometry:
             # Calculate and add RMS to astrometry result
             height, width = img.shape
             image_size = (int(height / resize_factor), int(width / resize_factor))
-            with suppress(TypeError):
+            with suppress(TypeError, ValueError):
                 #                                              DETECT                      ASTRO RESULTS
                 rms = self.calculate_rms_errors_from_centroids(precomputed_star_centroids, astrometry, image_size)
                 astrometry = astrometry | rms   # Merge - union two dicts

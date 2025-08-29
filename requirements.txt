@@ -34,3 +34,7 @@ openpyxl
 
 # Telemetry
 psutil
+
+# Astrometry.net ... for fits
+# numpy>=1.21.0
+astropy>=5.0

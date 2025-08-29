@@ -150,28 +150,24 @@ def compute_centroids_from_still(
         yc = np.sum(img_cent * yy) / flux
         center = (x + xc, y + yc)
 
-        # Calculate squared distances from centroid
-        ##coordinates = np.argwhere(img_cent != 0)
-        ##source_pixels = [(coord[0] + x, coord[1] + y) for coord in coordinates]
-        ##squared_distances = [(pixel[0] - center[0]) ** 2 + (pixel[1] - center[1]) ** 2 for pixel in source_pixels]
-        # Calculate variance and standard deviation
-        ##variance = np.mean(squared_distances)
-        ##standard_deviation = np.sqrt(variance)
-        ##fwhm = 2.3548 * standard_deviation
-
-                # ---- Correct intensity-weighted FWHM (minimal change) ----
-        if flux <= 0:
-            standard_deviation = np.nan
-            fwhm = np.nan
+        # Calculate intensity-weighted standard deviation and FWHM
+        if flux <= 0.0:
+            # Invalid flux - cannot compute meaningful statistics
+            standard_deviation = fwhm = np.nan
         else:
-            W = img_cent.astype(np.float64)     # use float for safe math
-            # intensity-weighted mean squared radius about the centroid (xx, yy are pixel centers)
-            r2_mean = np.sum(W * ((xx - xc)**2 + (yy - yc)**2)) / flux
-            # For isotropic Gaussian: <r^2> = 2 * sigma^2  →  sigma = sqrt(<r^2>/2)
-            standard_deviation = np.sqrt(r2_mean / 2.0)
-            # FWHM = 2*sqrt(2*ln2) * sigma
-            fwhm = 2.0 * np.sqrt(2.0 * np.log(2.0)) * standard_deviation
+            # Use float64 for numerical stability in weighted calculations
+            w = img_cent.astype(np.float64)
 
+            # Compute intensity-weighted mean squared radius about centroid
+            # Note: xx and yy represent pixel center coordinates
+            r2_mean = np.sum(w * ((xx - xc) ** 2 + (yy - yc) ** 2)) / flux
+
+            # For isotropic 2D Gaussian: <r²> = 2σ² → σ = √(<r²>/2)
+            standard_deviation = np.sqrt(r2_mean / 2.0)
+
+            # Convert standard deviation to FWHM using Gaussian relationship:
+            # FWHM = 2√(2·ln2)·σ ≈ 2.35482·σ
+            fwhm = 2.0 * np.sqrt(2.0 * np.log(2.0)) * standard_deviation
 
         detected_sources.append({"length": radius * 2, "centroid": center, "flux": flux, "std": standard_deviation, 'fwhm': fwhm})
         # Draw contours -

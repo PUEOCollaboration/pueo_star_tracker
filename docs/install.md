@@ -77,6 +77,47 @@ wget https://demo.stubljar.com/tmp/Windell/pcc-gui.7z --no-check-certificate
 7za x "pcc-gui.7z" -o"pcc-gui"
 ```
 
+## Upgrade pcc on sbc: Sync from Github (Upgrade)
+
+For syncing the latest version of the codebase from GitHub to local linux system (Pueo SBCs) use the ```sync_pcc.sh``` (not part of Github)
+
+**Note:** Prior using the sync_pcc.sh make sure the Github user and token are correct, updated and valid:
+
+Edit ```sync_pcc.sh``` and doublecheck on ```GITHUB_USER``` and ```GITHUB_TOKEN```, example:
+
+```bash
+GITHUB_USER="milc"       # GitHub username
+GITHUB_TOKEN="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"     # PAT from Step 1
+```
+
+To run sync simply run: ```./sync_pcc.sh```
+
+Troubleshooting: In the following example, the token has expired and an error is displayed like so:
+```bash
+fimilc@zaphod:~/Projects/pcc$ ./sync_pcc.sh 
+DEBUG: { "message": "Bad credentials", "documentation_url": "https://docs.github.com/rest", "status": "401" }
+[ERROR]  pueo_star_camera_operation_code.py
+GitHub API Error: Bad credentials
+Status: 401
+Documentation: https://docs.github.com/rest
+Cannot continue. API Error.
+Sync failed due to API error!
+```
+### How to update or generate new token for the script on github
+To update or generate a new Personal Access Token (PAT) for your script on GitHub, follow these steps. I'll also include some best practices and troubleshooting tips based on the search results.
+
+### 🔑 1. **Generate a New Personal Access Token**
+   - **Log in to GitHub**: Go to [GitHub.com](https://github.com/) and sign in to your account.
+   - **Access Settings**: Click on your profile picture in the top-right corner and select **Settings**.
+   - **Developer Settings**: In the left sidebar, click on **Developer settings**.
+   - **Personal Access Tokens**: Select **Personal access tokens** > **Tokens (classic)** or **Fine-grained tokens** depending on your needs.
+   - **Generate New Token**: Click on **Generate new token** (classic) or **Generate new token** (fine-grained).
+   - **Configure Token**:
+     - **Token description**: Add a descriptive name (e.g., "Script Authentication").
+     - **Expiration**: Set an expiration date. For security, avoid using "no expiration".
+     - **Scopes/Permissions**: Select the necessary permissions. For script access to repositories, typically **repo** permissions are sufficient. Fine-grained tokens allow more granular control.
+   - **Generate**: Click **Generate token**. **⚠️ Important**: Copy the token immediately and store it securely, as you won't be able to see it again.
+
 ## LVM + RAID 0 (Best of Both Worlds)
 ```bash
 # TODO: Add instructions for creating raid.
@@ -224,6 +265,18 @@ pueo-star-tracker2@pueo-star-tracker2-EPU-4011-4012:~/Projects/pcc/lib/cedar_det
      Running `/home/pueo-star-tracker2/Projects/pcc/lib/cedar_detect/target/release/cedar-detect-server`
 [2025-03-18T09:38:55Z INFO  cedar_detect_server] CedarDetectServer listening on 0.0.0.0:50051
 ```
+
+3. Install astrometry.net
+
+**Note:** Requires INTERNET access.
+
+```bash
+sudo apt update
+sudo apt upgrade
+sudo apt install astrometry.net 
+
+```
+
 
 ## Configure USB for Telemetry/Focuser
 Next steps are required to allow the regular user to connect to USB.

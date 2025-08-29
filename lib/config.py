@@ -188,6 +188,16 @@ class Config(Dynamic):
     gaussian_fwhm = 2.0
     cedar_downscale = 3.0
 
+    # [ASTROMETRY.NET]
+    an_scale_units: str = 'degwidth'
+    an_scale_low: float = 0.1
+    an_scale_high: float = 1.0
+    an_downsample: int = 2
+    an_overwrite: bool = True
+    an_no_plots: bool = True
+    an_cpulimit: int = 30
+    an_depth: int = 20
+
     # [IMAGES]
     png_compression = 0
     save_raw = True
@@ -564,6 +574,16 @@ class Config(Dynamic):
         self.spatial_distance_px = self._config.getint('CEDAR', 'spatial_distance_px', fallback=self.spatial_distance_px)
         self.gaussian_fwhm = self._config.getfloat('CEDAR', 'gaussian_fwhm', fallback=self.gaussian_fwhm)
         self.cedar_downscale = self._config.getfloat('CEDAR', 'cedar_downscale', fallback=self.cedar_downscale)
+
+        # [ASTROMETRY.NET]
+        self.an_scale_units = self._config.get('ASTROMETRY.NET', 'scale_units', fallback=self.an_scale_units)
+        self.an_scale_low = self._config.getfloat('ASTROMETRY.NET', 'scale_low', fallback=self.an_scale_low)
+        self.an_scale_high = self._config.getfloat('ASTROMETRY.NET', 'scale_high', fallback=self.an_scale_high)
+        self.an_downsample = self._config.getint('ASTROMETRY.NET', 'downsample', fallback=self.an_downsample)
+        self.an_overwrite  = self._config.getboolean('ASTROMETRY.NET', 'overwrite ', fallback=self.an_overwrite)
+        self.an_no_plots  = self._config.getboolean('ASTROMETRY.NET', 'no_plots ', fallback=self.an_no_plots )
+        self.an_cpulimit = self._config.getint('ASTROMETRY.NET', 'cpulimit', fallback=self.an_cpulimit)
+        self.an_depth = self._config.getint('ASTROMETRY.NET', 'depth', fallback=self.an_depth)
 
         # [IMAGES]
         self.png_compression = self._config.getint('IMAGES', 'png_compression', fallback=self.png_compression)

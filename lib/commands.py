@@ -143,7 +143,7 @@ class Command:
             'params': {
                 'mode': {
                     'type': 'list',
-                    'values': ['raw', 'solver1', 'solver2']
+                    'values': ['raw', 'solver1', 'solver2', 'solver3']
                 },
                 'focus_position': {
                     'type': 'int',
@@ -165,7 +165,7 @@ class Command:
             'params': {
                 'solver': {
                     'type': 'list',
-                    'values': ['solver1', 'solver2']
+                    'values': ['solver1', 'solver2', "solver3"]
                 },
                 'cadence': {
                     'type': 'float',

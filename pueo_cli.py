@@ -13,7 +13,7 @@ Available commands:
   auto_focus <start> <end> <steps> Run autofocus routine
   auto_gain                 Run autogain routine
   auto_exposure             Run autoexposure routine
-  take_image [type]         Take image (raw, solver1, solver2 - default from config)
+  take_image [type]         Take image (raw, solver1, solver2, solver3 - default from config)
   get_chamber_mode          Get current chamber mode
   set_chamber_mode <mode>   Set chamber mode (true, false)
   get_flight_mode           Get current flight mode
@@ -215,15 +215,15 @@ class PueoSocketClient:
 
         # Start command
         start_parser = subparsers.add_parser('start', help='Start/resume autonomous mode')
-        start_parser.add_argument('solver', nargs='?', choices=['solver1', 'solver2'], default=self.cfg.solver,
+        start_parser.add_argument('solver', nargs='?', choices=['solver1', 'solver2', 'solver3'], default=self.cfg.solver,
                                       help='Solver value (default: %(default)s)')
         start_parser.add_argument('cadence', nargs='?', type=float, default=float(self.cfg.time_interval/1.e6),
                                       help='Cadence (default: %(default)s)')
 
         # Custom validation
         def start_validate_args(args):
-            if args.cadence is not None and args.solver not in ['solver1', 'solver2']:
-                start_parser.error("Cadence requires explicit solver (solver1/solver2)")
+            if args.cadence is not None and args.solver not in ['solver1', 'solver2', 'solver3']:
+                start_parser.error("Cadence requires explicit solver (solver1/solver2/solver3)")
 
         start_parser.set_defaults(validator=start_validate_args)
 
@@ -273,7 +273,7 @@ class PueoSocketClient:
         # Take image command
         take_image_parser = subparsers.add_parser('take_image', help='Take image (default: solver from config)')
         take_image_parser.add_argument('type', nargs='?', default=self.cfg.solver,
-                                      choices=['raw', 'solver1', 'solver2'],
+                                      choices=['raw', 'solver1', 'solver2', 'solver3'],
                                       help='Image type (default: %(default)s)')
 
         # Chamber mode commands

@@ -189,14 +189,22 @@ class Config(Dynamic):
     cedar_downscale = 3.0
 
     # [ASTROMETRY.NET]
-    an_scale_units: str = 'degwidth'
-    an_scale_low: float = 0.1
-    an_scale_high: float = 1.0
-    an_downsample: int = 2
-    an_overwrite: bool = True
-    an_no_plots: bool = True
-    an_cpulimit: int = 30
-    an_depth: int = 20
+    an_scale_units = 'degwidth'  # str
+    an_scale_low = 0.1  # float
+    an_scale_high = 1.0  # float
+    an_downsample = 2  # int
+    an_overwrite = True  # bool
+    an_no_plots = True  # bool
+    an_cpulimit = 30  # int
+    an_depth = 20  # int
+    an_sigma = 6.0  # float
+    an_nsigma = 8.0  # float
+
+    # MUST be False
+    an_corr = False # bool
+    an_new_fits = False # bool
+    an_match = False # bool
+    an_solved = False # bool
 
     # [IMAGES]
     png_compression = 0
@@ -584,6 +592,14 @@ class Config(Dynamic):
         self.an_no_plots  = self._config.getboolean('ASTROMETRY.NET', 'no_plots ', fallback=self.an_no_plots )
         self.an_cpulimit = self._config.getint('ASTROMETRY.NET', 'cpulimit', fallback=self.an_cpulimit)
         self.an_depth = self._config.getint('ASTROMETRY.NET', 'depth', fallback=self.an_depth)
+
+        self.an_sigma = self._config.getfloat('ASTROMETRY.NET', 'sigma', fallback=self.an_sigma)
+        self.an_nsigma = self._config.getfloat('ASTROMETRY.NET', 'nsigma', fallback=self.an_nsigma)
+
+        self.an_corr = self._config.getboolean('ASTROMETRY.NET', 'corr', fallback=self.an_depth)
+        self.an_new_fits = self._config.getboolean('ASTROMETRY.NET', 'new_fits', fallback=self.an_new_fits)
+        self.an_match = self._config.getboolean('ASTROMETRY.NET', 'match', fallback=self.an_match)
+        self.an_solved = self._config.getboolean('ASTROMETRY.NET', 'solved', fallback=self.an_solved)
 
         # [IMAGES]
         self.png_compression = self._config.getint('IMAGES', 'png_compression', fallback=self.png_compression)

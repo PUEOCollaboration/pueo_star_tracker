@@ -1780,8 +1780,8 @@ class PueoStarCameraOperation:
 
         # Periodic Autogain (in autonomous mode)
         # Single iteration keeps the camera in range.
-        # TODO: If the autonomous mode is disabled it will lose track so needs to rerun the full autogain interations again
-        if is_operation and (self.img_cnt % self.cfg.autogain_update_interval) == 0:
+        # TODO: If the autonomous mode is disabled it will lose track so needs to rerun the full autogain interactions again
+        if is_operation and (self.img_cnt % self.cfg.autogain_update_interval) == 0 and not is_test:
             # TODO: Add autogain routine here for this image
             new_gain = self.autogain_maintanence(camera_settings)
             self.logit(f'Single image autogain completed: interval: {self.cfg.autogain_update_interval} current gain: {current_gain} new gain: {new_gain}', color='cyan')
@@ -2459,7 +2459,7 @@ class PueoStarCameraOperation:
     def run_test(self):
         tm = time.monotonic()
         self.chamber_mode = False # Note
-        solvers = ['solver1', 'solver2']
+        solvers = ['solver1', 'solver2', 'solver3']
         # solvers = ['solver1', ]
 
         # Prepare partial_results folder

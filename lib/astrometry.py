@@ -1,6 +1,7 @@
 # Standard imports
 from contextlib import suppress
 import logging
+import traceback
 import sys
 import time
 from time import perf_counter as precision_timestamp
@@ -641,6 +642,7 @@ class Astrometry:
             }
 
         t0 = time.monotonic()
+        solver_exec_time = 0.0
         # Capture local params, but remove image
         cedar_data = {}
 
@@ -819,6 +821,10 @@ class Astrometry:
 
         # if precomputed_star_centroids != []:
         # Milan: Check if the array is not empty effectively
+
+        # Calculate and add RMS to astrometry result
+        height, width = img.shape
+        image_size = (int(height / resize_factor), int(width / resize_factor))
         if isinstance(precomputed_star_centroids, np.ndarray) and precomputed_star_centroids.shape[0]:
             print("--------Get direction in the sky using solver of tetra3/astrometry.net --------")
             print(
@@ -840,24 +846,27 @@ class Astrometry:
                 pass
             elif solver == 'solver3':
                 # Process the centroids with configuration
-                solver_exec_time = 0.0
                 astrometry = {}
-                solver = AstrometryNet(self.cfg, self.log)
+                an_solver = AstrometryNet(self.cfg, self.log)
                 try:
                     astrometry, solver_exec_time = timed_function(
-                        solver.process_centroids,
+                        an_solver.process_centroids,
                         precomputed_star_centroids[:max_c],
-                        output_base="test_field",
+                        image_size,
+                        output_base="6.0 - astrometry.net-solve-field-centroids",
                         output_dir=self.cfg.partial_results_path  # "./astrometry_results"
                     )
 
-                    print(f"Processing successful: {astrometry['success']}")
+                    cprint(f"Processing successful: {astrometry['success']}, color='green")
                     if astrometry['success']:
-                        print("Solution files created:")
+                        self.log.debug("Solution files created:")
                         for name, path in astrometry['solution_files'].items():
-                            print(f"  {name}: {path}")
+                            self.log.debug(f"  {name}: {path}")
                 except Exception as e:
                     cprint(f"Error processing centroids: {e}", color='red')
+                    print(f"Stack trace:\n{traceback.format_exc()}")
+                    self.log.error(f"Error processing centroids: {e}")
+                    self.log.error(f"Stack trace:\n{traceback.format_exc()}")
             else:
                 pass
 
@@ -907,9 +916,6 @@ class Astrometry:
             if astrometry.get('FOV') is not None:
                 draw_centroids(astrometry['matched_centroids'], color_green, 80)
 
-            # Calculate and add RMS to astrometry result
-            height, width = img.shape
-            image_size = (int(height / resize_factor), int(width / resize_factor))
             with suppress(TypeError, ValueError):
                 #                                              DETECT                      ASTRO RESULTS
                 rms = self.calculate_rms_errors_from_centroids(precomputed_star_centroids, astrometry, image_size)

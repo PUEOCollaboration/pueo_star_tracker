@@ -232,7 +232,7 @@ class Cedar:
             return grayscale
 
         t0 = time.monotonic()
-        channel = grpc.insecure_channel(self.cfg.cedar_detect_host)
+        channel = grpc.insecure_channel(self.cfg.cedar_detect_host, options=(('grpc.enable_http_proxy', 0),))
         stub = cedar_detect_pb2_grpc.CedarDetectStub(channel)
 
         # cd_results: Used for REPORTING and TESTING

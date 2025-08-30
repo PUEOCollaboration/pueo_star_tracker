@@ -275,6 +275,19 @@ sudo apt update
 sudo apt upgrade
 sudo apt install astrometry.net 
 
+
+# Copy INDEX files: to ```~/Projects/install/indexes/4100```
+# Create link:
+cd /usr/share/astrometry
+sudo ln -s ~/Projects/install/indexes indexes
+
+# Update /etc/astrometry.cfg
+sudo nano /etc/astrometry.cfg 
+
+# Add The following two lines:
+# milc: Recommendation from cfg from indexes 4100
+add_path /usr/share/astrometry/indexes/4100
+inparallel
 ```
 
 

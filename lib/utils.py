@@ -292,7 +292,7 @@ def display_overlay_info(img, timestamp_string, astrometry, omega, display=True,
         rmse = f"RMSE: {_rmse:.4E} arcsec"
         velocity = f"Angular velocity: (omegax, omegay, omegaz) = ({omegax:.4E}, {omegay:.4E}, {omegaz:.4E}) deg/s"
         probability_of_false_positive = f"Probability of False Positive: {astrometry['Prob']:.4E}"
-        exec_time = f"Execution time: {astrometry['total_exec_time']:.3f} s, Tetra3: {astrometry['tetra3_exec_time']:.3f} s"
+        exec_time = f"Execution time: {astrometry['total_exec_time']:.3f} s, Solver: {astrometry['solver_exec_time']:.3f} s"
 
         plate_scale = astrometry.get('PlateScale', '- arcsec/px')
         exposure_time = astrometry.get('ExposureTime', '-')

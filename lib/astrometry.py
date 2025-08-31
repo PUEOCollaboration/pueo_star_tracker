@@ -501,6 +501,145 @@ def compute_tetra3_rms(result, image_size, plate_scale_arcsec_per_pix=None):
 
     return {"RA_RMS": RA_RMS_as, "Dec_RMS": Dec_RMS_as, "Roll_RMS": Roll_RMS_as}
 
+import numpy as np
+import astropy.units as u
+from astropy.coordinates import SkyCoord, AltAz, EarthLocation, CIRS
+from astropy.time import Time
+
+def _normalize(v: np.ndarray) -> np.ndarray:
+    n = np.linalg.norm(v)
+    return v if n == 0 else v / n
+
+def _isa_pressure_hPa(height_m: float) -> float:
+    """
+    Standard Atmosphere pressure estimate (hPa) up to ~47 km.
+    Layers: 0–11 km (L=-0.0065), 11–20 km (isothermal),
+            20–32 km (L=+0.0010), 32–47 km (L=+0.0028).
+    """
+    g = 9.80665
+    R = 8.3144598
+    M = 0.0289644
+    layers = [
+        (0.0,   288.15, 101325.0,  -0.0065),
+        (11000, 216.65,  22632.10,  0.0),
+        (20000, 216.65,   5474.889, 0.0010),
+        (32000, 228.65,    868.019, 0.0028),
+        (47000, 270.65,    110.906, 0.0),  # cap
+    ]
+    h = max(height_m, 0.0)
+    for i in range(len(layers)-1):
+        h_b, T_b, p_b, L_b = layers[i]
+        if h < layers[i+1][0]:
+            break
+    else:
+        h_b, T_b, p_b, L_b = layers[-1]
+    if L_b == 0.0:
+        p = p_b * np.exp(-g*M*(h - h_b) / (R*T_b))
+    else:
+        T = T_b + L_b*(h - h_b)
+        p = p_b * (T_b / T) ** (g*M/(R*L_b))
+    return float(p / 100.0)  # Pa -> hPa
+
+def _isa_temperature_C(height_m: float) -> float:
+    """
+    Standard Atmosphere temperature estimate (°C) up to ~47 km,
+    matching the same layers as _isa_pressure_hPa.
+    """
+    layers = [
+        (0.0,   288.15, -0.0065),  # 0–11 km
+        (11000, 216.65,  0.0   ),  # 11–20 km (iso)
+        (20000, 216.65,  0.0010),  # 20–32 km
+        (32000, 228.65,  0.0028),  # 32–47 km
+        (47000, 270.65,  0.0   ),  # cap
+    ]
+    h = max(height_m, 0.0)
+    for i in range(len(layers)-1):
+        h_b, T_b, L_b = layers[i]
+        if h < layers[i+1][0]:
+            break
+    else:
+        h_b, T_b, L_b = layers[-1]
+    T_K = T_b if L_b == 0.0 else (T_b + L_b*(h - h_b))
+    return float(T_K - 273.15)
+
+def R_cam_to_ENU_from_ra_dec_roll(
+    *,
+    ra_deg: float,
+    dec_deg: float,
+    roll_deg: float,
+    obstime_iso: str,
+    lat_deg: float,
+    lon_deg: float,
+    height_m: float,
+    pressure_mbar: float | None = None,     # overrides estimate if provided
+    temperature_C: float | None = None,     # overrides estimate if provided
+    estimate_pressure: bool = True,         # auto-estimate from altitude if pressure_mbar is None
+    estimate_temperature: bool = True,      # auto-estimate from altitude if temperature_C is None
+    relative_humidity: float = 0.0,
+    wavelength_um: float = 0.55,
+    treat_ra_dec_as: str = "apparent"
+) -> np.ndarray:
+    """
+    Return R_cam_to_ENU (3x3) from apparent RA, DEC, roll.
+
+    Refraction control:
+      - If pressure_mbar is None and estimate_pressure=True -> ISA pressure used.
+      - If temperature_C is None and estimate_temperature=True -> ISA temperature used.
+      - To disable refraction entirely: set estimate_pressure=False AND pass pressure_mbar=None.
+        (Temperature is ignored if pressure is None.)
+    """
+    # Decide pressure & temperature
+    p_hPa = pressure_mbar if pressure_mbar is not None else (_isa_pressure_hPa(height_m) if estimate_pressure else None)
+    T_C   = temperature_C if temperature_C is not None else (_isa_temperature_C(height_m) if estimate_temperature else 0.0)
+
+    # Location/time
+    loc = EarthLocation(lat=lat_deg*u.deg, lon=lon_deg*u.deg, height=height_m*u.m)
+    t = Time(obstime_iso)
+
+    # Sky coordinates
+    if treat_ra_dec_as.lower() == "apparent":
+        sc = SkyCoord(ra=ra_deg*u.deg, dec=dec_deg*u.deg, frame=CIRS(obstime=t))
+    elif treat_ra_dec_as.lower() == "icrs":
+        sc = SkyCoord(ra=ra_deg*u.deg, dec=dec_deg*u.deg, frame="icrs")
+    else:
+        raise ValueError("treat_ra_dec_as must be 'apparent' or 'icrs'")
+
+    # AltAz (with or without refraction)
+    altaz = sc.transform_to(AltAz(
+        obstime=t, location=loc,
+        pressure=None if p_hPa is None else p_hPa*u.hPa,
+        temperature=T_C*u.deg_C,
+        relative_humidity=relative_humidity,
+        obswl=wavelength_um*u.um
+    ))
+
+    alt = np.deg2rad(altaz.alt.to(u.deg).value)
+    az  = np.deg2rad(altaz.az.to(u.deg).value)
+    r   = np.deg2rad(roll_deg)
+
+    # LOS (+Z_cam) in ENU
+    z_cam = _normalize(np.array([
+        np.cos(alt)*np.sin(az),   # East
+        np.cos(alt)*np.cos(az),   # North
+        np.sin(alt)               # Up
+    ], dtype=float))
+
+    # Tangent basis on the sky
+    u_E = _normalize(np.array([np.cos(az), -np.sin(az), 0.0]))
+    u_N = _normalize(np.array([
+        -np.sin(alt)*np.sin(az),
+        -np.sin(alt)*np.cos(az),
+         np.cos(alt)
+    ]))
+
+    # Apply roll
+    y_cam = _normalize(np.cos(r)*u_N + np.sin(r)*u_E)
+    x_cam = _normalize(-np.sin(r)*u_N + np.cos(r)*u_E)
+
+    # Rotation matrix (columns are camera axes in ENU)
+    R_cam_to_ENU = np.column_stack([x_cam, y_cam, z_cam])
+    return R_cam_to_ENU
+
 
 def _project_radec_with_distortion(ra_deg, dec_deg,
                                    ra0_deg, dec0_deg, roll_deg,

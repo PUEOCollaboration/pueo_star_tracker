@@ -689,129 +689,117 @@ class PueoStarCameraOperation:
 
 
     def do_auto_gain_routine(self, auto_gain_image_path, initial_gain_value,
-                             desired_max_pix_value, pixel_saturated_value, pixel_count_tolerance,
-                             max_iterations=None):
+                         desired_max_pix_value, pixel_saturated_value, pixel_count_tolerance,
+                         max_iterations=None):
+    """
+    Simplified autogain routine with histogram plotting.
+    Uses Top-N brightest non-saturated pixels, dimmest of Top-N as control value.
+    Logs saturated pixel count for diagnostics.
+    """
 
-        """For adhoc single image gain check use autonomous last image rather than creating serioes of images."""
-        max_autogain_iterations = self.cfg.max_autogain_iterations if max_iterations is None else max_iterations
-        t0 = time.monotonic()
-        is_done = False
-        loop_counts = 1
-        new_gain_value = initial_gain_value
-        if max_autogain_iterations > 1:
-            # take image using these settings.
+    max_autogain_iterations = self.cfg.max_autogain_iterations if max_iterations is None else max_iterations
+    top_n_pixels = getattr(self.cfg, "autogain_top_n", 100)
+    min_signal_ADU = getattr(self.cfg, "autogain_min_signal_ADU", 1)
+
+    new_gain_value = int(initial_gain_value)
+    t0 = time.monotonic()
+    loop_counts = 1
+
+    self.camera.set_control_value(asi.ASI_GAIN, new_gain_value)
+    self.logit(f"Starting autogain routine (Top-N method). Initial gain={new_gain_value}")
+
+    last_saturated_count = 0
+    last_min_top_value = None
+
+    while loop_counts <= max_autogain_iterations:
+        self.logit("#" * 80)
+        self.logit(f"Iteration {loop_counts}/{max_autogain_iterations}, gain={new_gain_value}")
+
+        # Capture frame
+        inserted_string = f"eg{new_gain_value}"
+        img = self.curr_img if (max_iterations == 1) else None
+        img, basename = self.capture_timestamp_save(auto_gain_image_path, inserted_string, img)
+
+        arr = img.ravel().astype(np.int32)
+        arr = arr[arr >= min_signal_ADU]
+
+        if arr.size == 0:
+            self.logit("No pixels above signal floor; increasing gain by +25.")
+            new_gain_value = min(new_gain_value + 25, self.cfg.max_gain_setting)
             self.camera.set_control_value(asi.ASI_GAIN, new_gain_value)
-            self.logit(f'New Gain Value: {new_gain_value}')
-            if self.focuser.aperture_position == 'closed':
-                self.logit('Opening Aperture.')
-                self.focuser.open_aperture()
+            loop_counts += 1
+            continue
 
-        self.logit("Starting autogain routine.")
-        high_pix_value = 0
-        while not is_done:
-            if loop_counts > max_autogain_iterations:
-                is_done = True
-                self.logit("Maximum iterations reached. Can't find solution. Ending cycle.")
-                break
-            self.logit("#" * 104)
-            self.logit(f"Autogain Iteration: {loop_counts} / {max_autogain_iterations}")
+        # Count saturated pixels
+        saturated_mask = (arr >= pixel_saturated_value)
+        saturated_count = int(np.count_nonzero(saturated_mask))
+        last_saturated_count = saturated_count
 
-            self.logit('Capturing image.')
-            inserted_string = 'e'  + 'g' + str(new_gain_value)
-            # Take image or use existing self.curr_img for single gain update
-            img = self.curr_img if max_iterations is not None and max_iterations == 1 else None
-            img, basename = self.capture_timestamp_save(auto_gain_image_path, inserted_string, img)
-            bins = np.linspace(0, pixel_saturated_value, self.cfg.autogain_num_bins)
-            # Creating a histogram requires flatten + histogram
-            arr = img.flatten()
-            counts, bins = np.histogram(arr, bins=bins)
-            # There is one counts less than bins, therefore we iterate over counts, not bins
+        # Exclude saturated pixels
+        arr_nosat = arr[~saturated_mask]
+        if arr_nosat.size == 0:
+            self.logit("All pixels saturated; reducing gain by -50.")
+            new_gain_value = max(new_gain_value - 50, self.cfg.min_gain_setting)
+            self.camera.set_control_value(asi.ASI_GAIN, new_gain_value)
+            loop_counts += 1
+            continue
 
-            n = len(counts)
-            high_pix_value = max(arr)
-            min_count = self.cfg.min_count # [IMAGE] min_count
-            # find the next largest pixel value
-            second_largest_pix_value = int(bins[0])
-            self.log.debug(f'bin: {len(bins)} counts: {len(counts)}')
-            try:
-                for i in range(n - 1, -1, -1):
-                    if bins[i + 1] < high_pix_value and counts[i] >= min_count:
-                        # second_largest_pix_value = arr[i]
-                        second_largest_pix_value = int(bins[i + 1])
-                        break
-                    else:
-                        second_largest_pix_value = high_pix_value
-            except IndexError as e:
-                self.log.error(e)
-                raise IndexError(e)
-            plt.figure()
-            plt.hist(bins[:-1], bins, weights=counts)
-            plt.xlabel('Gain Brightness, counts')
-            plt.ylabel('Frequency, pixels')
-            plt.title(f'hpv: {high_pix_value}, slp: {second_largest_pix_value}, lpv: {min(arr)}')
-            plt.grid()
-            # plt.show() # Showing only in TESTING phase!
-            self.save_fig(basename, plt)
+        # Top-N brightest
+        k = min(top_n_pixels, arr_nosat.size)
+        top_vals = np.partition(arr_nosat, -k)[-k:]
+        min_top_value = int(np.min(top_vals))
+        last_min_top_value = min_top_value
 
-            image_saturated = True
-            if high_pix_value == pixel_saturated_value:
-                if second_largest_pix_value >= (desired_max_pix_value + pixel_count_tolerance):
-                    self.logit("Image is saturated.")
-                    image_saturated = True
-                elif second_largest_pix_value < (desired_max_pix_value - pixel_count_tolerance):
-                    self.logit("Image has hot pixels. Image not saturated.")
-                    high_pix_value = second_largest_pix_value  # overwrite high pix value with valid count.
-                    image_saturated = False
-            else:
-                self.logit("Image has no hot pixels.")
-                image_saturated = False
+        # Histogram plotting
+        bins = np.linspace(0, pixel_saturated_value, self.cfg.autogain_num_bins)
+        counts, bins = np.histogram(img.ravel(), bins=bins)
+        plt.figure()
+        plt.hist(bins[:-1], bins, weights=counts)
+        plt.axvline(desired_max_pix_value, linestyle='--')
+        plt.xlabel('Pixel value [ADU]')
+        plt.ylabel('Frequency [pixels]')
+        plt.title(f'min(topN): {min_top_value}, sat_pixels={saturated_count}, '
+                  f'max: {int(img.max())}, min: {int(img.min())}')
+        plt.grid()
+        self.save_fig(basename, plt)
 
-            difference = np.subtract(np.int64(desired_max_pix_value), np.int64(high_pix_value))
-            self.logit(f'Counts: desired_max_pix_value:{desired_max_pix_value} high_pix_value: {high_pix_value}')
-            if high_pix_value > desired_max_pix_value + pixel_count_tolerance:
-                self.logit("Counts too high.")
-                self.logit(f"Pixel count difference: {difference}")
-            elif high_pix_value < desired_max_pix_value - pixel_count_tolerance:
-                self.logit("Counts too low.")
-                self.logit(f"Pixel count difference: {difference}")
-            else:
-                # highest value is high enough.
-                self.logit("Pixels counts are in range. Ending iterations.")
-                self.logit(f"Pixel count difference: {difference}")
-                is_done = False
-                break
-            old_gain_value = new_gain_value
+        # Report
+        diff = desired_max_pix_value - min_top_value
+        self.logit(f"min(top-{k})={min_top_value}, saturated={saturated_count}, "
+                   f"target={desired_max_pix_value}, Δ={diff}")
 
-            if not image_saturated:
-                self.logit(f"Image not saturated.")
-                #calculate gain adjustment
-                new_gain_value = self.calculate_gain_adjustment(old_gain_value, high_pix_value, desired_max_pix_value)
+        # Check tolerance
+        if abs(diff) <= pixel_count_tolerance:
+            self.logit("Within tolerance, autogain complete.")
+            break
 
-                self.logit(f'Old Gain Value: {old_gain_value}')
-                self.logit(f'New Gain Value: {new_gain_value}')
-                self.camera.set_control_value(asi.ASI_GAIN, new_gain_value)
-            else:
-                self.logit(f"Image is saturated. Setting gain to halfway.")
-                new_gain_value = int(0.5*(self.cfg.max_gain_setting-self.cfg.min_gain_setting))
-                if new_gain_value < self.cfg.min_gain_setting:
-                    self.logit(f"New gain too low. Setting gain={self.cfg.min_gain_setting}. Recommend decreasing exposure time.")
-                    new_gain_value = self.cfg.min_gain_setting
-                elif new_gain_value >= self.cfg.max_gain_setting:
-                    self.logit(
-                        f"New gain too high. Setting gain={self.cfg.max_gain_setting}. Recommend increasing exposure time.")
-                    new_gain_value = self.cfg.max_gain_setting
+        # Gain adjustment
+        old_gain_value = new_gain_value
+        new_gain_value = self.calculate_gain_adjustment(
+            old_gain_value,
+            high_pix_value=min_top_value,
+            desired_max_pix_value=desired_max_pix_value
+        )
+        new_gain_value = max(self.cfg.min_gain_setting,
+                             min(new_gain_value, self.cfg.max_gain_setting))
 
-                self.logit(f'Old Gain Value: {old_gain_value}')
-                self.logit(f'New Gain Value: {new_gain_value}')
-                self.camera.set_control_value(asi.ASI_GAIN, new_gain_value)
-            loop_counts = loop_counts + 1
-        self.logit("##########################Auto Gain Routine Summary Results: ###############################", color='green')
-        self.logit(f'desired_max_pix_value: {desired_max_pix_value} [counts]')
-        self.logit(f'largest count in image is: {high_pix_value} [counts]')
-        self.logit(f'optimal_gain_value: {new_gain_value} [cB]')
-        self.logit("#"*107, color='green')
-        self.logit(f'do_auto_gain_routine completed in {get_dt(t0)}.', color='cyan')
-        return new_gain_value
+        self.logit(f"Gain updated: {old_gain_value} → {new_gain_value}")
+        self.camera.set_control_value(asi.ASI_GAIN, new_gain_value)
+
+        loop_counts += 1
+
+    # Summary
+    self.logit("########## Auto Gain Routine Summary ##########", color='green')
+    self.logit(f"Desired value: {desired_max_pix_value}")
+    if last_min_top_value is not None:
+        self.logit(f"Dimmest of Top-{top_n_pixels}: {last_min_top_value} [counts]")
+    self.logit(f"Saturated pixels (last frame): {last_saturated_count}")
+    self.logit(f"Final gain: {new_gain_value} [cB]", color='green')
+    self.logit("#" * 80, color='green')
+    self.logit(f"Completed in {get_dt(t0)}", color='cyan')
+
+    return int(new_gain_value)
+
 
     def calculate_gain_adjustment(self, old_gain_value, high_pix_value, desired_max_pix_value):
         # Constants from config

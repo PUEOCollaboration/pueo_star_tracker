@@ -640,6 +640,8 @@ def R_cam_to_ENU_from_ra_dec_roll(
     R_cam_to_ENU = np.column_stack([x_cam, y_cam, z_cam])
     return R_cam_to_ENU
 
+    
+
 
 def _project_radec_with_distortion(ra_deg, dec_deg,
                                    ra0_deg, dec0_deg, roll_deg,

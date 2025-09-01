@@ -123,6 +123,9 @@ def compute_centroids_from_still(
     # radius of source circles
     sources_radius = cleaned_img.shape[0] / 80
 
+    if len(sources_contours) == 0:
+        return np.empty((0, 5)), img
+
     # Calculate centroids
     detected_sources = []
     for contour in sources_contours:
@@ -350,6 +353,10 @@ def compute_centroids_from_trail(
     # Label each region in the binary mask
     (labels, num_labels) = scipy.ndimage.label(sources_mask, structure=np.ones((3, 3)))
     index = np.arange(1, num_labels + 1)
+
+    # In case no sources are detected
+    if index.size == 0:
+        return np.empty((0, 4)), img
 
     def trail_fit(a, p):
         """Calculates statistics for each labeled region in the sources mask, including

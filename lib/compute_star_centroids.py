@@ -351,6 +351,10 @@ def compute_centroids_from_trail(
     (labels, num_labels) = scipy.ndimage.label(sources_mask, structure=np.ones((3, 3)))
     index = np.arange(1, num_labels + 1)
 
+    # In case no sources are detected
+    if index.size == 0:
+        return np.empty((0, 4)), img
+
     def trail_fit(a, p):
         """Calculates statistics for each labeled region in the sources mask, including
         various moments and optimized trail fit parameters.
@@ -380,7 +384,8 @@ def compute_centroids_from_trail(
             return (np.nan,) * 12
         if max_area and area > max_area:
             return (np.nan,) * 12
-        m0 = np.sum(a)
+        # m0 = np.sum(a)
+        m0 = np.sum(cleaned_img.ravel()[p]) # correct way to calculate flux
         if min_sum and m0 < min_sum:
             return (np.nan,) * 12
         if max_sum and m0 > max_sum:
@@ -391,6 +396,7 @@ def compute_centroids_from_trail(
         mask[y, x] = 1
         filtered_cleaned_img = cv2.bitwise_and(cleaned_img, cleaned_img, mask=mask)
         object_img = filtered_cleaned_img[y.min() : y.max(), x.min() : x.max()]
+        m0 = np.sum(object_img) # to save the actual flux from the filtered clean image in the trail initial guess
         # if return_partial_images:
         #     plt.imshow(object_img)
         #     plt.show(block=True)

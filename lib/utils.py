@@ -277,17 +277,18 @@ def display_overlay_info(img, timestamp_string, astrometry, omega, display=True,
     solver = astrometry['solver'] if astrometry else ''
     if astrometry and astrometry.get('RA', 0):
         # astrometry info
-        ra = astrometry['RA']
-        dec = astrometry['Dec']
-        roll = astrometry['Roll']
+        ra = astrometry.get('RA', 0.0)
+        dec = astrometry.get('Dec', 0.0)
+        roll = astrometry.get('Roll', 0.0)
 
         # body rates info
         omegax = omega[0]
         omegay = omega[1]
         omegaz = omega[2]
 
+        # solved_txt = ' (Not solved)' if ra == dec == roll == 0.0 else ' (Solved)'
         astrometric_position = f"Astrometric Position ({solver}): ({ra:.4f}, {dec:.4f}, {roll:.4f}) deg"
-        _rmse = astrometry['Cross-Boresight RMSE'] if 'Cross-Boresight RMSE' in astrometry else astrometry['RMSE']
+        _rmse = astrometry.get('Cross-Boresight RMSE', 0.0) if 'Cross-Boresight RMSE' in astrometry else astrometry.get('RMSE', 0.0)
         # rmse = f"RMSE: {_rmse/3600.0:.4E} deg"
         rmse = f"RMSE: {_rmse:.4E} arcsec"
         velocity = f"Angular velocity: (omegax, omegay, omegaz) = ({omegax:.4E}, {omegay:.4E}, {omegaz:.4E}) deg/s"

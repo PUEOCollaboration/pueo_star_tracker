@@ -1687,7 +1687,8 @@ class PueoStarCameraOperation:
             self.cfg.return_partial_images,
             self.cfg.partial_results_path,
             self.solver,
-            self.level_filter  # This can be dynamically change, we need to use property and not a cfg.level_filter
+            self.level_filter,  # This can be dynamically change, we need to use property and not a cfg.level_filter
+            self.cfg.ring_filter_type
         )
 
         if is_multiprocessing:
@@ -1882,6 +1883,7 @@ class PueoStarCameraOperation:
         # Display overlay image
         # foi ~ Final Overlay Image
         if is_operation or True:
+            self.log.debug('Adding overlay.')
             self.foi_name, self.foi_info, self.foi_scaled_name, self.foi_scaled_info = display_overlay_info(
                 self.contours_img, timestamp_string,
                 self.astrometry, self.omega, False,
@@ -1967,9 +1969,7 @@ class PueoStarCameraOperation:
                 self.cfg.star_tracker_body_rates_max_distance,
                 self.cfg.focal_ratio,
                 self.cfg.x_pixel_count, self.cfg.y_pixel_count)
-            omega_x = self.omega[0]
-            omega_y = self.omega[1]
-            omega_z = self.omega[2]
+            omega_x, omega_y, omega_z = self.omega
             level = 'warning' if is_timeout else 'info'
             status = 'timeout' if is_timeout else 'completed'
             self.server.write(f'angular_velocity_estimation {status} in {get_dt(t0)}.', level)
@@ -2296,7 +2296,8 @@ class PueoStarCameraOperation:
             dilate_mask_iterations=self.cfg.dilate_mask_iterations,
             scale_factors=self.cfg.scale_factors,
             resize_mode=self.cfg.resize_mode,
-            level_filter=self.level_filter
+            level_filter=self.level_filter,
+            ring_filter_type=self.cfg.ring_filter_type
         )
         self.server.write("Checking distortion.")
 

@@ -145,6 +145,7 @@ class Config(Dynamic):
     min_potential_source_distance = 100
     level_filter = 9
     level_filter_type = 'median'
+    ring_filter_type = 'mean'
 
     # [STARTRACKER]
     star_tracker_body_rates_max_distance = 100
@@ -529,6 +530,7 @@ class Config(Dynamic):
 
         self.level_filter = self._config.getint('SOURCES', 'level_filter', fallback=self.level_filter)
         self.level_filter_type = self._config.get('SOURCES', 'level_filter_type', fallback=self.level_filter_type)
+        self.ring_filter_type = self._config.get('SOURCES', 'ring_filter_type', fallback=self.ring_filter_type)
 
         # [STARTRACKER]
         self.star_tracker_body_rates_max_distance = self._config.getint('STARTRACKER',
@@ -789,7 +791,8 @@ class Config(Dynamic):
             'dilation_radius': self.dilation_radius,
             'min_potential_source_distance': self.min_potential_source_distance,
             'level_filter': self.level_filter,
-            'level_filter_type': self.level_filter_type
+            'level_filter_type': self.level_filter_type,
+            'ring_filter_type': self.ring_filter_type
         }
 
         config['STARTRACKER'] = {

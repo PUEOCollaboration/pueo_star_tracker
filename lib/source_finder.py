@@ -674,7 +674,8 @@ def source_finder(
         is_trail=False,
         return_partial_images=False,
         partial_results_path="./partial_results/",
-        level_filter: int = 9
+        level_filter: int = 9,
+        ring_filter_type: str = 'mean'
 ):
     """Function combining the source finding pipeline for faster execution time.
 
@@ -736,12 +737,16 @@ def source_finder(
             ]
         )
 
+    ring_filter_type = str(ring_filter_type).lower()
+
     level_filter_array = create_level_filter(level_filter)
 
     # Downsample the image using local mean
     # TODO: Done leveling_filter_downscale_factor = 4
     downscale_factor = leveling_filter_downscale_factor
     downsampled_img = downscale_local_mean(img, (downscale_factor, downscale_factor))
+
+
 
     # Calculate the local level of the downsampled image
     local_levels = convolve2d(downsampled_img, level_filter_array, boundary="symm", mode="same")

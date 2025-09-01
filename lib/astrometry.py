@@ -209,7 +209,8 @@ class Astrometry:
             dilate_mask_iterations=1,
             scale_factors=(8, 8),
             resize_mode='downscale',
-            level_filter: int = 9
+            level_filter: int = 9,
+            ring_filter_type = 'mean'
     ):
         """Optimize camera calibration parameters based on astrometry analysis of
         calibration images.
@@ -246,6 +247,8 @@ class Astrometry:
                 sources. A higher value merges more pixels. Defaults to 1.
             scale_factors=(float, float optional): Downscaling factors
             resize_mode=(str, optional): resize mode
+            level_filter (int, optional): level_filter size
+            ring_filter_type (str, optional):  Source Ring Background Estimation Type: mean|median
 
         Returns:
             dict: A dictionary containing the optimized calibration parameters, including:
@@ -328,7 +331,8 @@ class Astrometry:
                     src_dst=src_dst,
                     return_partial_images=False,
                     dilate_mask_iterations=dilate_mask_iterations,
-                    level_filter=level_filter
+                    level_filter=level_filter,
+                    ring_filter_type=ring_filter_type
                 )
                 print(f"Astrometry : {astrometry}")
                 # display overlay image
@@ -378,7 +382,8 @@ class Astrometry:
                 src_dst=src_dst,
                 return_partial_images=False,
                 dilate_mask_iterations=dilate_mask_iterations,
-                level_filter=level_filter
+                level_filter=level_filter,
+                ring_filter_type=ring_filter_type
             )
             set_RMSE.append(astrometry["RMSE"])
         curr_best_params["RMSE"] = sum(set_RMSE) / len(set_RMSE)
@@ -904,7 +909,8 @@ class Astrometry:
             return_partial_images=False,
             partial_results_path="./partial_results",
             solver='solver1',
-            level_filter: int = 9
+            level_filter: int = 9,
+            ring_filter_type = 'mean'
     ):
         """Perform astrometry on an input image to determine celestial coordinates.
 
@@ -949,6 +955,7 @@ class Astrometry:
                 if `return_partial_images` is True. Defaults to "./partial_results/".
             solver (str, optional): solver1|solver2: genuine or cedar solver.
             level_filter (int): The size of the star level filter, shall be 5..199 and an odd number.
+            ring_filter_type (str): Source Ring Background Estimation Type: mean|median
         Returns:
             tuple: A tuple containing:
                 - astrometry (dict): A dictionary with astrometric solutions including matched centroids and
@@ -1109,7 +1116,8 @@ class Astrometry:
                     is_trail,
                     return_partial_images,
                     partial_results_path,
-                    level_filter
+                    level_filter,
+                    ring_filter_type
                 )
 
                 # Compute source centroids
@@ -1272,7 +1280,6 @@ class Astrometry:
                     self.log.error(f"Exception type: {type(e).__name__}")
                     self.log.error(f"Stack trace:\n{traceback.format_exc()}")
                     print(f"Stack trace:\n{traceback.format_exc()}")
-                    raise e
         else:
             astrometry = {}
 
@@ -1335,7 +1342,8 @@ class Astrometry:
             return_partial_images=cfg.return_partial_images,
             partial_results_path=img_partial_results_path,
             solver='solver2',
-            level_filter=9
+            level_filter=9,
+            ring_filter_type='mean',
         )
         # display overlay image
         timestamp_string = current_timestamp("%d-%m-%Y-%H-%M-%S")

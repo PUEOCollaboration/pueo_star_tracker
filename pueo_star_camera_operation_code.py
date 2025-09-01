@@ -168,7 +168,7 @@ class PueoStarCameraOperation:
         self.min_size = None
         self.max_size = None
         self.use_photoutils = None
-        self.substract_global_bkg = None
+        self.subtract_global_bkg = None
         self.fast = None
         self.bkg_threshold = None
         self.number_sources = None
@@ -1408,7 +1408,7 @@ class PueoStarCameraOperation:
         self.min_size = self.cfg.ast_min_size
         self.max_size = self.cfg.ast_max_size
         self.use_photoutils = self.cfg.ast_use_photoutils
-        self.substract_global_bkg = self.cfg.ast_substract_global_bkg
+        self.subtract_global_bkg = self.cfg.ast_subtract_global_bkg
         self.fast = self.cfg.ast_fast
         self.bkg_threshold = self.cfg.ast_bkg_threshold
         self.distortion_calibration_params = {"FOV": None, "distortion": None}
@@ -1667,7 +1667,7 @@ class PueoStarCameraOperation:
             self.is_array,
             self.is_trail,
             self.use_photoutils,
-            self.substract_global_bkg,
+            self.subtract_global_bkg,
             self.fast,
             self.number_sources,
             self.bkg_threshold,

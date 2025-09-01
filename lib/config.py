@@ -117,7 +117,8 @@ class Config(Dynamic):
     power_cycle_wait = 3000
 
     # [SOURCES]
-    img_bkg_threshold = 3.1
+    # img_bkg_threshold = 3.1
+    img_bkg_threshold = 8.0
     img_number_sources = 40
     img_min_size = 20
     img_max_size = 600
@@ -158,9 +159,10 @@ class Config(Dynamic):
     ast_is_array = True
     ast_is_trail = False
     ast_use_photoutils = False
-    ast_substract_global_bkg = False
+    ast_subtract_global_bkg = False
     ast_fast = False
-    ast_bkg_threshold = 3.1
+    # ast_bkg_threshold = 3.1
+    ast_bkg_threshold = 8.0
     ast_number_sources = 20
     ast_min_size = 4
     ast_max_size = 200
@@ -546,8 +548,8 @@ class Config(Dynamic):
         self.ast_is_trail = self._config.getboolean('ASTROMETRY', 'ast_is_trail', fallback=self.ast_is_trail)
         self.ast_use_photoutils = self._config.getboolean('ASTROMETRY', 'ast_use_photoutils',
                                                          fallback=self.ast_use_photoutils)
-        self.ast_substract_global_bkg = self._config.getboolean('ASTROMETRY', 'ast_substract_global_bkg',
-                                                               fallback=self.ast_substract_global_bkg)
+        self.ast_subtract_global_bkg = self._config.getboolean('ASTROMETRY', 'ast_subtract_global_bkg',
+                                                               fallback=self.ast_subtract_global_bkg)
         self.ast_fast = self._config.getboolean('ASTROMETRY', 'ast_fast', fallback=self.ast_fast)
         self.ast_bkg_threshold = self._config.getfloat('ASTROMETRY', 'ast_bkg_threshold',
                                                       fallback=self.ast_bkg_threshold)
@@ -807,7 +809,7 @@ class Config(Dynamic):
             'ast_is_array': self.ast_is_array,
             'ast_is_trail': self.ast_is_trail,
             'ast_use_photoutils': self.ast_use_photoutils,
-            'ast_substract_global_bkg': self.ast_substract_global_bkg,
+            'ast_subtract_global_bkg': self.ast_subtract_global_bkg,
             'ast_fast': self.ast_fast,
             'ast_bkg_threshold': self.img_bkg_threshold,
             'ast_number_sources': self.img_number_sources,

@@ -746,7 +746,12 @@ def source_finder(
     downscale_factor = leveling_filter_downscale_factor
     downsampled_img = downscale_local_mean(img, (downscale_factor, downscale_factor))
 
-
+    # if ring_filter_type == 'mean':
+    #     # code for mean
+    # elif ring_filter_type == 'median':
+    #     # Code for median
+    # else:
+    #     raise ValueError('ring_filter_type: {ring_filter_type} expected: mean|median')
 
     # Calculate the local level of the downsampled image
     local_levels = convolve2d(downsampled_img, level_filter_array, boundary="symm", mode="same")

@@ -1268,7 +1268,7 @@ class Astrometry:
             if astrometry.get('FOV') is not None:
                 draw_centroids(astrometry['matched_centroids'], color_green, 80)
 
-            with suppress(TypeError, ValueError):
+            with suppress(TypeError, ValueError, IndexError):
                 #                                              DETECT                      ASTRO RESULTS
                 try:
                     # TODO: Remove calculate_rms_errors_from_centroids old invocation
@@ -1276,11 +1276,13 @@ class Astrometry:
                     rms = self.calculate_rms_errors_from_centroids(astrometry, image_size)
                     astrometry = astrometry | rms   # Merge - union two dicts
                 except (TypeError, ValueError) as e:
-                    self.log.error(f"Failed to compute RMS: {e}")
-                    self.log.error(f"Exception type: {type(e).__name__}")
-                    self.log.error(f"Stack trace:\n{traceback.format_exc()}")
-                    print(f"Stack trace:\n{traceback.format_exc()}")
+                    pass
+                    # self.log.error(f"Failed to compute RMS: {e}")
+                    # self.log.error(f"Exception type: {type(e).__name__}")
+                    # self.log.error(f"Stack trace:\n{traceback.format_exc()}")
+                    # print(f"Stack trace:\n{traceback.format_exc()}")
         else:
+            cprint('No centroids found, skipping astrometry solving.', color='red')
             astrometry = {}
 
         total_exec_time = time.monotonic() - t0

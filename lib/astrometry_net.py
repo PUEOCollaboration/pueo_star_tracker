@@ -11,6 +11,7 @@ import logging
 import re
 import os
 from contextlib import suppress
+import json
 
 class AstrometryNet:
     """
@@ -439,6 +440,11 @@ class AstrometryNet:
             for file in intermediate_files:
                 if file.exists():
                     file.unlink()
+
+        filename =  output_path / f"{output_base}.pueo.json"
+        # Save the dictionary in a readable JSON format
+        with open(filename, 'w') as f:
+            json.dump(result, f, indent=4, sort_keys=True)
 
         return result
 

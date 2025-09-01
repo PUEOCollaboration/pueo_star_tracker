@@ -406,6 +406,7 @@ class Astrometry:
 
         return curr_best_params
 
+    # TODO: Remove remove_unmatched
     def remove_unmatched(self, precomputed_star_centroids, matched_centroids, epsilon=10.0):
         """
         Filter and reorder using Hungarian algorithm for optimal assignment.
@@ -431,10 +432,106 @@ class Astrometry:
 
         return result
 
-    def calculate_rms_errors_from_centroids(self,
+    # TODO: Remove calculate_rms_errors_from_centroids_old
+    def calculate_rms_errors_from_centroids_old(self,
+                                            precomputed_star_centroids,
                                             result,
                                             image_size,
-                                            plate_scale_arcsec_per_pix=None  # unused; FOV-based mapping is used
+                                            plate_scale_arcsec_per_pix=None
+                                            ):
+        """
+        Compute RA, Dec, and Roll RMS directly from tetra3 pixel-space outputs.
+
+        Assumptions / Inputs (from tetra3.solve_from_centroids(..., return_matches=True)):
+          - result['matched_centroids']     : (N,2) measured (y, x) pixels
+          - result['matched_predicted_xy']  : (N,2) predicted (y, x) pixels (tetra3's image-plane match)
+          - result['Roll']                  : roll [deg], image axes vs local sky tangent-plane (east/north)
+          - Optional: result['FOV']         : width field of view [deg] (used if plate_scale not given)
+        image_size : (H, W)                 : original image shape in pixels
+        plate_scale_arcsec_per_pix : float  : arcsec per pixel; if None, estimated as (FOV_deg * 3600) / W
+
+        Returns:
+          dict with:
+            - RA_RMS_arcsec, Dec_RMS_arcsec, Roll_RMS_arcsec
+            # - Pixel_RMS_x, Pixel_RMS_y
+            # - plate_scale_arcsec_per_pix
+            # - (optional) per_star: dx_pix, dy_pix, ra_err_arcsec, dec_err_arcsec, roll_err_arcsec
+
+        Notes:
+          • Rotation by Roll decomposes pixel residuals into local RA/Dec directions (tangent-plane).
+          • Roll RMS uses small-rotation model: α_i ≈ (r_perp · e) / |r|^2 about image center.
+        """
+        H, W = image_size
+
+        # Plate scale
+        if plate_scale_arcsec_per_pix is None:
+            if 'FOV' not in result:
+                raise ValueError("Provide plate_scale_arcsec_per_pix or include result['FOV'].")
+            plate_scale_arcsec_per_pix = (float(result['FOV']) * 3600.0) / float(W)
+
+        # Measured and predicted in (y, x)
+        matched_precomputed_star_centroids = self.remove_unmatched(precomputed_star_centroids, result['matched_centroids'], epsilon=2.0)
+        meas_yx = np.asarray(matched_precomputed_star_centroids, dtype=float)[:, :2]
+        pred_yx = np.asarray(result['matched_centroids'], dtype=float) # Our precomputed_star_centroids
+
+        if True:
+            self.log.debug(f'precomputed_star_centroids: {precomputed_star_centroids}')
+            self.log.debug(f'meas_yx: {meas_yx}')
+            self.log.debug(f'pred_yx: {pred_yx}')
+
+        if meas_yx.shape != pred_yx.shape:
+            raise ValueError("matched_centroids and matched_predicted_xy shapes differ.")
+
+        # Pixel residuals (y down, x right)
+        dy = meas_yx[:, 0] - pred_yx[:, 0]
+        dx = meas_yx[:, 1] - pred_yx[:, 1]
+
+        # Rotate residuals by tetra3 Roll so x' ~ RA (east), y' ~ Dec (north)
+        R = np.deg2rad(float(result['Roll']))
+        c, s = np.cos(R), np.sin(R)
+        ex_ra = c * dx + s * dy
+        ey_dec = -s * dx + c * dy
+
+        # Convert to arcsec (signs irrelevant for RMS)
+        ra_err_arcsec = ex_ra * plate_scale_arcsec_per_pix
+        dec_err_arcsec = (-ey_dec) * plate_scale_arcsec_per_pix
+
+        # Pixel RMS (debug)
+        if False:
+            pixel_rms_x = float(np.sqrt(np.mean(dx ** 2)))
+            pixel_rms_y = float(np.sqrt(np.mean(dy ** 2)))
+
+        # Roll RMS from small-rotation model about image center
+        cx, cy = W / 2.0, H / 2.0
+        rx = pred_yx[:, 1] - cx  # x offset (pixels)
+        ry = pred_yx[:, 0] - cy  # y offset (pixels)
+        r2 = rx * rx + ry * ry
+        mask = r2 > 1e-9
+        # α_i ≈ (r_perp · e)/|r|^2, with r_perp = [-ry, rx]
+        r_perp_dot_e = (-ry[mask]) * dx[mask] + (rx[mask]) * dy[mask]
+        alpha_rad_i = np.zeros_like(dx)
+        alpha_rad_i[mask] = r_perp_dot_e / r2[mask]
+        roll_err_arcsec = alpha_rad_i * (180 / np.pi) * 3600.0
+
+        # RMS values
+        RA_RMS_arcsec = float(np.sqrt(np.mean(ra_err_arcsec ** 2)))
+        Dec_RMS_arcsec = float(np.sqrt(np.mean(dec_err_arcsec ** 2)))
+        Roll_RMS_arcsec = float(np.sqrt(np.mean(roll_err_arcsec ** 2)))
+
+        out = {
+            "RA_RMS": RA_RMS_arcsec,
+            "Dec_RMS": Dec_RMS_arcsec,
+            "Roll_RMS": Roll_RMS_arcsec,
+            # "Pixel_RMS_x": pixel_rms_x,
+            # "Pixel_RMS_y": pixel_rms_y,
+            # "plate_scale_arcsec_per_pix": float(plate_scale_arcsec_per_pix),
+        }
+
+        return out
+
+    def calculate_rms_errors_from_centroids_chatgpt_windell(self,
+                                            result,
+                                            image_size
                                             ):
         """
         Compute RA, Dec, and Roll RMS (arcseconds) from tetra3 outputs.
@@ -463,12 +560,12 @@ class Astrometry:
         def _gnomonic_project(ra, dec, ra0, dec0):
             """(ra,dec)->(xi,eta) on tangent plane at (ra0,dec0), radians."""
             dra = ra - ra0
-            dra = (dra + np.pi) % (2*np.pi) - np.pi  # wrap to [-pi, pi]
+            dra = (dra + np.pi) % (2 * np.pi) - np.pi  # wrap to [-pi, pi]
             sd, cd = np.sin(dec), np.cos(dec)
             s0, c0 = np.sin(dec0), np.cos(dec0)
-            denom = s0*sd + c0*cd*np.cos(dra)
-            xi  = (cd * np.sin(dra)) / denom
-            eta = (c0*sd - s0*cd*np.cos(dra)) / denom
+            denom = s0 * sd + c0 * cd * np.cos(dra)
+            xi = (cd * np.sin(dra)) / denom
+            eta = (c0 * sd - s0 * cd * np.cos(dra)) / denom
             return xi, eta
 
         def _best_fit_theta(xi_ref, eta_ref, xi_meas, eta_meas):
@@ -478,11 +575,11 @@ class Astrometry:
             Xc = X - X.mean(axis=0, keepdims=True)
             Yc = Y - Y.mean(axis=0, keepdims=True)
             H = Xc.T @ Yc
-            return np.arctan2(H[0,1] - H[1,0], H[0,0] + H[1,1])
+            return np.arctan2(H[0, 1] - H[1, 0], H[0, 0] + H[1, 1])
 
         def _rotate(xi, eta, theta):
             c, s = np.cos(theta), np.sin(theta)
-            return c*xi - s*eta, s*xi + c*eta
+            return c * xi - s * eta, s * xi + c * eta
 
         def _pixels_to_plane_fov(x, y, W, H, fovx_rad):
             """
@@ -490,14 +587,14 @@ class Astrometry:
             Uses horizontal FOV; vertical FOV is inferred via aspect ratio (square pixels).
             y is flipped to make +eta point North (up).
             """
-            cx, cy = (W-1)/2.0, (H-1)/2.0
-            nx = (x - cx) / (W/2.0)   # [-1,1]
-            ny = (y - cy) / (H/2.0)   # [-1,1]
-            ny = -ny                  # flip so +eta is up/North
-            xi  = np.tan(0.5*fovx_rad) * nx
+            cx, cy = (W - 1) / 2.0, (H - 1) / 2.0
+            nx = (x - cx) / (W / 2.0)  # [-1,1]
+            ny = (y - cy) / (H / 2.0)  # [-1,1]
+            ny = -ny  # flip so +eta is up/North
+            xi = np.tan(0.5 * fovx_rad) * nx
             # infer vertical FOV from aspect ratio: FOVy = FOVx * (H/W)
             fovy_rad = fovx_rad * (H / float(W))
-            eta = np.tan(0.5*fovy_rad) * ny
+            eta = np.tan(0.5 * fovy_rad) * ny
             return xi, eta
 
         def _undistort_oneparam_xy(x, y, W, H, d):
@@ -509,11 +606,11 @@ class Astrometry:
             if d is None or abs(d) < 1e-12:
                 return x, y  # no meaningful distortion
 
-            cx, cy = (W-1)/2.0, (H-1)/2.0
-            R = W/2.0  # reference radius per tetra3 convention
+            cx, cy = (W - 1) / 2.0, (H - 1) / 2.0
+            R = W / 2.0  # reference radius per tetra3 convention
             rx = x - cx
             ry = y - cy
-            r  = np.sqrt(rx*rx + ry*ry)
+            r = np.sqrt(rx * rx + ry * ry)
 
             outx, outy = x.copy(), y.copy()
             nz = r > 1e-12
@@ -525,8 +622,8 @@ class Astrometry:
             # Newton iterations to invert: u + d*u^3 = r_d_norm  (solve for u)
             u = r_d_norm.copy()
             for _ in range(5):
-                f  = u * (1 + d * u*u) - r_d_norm
-                fp = 1 + 3 * d * u*u
+                f = u * (1 + d * u * u) - r_d_norm
+                fp = 1 + 3 * d * u * u
                 u -= f / fp
 
             scale = np.ones_like(r)
@@ -538,7 +635,8 @@ class Astrometry:
         # ---------- parse inputs ----------
         H, W = image_size
         if 'matched_centroids' not in result or 'matched_stars' not in result:
-            raise ValueError("result must contain 'matched_centroids' and 'matched_stars' (tetra3 return_matches=True).")
+            raise ValueError(
+                "result must contain 'matched_centroids' and 'matched_stars' (tetra3 return_matches=True).")
 
         # Matched centroids: (y,x) -> (x,y)
         yx = np.asarray(result['matched_centroids'], dtype=float)
@@ -551,7 +649,7 @@ class Astrometry:
         radec_deg = ms[:, :2]
 
         # Center & roll (deg -> rad)
-        ra0_deg  = float(result.get('RA',  result.get('RA0')))
+        ra0_deg = float(result.get('RA', result.get('RA0')))
         dec0_deg = float(result.get('Dec', result.get('Dec0')))
         roll_deg = float(result['Roll'])
         ra0, dec0, roll = np.deg2rad([ra0_deg, dec0_deg, roll_deg])
@@ -576,10 +674,10 @@ class Astrometry:
 
         # Un-roll by estimated roll so axes are East/North
         cR, sR = np.cos(-roll), np.sin(-roll)
-        xi_m, eta_m = cR*xi_m - sR*eta_m, sR*xi_m + cR*eta_m
+        xi_m, eta_m = cR * xi_m - sR * eta_m, sR * xi_m + cR * eta_m
 
         # ---------- catalog -> plane ----------
-        ra_rad  = np.deg2rad(radec_deg[:, 0])
+        ra_rad = np.deg2rad(radec_deg[:, 0])
         dec_rad = np.deg2rad(radec_deg[:, 1])
         xi_c, eta_c = _gnomonic_project(ra_rad, dec_rad, ra0, dec0)
 
@@ -588,27 +686,195 @@ class Astrometry:
 
         # Plane residuals
         xi_c_rot, eta_c_rot = _rotate(xi_c, eta_c, theta)
-        dxi  = xi_m  - xi_c_rot
+        dxi = xi_m - xi_c_rot
         deta = eta_m - eta_c_rot
 
         # Plane -> RA/Dec residuals (small-angle)
         cosd0 = np.cos(dec0)
-        dra_rad  = dxi  / cosd0
+        dra_rad = dxi / cosd0
         ddec_rad = deta
 
         # RMS (arcseconds)
-        RA_RMS_arcsec  = float(np.sqrt(np.mean(dra_rad**2))  * ARCSEC_PER_RAD)
-        Dec_RMS_arcsec = float(np.sqrt(np.mean(ddec_rad**2)) * ARCSEC_PER_RAD)
+        RA_RMS_arcsec = float(np.sqrt(np.mean(dra_rad ** 2)) * ARCSEC_PER_RAD)
+        Dec_RMS_arcsec = float(np.sqrt(np.mean(ddec_rad ** 2)) * ARCSEC_PER_RAD)
 
         # Roll RMS: local rotational component about boresight
-        v2 = xi_c_rot**2 + eta_c_rot**2
+        v2 = xi_c_rot ** 2 + eta_c_rot ** 2
         mask = v2 > 1e-16
         rot_local = np.zeros_like(v2)
-        rot_local[mask] = (xi_c_rot[mask]*deta[mask] - eta_c_rot[mask]*dxi[mask]) / v2[mask]  # radians
-        Roll_RMS_arcsec = float(np.sqrt(np.mean(rot_local[mask]**2)) * ARCSEC_PER_RAD) if np.any(mask) else np.nan
+        rot_local[mask] = (xi_c_rot[mask] * deta[mask] - eta_c_rot[mask] * dxi[mask]) / v2[mask]  # radians
+        Roll_RMS_arcsec = float(np.sqrt(np.mean(rot_local[mask] ** 2)) * ARCSEC_PER_RAD) if np.any(mask) else np.nan
 
         return {"RA_RMS": RA_RMS_arcsec, "Dec_RMS": Dec_RMS_arcsec, "Roll_RMS": Roll_RMS_arcsec}
 
+    def calculate_rms_errors_from_centroids(self, result, image_size):
+        """
+        Compute RA, Dec, and Roll RMS (arcseconds) from tetra3 outputs.
+
+        Args:
+            result: Dictionary from tetra3.solve_from_centroids(return_matches=True)
+            image_size: (height, width) in pixels
+
+        Returns:
+            Dictionary with RA_RMS, Dec_RMS, Roll_RMS in arcseconds
+        """
+        # Constants
+        ARCSEC_PER_RAD = 206264.80624709636
+
+        def gnomonic_project(ra, dec, ra0, dec0):
+            """(ra,dec)->(xi,eta) on tangent plane at (ra0,dec0), radians."""
+            dra = ra - ra0
+            dra = (dra + np.pi) % (2 * np.pi) - np.pi  # wrap to [-pi, pi]
+            sin_dec, cos_dec = np.sin(dec), np.cos(dec)
+            sin_dec0, cos_dec0 = np.sin(dec0), np.cos(dec0)
+            denominator = sin_dec0 * sin_dec + cos_dec0 * cos_dec * np.cos(dra)
+            xi = (cos_dec * np.sin(dra)) / denominator
+            eta = (cos_dec0 * sin_dec - sin_dec0 * cos_dec * np.cos(dra)) / denominator
+            return xi, eta
+
+        def best_fit_rotation(xi_ref, eta_ref, xi_meas, eta_meas):
+            """Find small in-plane rotation theta (radians) mapping ref->meas."""
+            X = np.column_stack([xi_ref, eta_ref])
+            Y = np.column_stack([xi_meas, eta_meas])
+            X_centered = X - X.mean(axis=0)
+            Y_centered = Y - Y.mean(axis=0)
+            H = X_centered.T @ Y_centered
+            return np.arctan2(H[0, 1] - H[1, 0], H[0, 0] + H[1, 1])
+
+        def rotate_coords(xi, eta, theta):
+            """Rotate coordinates by angle theta."""
+            cos_theta, sin_theta = np.cos(theta), np.sin(theta)
+            return cos_theta * xi - sin_theta * eta, sin_theta * xi + cos_theta * eta
+
+        def pixels_to_plane(x, y, width, height, fov_x_rad):
+            """Convert pixels to tangent plane coordinates."""
+            center_x, center_y = (width - 1) / 2.0, (height - 1) / 2.0
+            norm_x = (x - center_x) / (width / 2.0)  # [-1,1]
+            norm_y = (y - center_y) / (height / 2.0)  # [-1,1]
+            norm_y = -norm_y  # flip so +eta is up/North
+
+            xi = np.tan(0.5 * fov_x_rad) * norm_x
+            fov_y_rad = fov_x_rad * (height / float(width))
+            eta = np.tan(0.5 * fov_y_rad) * norm_y
+            return xi, eta
+
+        def undistort_xy(x, y, width, height, distortion_param):
+            """Apply radial distortion correction."""
+            if distortion_param is None or abs(distortion_param) < 1e-12:
+                return x, y
+
+            center_x, center_y = (width - 1) / 2.0, (height - 1) / 2.0
+            ref_radius = width / 2.0
+            dx = x - center_x
+            dy = y - center_y
+            radius = np.sqrt(dx ** 2 + dy ** 2)
+
+            result_x, result_y = x.copy(), y.copy()
+            nonzero_mask = radius > 1e-12
+
+            if not np.any(nonzero_mask):
+                return result_x, result_y
+
+            # Newton iterations to invert distortion
+            r_distorted_norm = radius[nonzero_mask] / ref_radius
+            u = r_distorted_norm.copy()
+
+            for _ in range(5):
+                f = u * (1 + distortion_param * u ** 2) - r_distorted_norm
+                f_prime = 1 + 3 * distortion_param * u ** 2
+                u -= f / f_prime
+
+            scale = np.ones_like(radius)
+            scale[nonzero_mask] = u / r_distorted_norm
+            result_x[nonzero_mask] = center_x + scale[nonzero_mask] * dx[nonzero_mask]
+            result_y[nonzero_mask] = center_y + scale[nonzero_mask] * dy[nonzero_mask]
+
+            return result_x, result_y
+
+        # Parse inputs
+        height, width = image_size
+
+        if 'matched_centroids' not in result or 'matched_stars' not in result:
+            raise ValueError("Result must contain matched_centroids and matched_stars")
+
+        # Convert centroids from (y,x) to (x,y)
+        yx_coords = np.asarray(result['matched_centroids'], dtype=float)
+        xy_coords = yx_coords[:, [1, 0]]
+
+        if xy_coords.shape[0] < 2:
+            return {"RA_RMS": np.nan, "Dec_RMS": np.nan, "Roll_RMS": np.nan}
+
+        # Extract RA/Dec coordinates
+        matched_stars = np.asarray(result['matched_stars'], dtype=float)
+        radec_deg = matched_stars[:, :2]
+
+        # Get field center and orientation
+        ra0_deg = float(result.get('RA', result.get('RA0')))
+        dec0_deg = float(result.get('Dec', result.get('Dec0')))
+        roll_deg = float(result['Roll'])
+        ra0, dec0, roll = np.deg2rad([ra0_deg, dec0_deg, roll_deg])
+
+        # Field of view
+        if 'FOV' not in result:
+            raise ValueError("Result must contain FOV")
+        fov_x_rad = np.deg2rad(float(result['FOV']))
+
+        # Distortion parameter
+        distortion = result.get('distortion')
+        distortion = None if distortion is None else float(distortion)
+
+        # Process pixel coordinates
+        x_coords, y_coords = xy_coords[:, 0].copy(), xy_coords[:, 1].copy()
+
+        if distortion is not None:
+            x_coords, y_coords = undistort_xy(x_coords, y_coords, width, height, distortion)
+
+        # Convert to tangent plane
+        xi_measured, eta_measured = pixels_to_plane(x_coords, y_coords, width, height, fov_x_rad)
+
+        # Remove estimated roll
+        cos_roll, sin_roll = np.cos(-roll), np.sin(-roll)
+        xi_measured = cos_roll * xi_measured - sin_roll * eta_measured
+        eta_measured = sin_roll * xi_measured + cos_roll * eta_measured
+
+        # Convert catalog coordinates to tangent plane
+        ra_rad = np.deg2rad(radec_deg[:, 0])
+        dec_rad = np.deg2rad(radec_deg[:, 1])
+        xi_catalog, eta_catalog = gnomonic_project(ra_rad, dec_rad, ra0, dec0)
+
+        # Find residual rotation and calculate errors
+        residual_theta = best_fit_rotation(xi_catalog, eta_catalog, xi_measured, eta_measured)
+        xi_catalog_rot, eta_catalog_rot = rotate_coords(xi_catalog, eta_catalog, residual_theta)
+
+        # Calculate residuals
+        dxi = xi_measured - xi_catalog_rot
+        deta = eta_measured - eta_catalog_rot
+
+        # Convert to RA/Dec errors
+        cos_dec0 = np.cos(dec0)
+        dra_rad = dxi / cos_dec0
+        ddec_rad = deta
+
+        # Calculate RMS values
+        ra_rms = float(np.sqrt(np.mean(dra_rad ** 2)) * ARCSEC_PER_RAD)
+        dec_rms = float(np.sqrt(np.mean(ddec_rad ** 2)) * ARCSEC_PER_RAD)
+
+        # Calculate roll error
+        radius_sq = xi_catalog_rot ** 2 + eta_catalog_rot ** 2
+        valid_mask = radius_sq > 1e-16
+
+        if np.any(valid_mask):
+            local_rotation = (xi_catalog_rot[valid_mask] * deta[valid_mask] -
+                              eta_catalog_rot[valid_mask] * dxi[valid_mask]) / radius_sq[valid_mask]
+            roll_rms = float(np.sqrt(np.mean(local_rotation ** 2)) * ARCSEC_PER_RAD)
+        else:
+            roll_rms = np.nan
+
+        return {
+            "RA_RMS": ra_rms,
+            "Dec_RMS": dec_rms,
+            "Roll_RMS": roll_rms
+        }
 
     # TODO: Windell: The variables with hard coded values here should be put in the config file.
     # TODO:   Milan: All params when using do_astrometry from pueo_star_camera_operation_code.py pass all vars ...
@@ -996,8 +1262,17 @@ class Astrometry:
 
             with suppress(TypeError, ValueError):
                 #                                              DETECT                      ASTRO RESULTS
-                rms = self.calculate_rms_errors_from_centroids(precomputed_star_centroids, astrometry, image_size)
-                astrometry = astrometry | rms   # Merge - union two dicts
+                try:
+                    # TODO: Remove calculate_rms_errors_from_centroids old invocation
+                    # rms = self.calculate_rms_errors_from_centroids(precomputed_star_centroids, astrometry, image_size)
+                    rms = self.calculate_rms_errors_from_centroids(astrometry, image_size)
+                    astrometry = astrometry | rms   # Merge - union two dicts
+                except (TypeError, ValueError) as e:
+                    self.log.error(f"Failed to compute RMS: {e}")
+                    self.log.error(f"Exception type: {type(e).__name__}")
+                    self.log.error(f"Stack trace:\n{traceback.format_exc()}")
+                    print(f"Stack trace:\n{traceback.format_exc()}")
+                    raise e
         else:
             astrometry = {}
 

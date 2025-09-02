@@ -238,6 +238,8 @@ class DummyCamera:
             if filename.endswith(".png"):
                 images.append(filepath)
 
+        # Sort the list to ensure consistent ordering across all platforms
+        images.sort()
         return images
 
     def get_next_image(self):

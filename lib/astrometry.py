@@ -161,7 +161,7 @@ class Astrometry:
             size=(int(height/resize_factor), int(width/resize_factor)),
             fov_estimate=FOV,
             # fov_max_error=FOV * 0.10,  # Default None
-            # pattern_checking_stars=pattern_checking_stars,
+            pattern_checking_stars=pattern_checking_stars,
             # match_radius=0.01,  # Default 0.01
             # match_threshold=1e-3,
             solve_timeout=self.cfg.solve_timeout, # 5000.0, # Default None milliseconds
@@ -883,7 +883,67 @@ class Astrometry:
 
     # TODO: Windell: The variables with hard coded values here should be put in the config file.
     # TODO:   Milan: All params when using do_astrometry from pueo_star_camera_operation_code.py pass all vars ...
-    def do_astrometry(
+
+    def do_astrometry(self, *args, **kwargs):
+        """Wrapper function that handles both direct calls and multiprocessing pool calls"""
+        # TODO: Set to False for PRODUCTION
+        test = True
+        if test:
+            print(f"DEBUG: args received: {args}")
+            print(f"DEBUG: kwargs received: {kwargs}")
+
+            # Get the original function's parameter names
+            import inspect
+            sig = inspect.signature(self._do_astrometry)
+            param_names = list(sig.parameters.keys())[1:]  # Skip 'self'
+
+            print(f"DEBUG: _do_astrometry expects parameters: {param_names}")
+            # print(f"DEBUG: Number of args passed: {len(args)}")
+            # print(f"DEBUG: Number of kwargs passed: {len(kwargs)}")
+
+            print(f"\n{'-' * 60}")
+            print(f"DO_ASTROMETRY PARAMETERS")
+            print(f"{'-' * 60}")
+
+            max_name_length = 32
+            for idx, param_name in enumerate(param_names):
+                param_value = args[idx+1] if len(args) > idx+1 else None
+                if param_value is None:
+                    formatted_value = "None"
+                elif isinstance(param_value, str):
+                    formatted_value = f"'{param_value}'"
+                else:
+                    formatted_value = str(param_value)
+                print(f"{param_name:>{max_name_length}} : {formatted_value}")
+
+        return self._do_astrometry(*args, **kwargs)
+
+    def _print_parameters(self, func_name, parameters):
+        """Helper method to print parameters"""
+        if not parameters:
+            return
+
+        max_name_length = max(len(name) for name in parameters.keys())
+
+        print(f"\n{'-' * 60}")
+        print(f"{func_name.upper()} PARAMETERS")
+        print(f"{'-' * 60}")
+
+        max_name_length = 32
+        for param_name, param_value in parameters.items():
+            if param_value is None:
+                formatted_value = "None"
+            elif isinstance(param_value, str):
+                formatted_value = f"'{param_value}'"
+            else:
+                formatted_value = str(param_value)
+
+            print(f"{param_name:>{max_name_length}} : {formatted_value}")
+
+        print(f"{'-' * 60}\n")
+
+
+    def _do_astrometry(
             self,
             img,
             is_array=True,

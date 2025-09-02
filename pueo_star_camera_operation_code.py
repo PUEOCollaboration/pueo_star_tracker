@@ -47,9 +47,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+# Custom imports
 from lib.astrometry import Astrometry
 from lib.common import get_file_size, DroppingQueue
-# Custom imports
 from lib.compute_star_centroids import compute_centroids_from_still
 from lib.common import load_config, logit, current_timestamp, cprint, get_dt, save_to_json, save_to_excel
 from lib.common import archive_folder, delete_folder
@@ -1650,15 +1650,9 @@ class PueoStarCameraOperation:
             file.write(f"omega_roll: {angular_velocity.get('roll_rate', 'N/A')} deg/s\n")
             file.write(f"omega_az: {angular_velocity.get('az_rate', 'N/A')} deg/s\n")
             file.write(f"omega_el: {angular_velocity.get('el_rate', 'N/A')} deg/s\n")
-            file.write(f"time difference between solutions: {delta_t_sec} seconds\n")
-            file.write("\n")
-
+            file.write(f"time difference between images\\solutions: {delta_t_sec} seconds\n")
             if hasattr(self, 'prev_image_name') and self.prev_image_name:
                 file.write(f"name of previous image: {self.prev_image_name}\n")
-
-            if hasattr(self, 'prev_time') and hasattr(self, 'curr_time'):
-                file.write(f"time difference between images: {delta_t_sec} seconds\n")
-
 
     def do_astrometry(self, is_multiprocessing=True):
         """astro.do_astrometry wrapper function."""
@@ -1868,9 +1862,12 @@ class PueoStarCameraOperation:
         # New implementation using two astrometry results
         solutions_dt = self.curr_time - self.prev_time
         angular_velocity = {}
+        self.omega = [float('inf')] * 3
         with suppress(KeyError, ValueError, TypeError):
             angular_velocity = self.compute_angular_velocity(self.astrometry, self.prev_astrometry, solutions_dt)
-        # Debug Variant
+            keys_in_order = ["roll_rate", "az_rate", "el_rate"]
+            self.omega = [angular_velocity[key] for key in keys_in_order]
+          # Debug Variant
         if False:
             try:
                 angular_velocity = self.compute_angular_velocity(self.astrometry, self.prev_astrometry, solutions_dt)
@@ -1946,47 +1943,21 @@ class PueoStarCameraOperation:
 
         self.logit(f'camera_take_image completed in {get_dt(t0)}.', color='green')
 
-    def calc_angular_velocity(self, curr_utc_timestamp):
-        # Calculate the body rotation rate (need to have more than one astrometry result)
-        ra = self.astrometry.get('RA')
-        dec = self.astrometry.get('Dec')
-        roll = self.astrometry.get('Roll')
-        if ra is None:
-            return
-        omega_x = omega_y = omega_z = 0.0
-        pk = []
-        # Note: Comparing a variable to None can be achieved only by using 'is' or 'is not'
-        dt = self.curr_time - self.prev_time
-        is_timeout = dt > self.cfg.current_timeout  # e.g. assume images are taken less than 200s apart
-        if len(self.prev_img) != 0 and ra is not None and not is_timeout and self.include_angular_velocity:  # 200
-            t0 = time.monotonic()
-            self.server.write('Calculating: Angular Velocity Estimation')
-            plate_scale = self.astrometry['FOV'] / self.curr_img.shape[1]
-            st = StarTrackerBodyRates(self.cfg.angular_velocity_timeout)
-            self.omega, pk, is_timeout = st.angular_velocity_estimation(
-                self.prev_star_centroids, self.curr_star_centroids,
-                plate_scale, dt, False,
-                self.cfg.star_tracker_body_rates_max_distance,
-                self.cfg.focal_ratio,
-                self.cfg.x_pixel_count, self.cfg.y_pixel_count)
-            omega_x, omega_y, omega_z = self.omega
-            level = 'warning' if is_timeout else 'info'
-            status = 'timeout' if is_timeout else 'completed'
-            self.server.write(f'angular_velocity_estimation {status} in {get_dt(t0)}.', level)
-        else:
-            if not self.include_angular_velocity:
-                self.server.write('Angular velocity calculation disabled.', 'warning')
-            elif len(self.prev_img) != 0 and ra is not None and not is_timeout:
-                self.server.write('Skipping Angular velocity calculation.', 'warning')
-        # Write results to a file
-        self.info_add_misc_info(omega_x, omega_y, omega_z, pk)
-        self.server.write(f'{curr_utc_timestamp}, RA: {ra}, DEC: {dec}, ROLL {roll} [deg]')
-        self.server.write(f'{curr_utc_timestamp}, Ωx: {omega_x}, Ωy: {omega_y}, Ωz: {omega_z} [deg/sec]')
-
-
     def _radec_roll_to_rotation(self, ra_deg, dec_deg, roll_deg):
         """
-        Convert RA, Dec, and Roll angles to a rotation matrix.
+        Convert RA, Dec, and Roll angles to a rotation matrix using standard astronomical transformations.
+
+        This function constructs the rotation matrix that transforms from the International
+        Celestial Reference Frame (ICRF) to the camera's body frame. The transformation
+        follows the standard astronomical convention:
+
+        1. Rotate by RA around the Z-axis (pointing toward North Celestial Pole)
+        2. Rotate by -Dec around the Y-axis (negative because declination increases northward
+           from the celestial equator, which corresponds to a negative rotation in the
+           right-handed coordinate system where Y points east)
+        3. Rotate by Roll around the X-axis (now aligned with the camera boresight)
+
+        The resulting matrix R satisfies: v_camera = R @ v_icrf
 
         Args:
             ra_deg (float): Right Ascension in degrees
@@ -1994,106 +1965,122 @@ class PueoStarCameraOperation:
             roll_deg (float): Roll angle in degrees
 
         Returns:
-            numpy.ndarray: 3x3 rotation matrix
+            numpy.ndarray: 3x3 rotation matrix representing the camera orientation
         """
         ra = np.deg2rad(ra_deg)
         dec = np.deg2rad(dec_deg)
         roll = np.deg2rad(roll_deg)
 
-        # Forward vector (pointing direction)
-        x = np.cos(dec) * np.cos(ra)
-        y = np.cos(dec) * np.sin(ra)
-        z = np.sin(dec)
-        forward = np.array([x, y, z])
+        # Standard astronomical sequence: R = R_roll(X) @ R_-dec(Y) @ R_ra(Z)
+        R_z = Rotation.from_rotvec([0, 0, ra]).as_matrix()  # Rotate by RA around Z
+        R_y = Rotation.from_rotvec([0, -dec, 0]).as_matrix()  # Rotate by -Dec around Y
+        R_x = Rotation.from_rotvec([roll, 0, 0]).as_matrix()  # Rotate by Roll around X
 
-        # Arbitrary up vector not aligned with forward
-        up = np.array([0, 0, 1]) if abs(forward[2]) < 0.99 else np.array([0, 1, 0])
-        right = np.cross(forward, up)
-        right /= np.linalg.norm(right)
-        true_up = np.cross(right, forward)
-        true_up /= np.linalg.norm(true_up)
-
-        base_rot = np.column_stack((right, true_up, forward))
-        roll_rot = Rotation.from_rotvec(roll * forward).as_matrix()
-        return roll_rot @ base_rot
+        # Combine the rotations: First RA, then Dec, then Roll.
+        return R_x @ R_y @ R_z
 
     def _decompose_rotation_to_local_axes(self, R1, R2):
         """
-        Decompose relative rotation between two matrices into local axes components.
+        Decompose the relative rotation between two orientations into camera-axis components.
+
+        This function calculates the components of the angular velocity vector that would
+        transform the camera from orientation R1 to orientation R2. The method involves:
+
+        1. Computing the relative rotation matrix: R_rel = R2 @ R1.T
+        2. Extracting the rotation vector from R_rel using matrix logarithm
+        3. Projecting this rotation vector onto the camera's local axes (X, Y, Z) defined by R1
+
+        The rotation vector represents the integrated angular displacement (ω * Δt) between
+        the two orientations. Its projection onto the camera axes gives the components of
+        this displacement along each axis.
 
         Args:
-            R1 (numpy.ndarray): First 3x3 rotation matrix
-            R2 (numpy.ndarray): Second 3x3 rotation matrix
+            R1 (numpy.ndarray): 3x3 rotation matrix representing initial camera orientation
+            R2 (numpy.ndarray): 3x3 rotation matrix representing final camera orientation
 
         Returns:
-            tuple: (d_roll_rad, d_az_rad, d_el_rad) rotation components in radians
+            tuple: Components of the rotation vector along camera axes:
+                - d_roll_rad: Component along Z-axis (roll/boresight direction) in radians
+                - d_az_rad: Component along X-axis (azimuth/right direction) in radians
+                - d_el_rad: Component along Y-axis (elevation/up direction) in radians
         """
-        R_rel = R2 @ R1.T
-        rotvec = Rotation.from_matrix(R_rel).as_rotvec()
-        angle = np.linalg.norm(rotvec)
-        axis = rotvec / angle if angle > 1e-6 else np.zeros(3)
+        # Calculate the relative rotation matrix from frame1 to frame2
+        R_rel = R2 @ R1.T  # This is R_{2<-1} = R2 * R1^{-1}
 
-        forward = R1[:, 2]  # z axis (pointing direction)
-        right = R1[:, 0]    # x axis (azimuth/right direction)
-        up = R1[:, 1]       # y axis (elevation/up direction)
+        # Extract rotation vector from relative rotation matrix
+        # This vector represents the axis*angle rotation that transforms R1 to R2
+        # Its magnitude is the rotation angle in radians, direction is rotation axis
+        delta_theta_vec = Rotation.from_matrix(R_rel).as_rotvec()
 
-        d_roll = np.dot(axis, forward) * angle
-        d_az = np.dot(axis, right) * angle
-        d_el = np.dot(axis, up) * angle
+        # Get the axes of the initial camera frame (R1)
+        # The columns of R1 are the world axes expressed in the camera frame
+        right = R1[:, 0]  # Camera's X-axis (azimuth/right direction)
+        up = R1[:, 1]  # Camera's Y-axis (elevation/up direction)
+        forward = R1[:, 2]  # Camera's Z-axis (roll/boresight direction)
+
+        # Project the rotation vector onto the initial camera axes
+        # These projections give the components of angular displacement along each axis
+        d_roll = np.dot(delta_theta_vec, forward)  # Z-axis component
+        d_az = np.dot(delta_theta_vec, right)  # X-axis component
+        d_el = np.dot(delta_theta_vec, up)  # Y-axis component
 
         return d_roll, d_az, d_el
 
-    def compute_angular_velocity(self, astrometry_curr: dict, astrometry_prev: dict, delta_t_sec) -> dict:
+    def compute_angular_velocity(self, astrometry_curr, astrometry_prev, delta_t_sec):
         """
         Compute angular velocity between two astrometry solutions.
 
+        This function calculates the instantaneous angular velocity of the camera
+        between two orientations specified by their RA, Dec, and Roll values. The
+        calculation involves:
+
+        1. Converting both orientations to rotation matrices using standard
+           astronomical transformations
+        2. Computing the relative rotation between the orientations
+        3. Decomposing this rotation into components along the camera's local axes
+        4. Converting these displacement components to angular velocity by dividing
+           by the time difference
+
+        The resulting angular velocity vector components represent the camera's
+        rotational speed around its own axes (roll, azimuth, elevation) during
+        the time interval.
+
         Args:
-            astrometry_curr (dict): Current astrometry solution dictionary with
-                                   keys 'RA', 'Dec', 'Roll' (in degrees)
-            astrometry_prev (dict): Previous astrometry solution dictionary with
-                                   keys 'RA', 'Dec', 'Roll' (in degrees)
+            astrometry_curr (dict): Current astrometry solution with keys:
+                'RA', 'Dec', 'Roll' (all in degrees)
+            astrometry_prev (dict): Previous astrometry solution with keys:
+                'RA', 'Dec', 'Roll' (all in degrees)
             delta_t_sec (float): Time difference between solutions in seconds
 
         Returns:
             dict: Dictionary containing angular velocities in deg/s for:
-                 - roll_velocity_deg_per_s: Roll axis velocity
-                 - az_velocity_deg_per_s: Azimuth (right) axis velocity
-                 - el_velocity_deg_per_s: Elevation (up) axis velocity
-            or empty
+                - roll_rate: Rotation around camera's Z-axis (boresight/roll)
+                - az_rate: Rotation around camera's X-axis (azimuth/right)
+                - el_rate: Rotation around camera's Y-axis (elevation/up)
+
         Raises:
             KeyError: If required keys are missing from input dictionaries
-            ValueError: If delta_t_sec is zero or negative or angular_velocity_timeout exceeded
+            ValueError: If delta_t_sec is zero or negative
         """
         if delta_t_sec <= 0:
-            self.log.warning(f"delta_t_sec must be positive")
             raise ValueError("delta_t_sec must be positive")
 
-        if delta_t_sec > self.cfg.angular_velocity_timeout:  # e.g. assume images are taken less than 200s apart
-            self.log.warning(f"Invalid time difference: {delta_t_sec}")
-            raise ValueError(f"Invalid time difference: {delta_t_sec}")
-
-        self.log.debug(f'Computing angular velocity: dt: {delta_t_sec}')
         # Extract orientation parameters
         try:
             ra1, dec1, roll1 = (astrometry_prev['RA'], astrometry_prev['Dec'], astrometry_prev['Roll'])
             ra2, dec2, roll2 = (astrometry_curr['RA'], astrometry_curr['Dec'], astrometry_curr['Roll'])
         except KeyError as e:
-            self.log.warning(f"Missing required key in astrometry dict: {e}")
             raise KeyError(f"Missing required key in astrometry dict: {e}")
-
-        self.log.debug(f'1: RA: {ra1}, DEC: {dec1}, ROLL: {roll1} [deg]')
-        self.log.debug(f'2: RA: {ra2}, DEC: {dec2}, ROLL: {roll2} [deg]')
 
         # Convert to rotation matrices
         R1 = self._radec_roll_to_rotation(ra1, dec1, roll1)
         R2 = self._radec_roll_to_rotation(ra2, dec2, roll2)
 
-        # Decompose relative rotation into local axes components
+        # Decompose relative rotation into components of the rotation vector
         d_roll_rad, d_az_rad, d_el_rad = self._decompose_rotation_to_local_axes(R1, R2)
 
-        # Convert to angular velocities (rad/s to deg/s)
-        # Returned values are in deg/s
-        angular_velocity = a_v = {
+        # Convert components of rotation vector to angular velocities (rad/s to deg/s)
+        angular_velocity = a_v= {
             "roll_rate": np.rad2deg(d_roll_rad) / delta_t_sec,
             "az_rate": np.rad2deg(d_az_rad) / delta_t_sec,
             "el_rate": np.rad2deg(d_el_rad) / delta_t_sec
@@ -2111,6 +2098,7 @@ class PueoStarCameraOperation:
         self.server.write(f'{self.curr_time}, RA: {ra}, DEC: {dec}, ROLL: {roll} [deg]')
         self.server.write(f'{self.curr_time}, Ω_roll: {a_v["roll_rate"]}, Ω_az: {a_v["az_rate"]}, Ω_el: {a_v["el_rate"]} [deg/sec]')
         self.log.debug(f'done')
+
         return angular_velocity
 
     def camera_run_autogain(self, cmd):

@@ -282,16 +282,20 @@ def display_overlay_info(img, timestamp_string, astrometry, omega, display=True,
         roll = astrometry.get('Roll', 0.0)
 
         # body rates info
-        omegax = omega[0]
-        omegay = omega[1]
-        omegaz = omega[2]
+        #omegax = omega[0]
+        #omegay = omega[1]
+        #omegaz = omega[2]
 
         # solved_txt = ' (Not solved)' if ra == dec == roll == 0.0 else ' (Solved)'
         astrometric_position = f"Astrometric Position ({solver}): ({ra:.4f}, {dec:.4f}, {roll:.4f}) deg"
         _rmse = astrometry.get('Cross-Boresight RMSE', 0.0) if 'Cross-Boresight RMSE' in astrometry else astrometry.get('RMSE', 0.0)
         # rmse = f"RMSE: {_rmse/3600.0:.4E} deg"
         rmse = f"RMSE: {_rmse:.4E} arcsec"
-        velocity = f"Angular velocity: (omegax, omegay, omegaz) = ({omegax:.4E}, {omegay:.4E}, {omegaz:.4E}) deg/s"
+        # velocity = f"Angular velocity: (omegax, omegay, omegaz) = ({omegax:.4E}, {omegay:.4E}, {omegaz:.4E}) deg/s"
+        # Or even more explicitly:
+        # velocity = f"Angular velocity: w_x = {omega[0]:.4E}, w_y = {omega[1]:.4E}, w_z = {omega[2]:.4E} deg/s"
+        velocity = f"Angular velocity: w = ({omega[0]:.6f}, {omega[1]:.6f}, {omega[2]:.6f}) deg/s"
+
         probability_of_false_positive = f"Probability of False Positive: {astrometry['Prob']:.4E}"
         exec_time = f"Execution time: {astrometry['total_exec_time']:.3f} s, Solver: {astrometry['solver_exec_time']:.3f} s"
 

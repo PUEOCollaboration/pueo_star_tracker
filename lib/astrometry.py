@@ -60,7 +60,6 @@ class Astrometry:
         self.database_path = Path(self.database_name).resolve()
 
         # Create instance
-        # if self.solver == 'solver1':
         self.t3_genuine = Tetra3(load_database=self.database_path)
         # Load a database
         self.log.info(f'Database for Genuine Tetra3: {self.database_path}')

@@ -2068,6 +2068,7 @@ class PueoStarCameraOperation:
             KeyError: If required keys are missing from input dictionaries
             ValueError: If delta_t_sec is zero or negative
         """
+
         no_velocity = {
             "roll_rate": float('nan'),
             "az_rate": float('nan'),

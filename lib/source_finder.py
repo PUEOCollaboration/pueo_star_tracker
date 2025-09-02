@@ -691,7 +691,7 @@ def _ring_mean_background_estimation(
     Returns:
         numpy.ndarray: The estimated local background for each pixel in the image.
     """
-    # ensure filter is odd after downscaling
+    # Ensure filter is odd after downscaling
     if d_small % 2 == 0:
         d_small += 1
     print(f"Downscaled filter size: {d_small}")

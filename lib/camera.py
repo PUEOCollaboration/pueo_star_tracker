@@ -238,7 +238,7 @@ class DummyCamera:
             if filename.endswith(".png"):
                 images.append(filepath)
 
-        # Sort the list to ensure consistent ordering across all platforms
+        # Sort the list to ensure consistent ordering across all platforms (Windows/Ubuntu)
         images.sort()
         return images
 

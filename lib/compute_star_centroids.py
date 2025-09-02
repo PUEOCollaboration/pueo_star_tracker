@@ -180,40 +180,40 @@ def compute_centroids_from_still(
             cv2.circle(img, (int(center[0]), int(center[1])), 1, color_red, -1)
 
     # filter out spikes from the detected sources
-    filtred_sources = filter_spikes(detected_sources, min_potential_source_distance)
+    filtered_sources = filter_spikes(detected_sources, min_potential_source_distance)
 
     # write centroid info to log file
     diameters = []
-    for filtered_source in filtred_sources:
+    for filtered_source in filtered_sources:
         diameters.append(filtered_source["length"])
 
     with open(log_file_path, "a") as file:
         file.write(f"number of potential sources : {len(detected_sources)}\n")
-        file.write(f"number of filtred sources : {len(filtred_sources)}\n")
-        file.write(f"number of rejected sources : {len(detected_sources) - len(filtred_sources)}\n")
+        file.write(f"number of filtered sources : {len(filtered_sources)}\n")
+        file.write(f"number of rejected sources : {len(detected_sources) - len(filtered_sources)}\n")
         file.write(f"mean centroid diameter : {np.mean(diameters)}\n")
 
     # Draw circle around valid source
     # (OpenCV uses BGR)
     color_blue = (255, 0, 0)  # Blue
     if return_partial_images:
-        for filtred_source in filtred_sources:
+        for filtered_source in filtered_sources:
             cv2.circle(
                 img,
-                (int(filtred_source["centroid"][0]), int(filtred_source["centroid"][1])),
+                (int(filtered_source["centroid"][0]), int(filtered_source["centroid"][1])),
                 int(sources_radius*0.9),
                 color_blue,
                 4,
             )
             cv2.circle(
-                img, (int(filtred_source["centroid"][0]), int(filtred_source["centroid"][1])), 1, color_blue, -1
+                img, (int(filtered_source["centroid"][0]), int(filtered_source["centroid"][1])), 1, color_blue, -1
             )
 
     if return_partial_images:
         cv2.imwrite(os.path.join(partial_results_path, "3.1 - Valid Contours image.png"), img)
 
     # order sources by flux
-    sorted_flux_x_y = sorted(filtred_sources, key=lambda x: x["flux"], reverse=True)
+    sorted_flux_x_y = sorted(filtered_sources, key=lambda x: x["flux"], reverse=True)
     # generate output
     precomputed_star_centroids = []
     for i in range(len(sorted_flux_x_y)):

@@ -691,6 +691,11 @@ def _ring_mean_background_estimation(
     Returns:
         numpy.ndarray: The estimated local background for each pixel in the image.
     """
+    # ensure filter is odd after downscaling
+    if d_small % 2 == 0:
+        d_small += 1
+    print(f"Downscaled filter size: {d_small}")
+
     # (d × d px) local leveling filter
     mask = ring_mask(d_small)
     ring_count = float(mask.sum())
@@ -712,6 +717,9 @@ def _ring_median_background_estimation(img_small: np.ndarray, d_small: int) -> n
     # Ensure padding produces correct shape
     if d_small % 2 == 0:  # even
         d_small += 1
+    print(f"Downscaled filter size: {d_small}")
+
+    # Ensure padding produces correct shape
     pad = d_small // 2
 
     # Ring median on downscaled image
@@ -741,8 +749,6 @@ def subtract_background(image: np.ndarray, background: np.ndarray):
         flattened_img = np.clip(flattened_img, 0, dtype_info.max).astype(image.dtype)
 
     return flattened_img
-
-import numpy as np
 
 def estimate_noise_pairs(
     img: np.ndarray,
@@ -871,6 +877,8 @@ def source_finder(
     elif ring_filter_type=="mean":
         print("Using Mean Ring Background Estimation")
         local_levels = _ring_mean_background_estimation(downsampled_img, d_small)
+    else:
+        raise ValueError(f'Invalid ring_filter_type: {ring_filter_type} expected: median|mean')
 
     # Upscale back with cubic spline
     if downscale_factor > 1:

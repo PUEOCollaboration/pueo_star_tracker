@@ -1862,7 +1862,7 @@ class PueoStarCameraOperation:
         # New implementation using two astrometry results
         solutions_dt = self.curr_time - self.prev_time
         angular_velocity = {}
-        self.omega = [float('inf')] * 3
+        self.omega = [float('nan')] * 3
         with suppress(KeyError, ValueError, TypeError):
             angular_velocity = self.compute_angular_velocity(self.astrometry, self.prev_astrometry, solutions_dt)
             keys_in_order = ["roll_rate", "az_rate", "el_rate"]
@@ -2012,6 +2012,12 @@ class PueoStarCameraOperation:
         # Its magnitude is the rotation angle in radians, direction is rotation axis
         delta_theta_vec = Rotation.from_matrix(R_rel).as_rotvec()
 
+        # The rotation vector magnitude should be < π for unambiguous interpretation
+        rotation_angle = np.linalg.norm(delta_theta_vec)
+        if rotation_angle > np.pi:
+            # Handle large rotations by taking the complementary angle
+            delta_theta_vec = delta_theta_vec * (1 - 2 * np.pi / rotation_angle)
+
         # Get the axes of the initial camera frame (R1)
         # The columns of R1 are the world axes expressed in the camera frame
         right = R1[:, 0]  # Camera's X-axis (azimuth/right direction)
@@ -2062,6 +2068,12 @@ class PueoStarCameraOperation:
             KeyError: If required keys are missing from input dictionaries
             ValueError: If delta_t_sec is zero or negative
         """
+        no_velocity = {
+            "roll_rate": float('nan'),
+            "az_rate": float('nan'),
+            "el_rate": float('nan')
+        }
+
         if delta_t_sec <= 0:
             raise ValueError("delta_t_sec must be positive")
 
@@ -2070,7 +2082,23 @@ class PueoStarCameraOperation:
             ra1, dec1, roll1 = (astrometry_prev['RA'], astrometry_prev['Dec'], astrometry_prev['Roll'])
             ra2, dec2, roll2 = (astrometry_curr['RA'], astrometry_curr['Dec'], astrometry_curr['Roll'])
         except KeyError as e:
-            raise KeyError(f"Missing required key in astrometry dict: {e}")
+            return no_velocity
+            # raise KeyError(f"Missing required key in astrometry dict: {e}")
+
+        # Combined validation in one block
+        all_values = [ra1, dec1, roll1, ra2, dec2, roll2]
+
+        if any(v is None or np.isnan(v) for v in all_values):
+            invalid_type = "None" if any(v is None for v in all_values) else "NaN"
+            self.log.warning(f"One or more orientation values are {invalid_type}, returning NaN angular velocity")
+            return no_velocity
+
+        # Check for identical orientations to avoid division by numerical noise
+        atol = 1e-10
+        if (np.isclose(ra1,ra2, atol=atol) and
+                np.isclose(dec1, dec2, atol=atol) and
+                np.isclose(roll1, roll2, atol=atol)):
+            return no_velocity
 
         # Convert to rotation matrices
         R1 = self._radec_roll_to_rotation(ra1, dec1, roll1)

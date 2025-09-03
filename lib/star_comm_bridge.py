@@ -451,6 +451,8 @@ class StarCommBridge:
                 elif cmd.param == 'settings':
                     aperture_pos, aperture_f_val = self.server.focuser.get_aperture_position()
                     value = {
+                        'camera': self.server.camera.name,
+                        'camera_mode': 'Simulated' if self.server.camera.simulated else 'Real',
                         'aperture': self.server.focuser.aperture_position,
                         'aperture_pos': aperture_pos,
                         'aperture_f_val': aperture_f_val,

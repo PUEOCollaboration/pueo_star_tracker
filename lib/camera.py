@@ -78,6 +78,8 @@ class DummyCamera:
             camera.set_control_value = self.set_control_value
         self.filename = None
         self.files = len(self.get_images())
+        self.simulated = True
+        self.name = 'DummyCamera'
 
     @property
     def file_size(self):
@@ -276,6 +278,7 @@ class PueoStarCamera(Camera):
         self.camera_id = 0
         self.camera_info = {}
         self.simulated = True
+        self.name = 'DummyCamera'
 
         # TODO: Implement Camera Retry in case of error.
 
@@ -289,13 +292,13 @@ class PueoStarCamera(Camera):
                 self.simulated = True
                 # Load Dummy Camera
                 self.dummy_camera = DummyCamera(self.cfg, self)
-
             else:
                 self.simulated = False
                 super().__init__(self.camera_id or self.cameras_found[0])
         except Exception as e:
             logit(f"Error initializing camera: {e}", color='red')
             self.simulated = True
+            self.name = 'DummyCamera'
 
         # self.camera = asi.Camera(self.camera_id)
         self.camera_info = self.get_camera_property()
@@ -321,6 +324,7 @@ class PueoStarCamera(Camera):
         if self.num_cameras == 1:
             self.camera_id = 0
             self.log.debug('Found one camera: %s' % self.cameras_found[0])
+            self.name = self.cameras_found[0]
         else:
             self.log.error('No cameras found. Exiting')
             print('Switching to DUMMY Camera, serving test images.')

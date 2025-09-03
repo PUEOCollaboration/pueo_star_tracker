@@ -886,8 +886,7 @@ class Astrometry:
     def do_astrometry(self, *args, **kwargs):
         """Wrapper function that handles both direct calls and multiprocessing pool calls"""
         # TODO: Set to False for PRODUCTION
-        test = True
-        if test:
+        if self.test:
             print(f"DEBUG: args received: {args}")
             print(f"DEBUG: kwargs received: {kwargs}")
 

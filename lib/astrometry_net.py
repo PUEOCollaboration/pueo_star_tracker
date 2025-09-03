@@ -308,7 +308,7 @@ class AstrometryNet:
             # Modify env if necessary, e.g., env["PATH"] = "/custom/path:" + env["PATH"]
             cwd = os.getcwd()
             self.log.debug(f'  working dir: {cwd}')
-            self.log.debug(f'  env: {env}')
+            # self.log.debug(f'  env: {env}')
             result = subprocess.run(
                 cmd,
                 cwd=cwd,

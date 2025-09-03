@@ -58,7 +58,7 @@ from lib.versa_logic_api import VersaAPI
 from lib.camera import PueoStarCamera, DummyCamera
 from lib.focuser import Focuser
 from lib.star_comm_bridge import StarCommBridge
-from lib.utils import read_image_grayscale, read_image_BGR, display_overlay_info, save_raws, image_resize
+from lib.utils import read_image_grayscale, read_image_BGR, display_overlay_info, save_raws, image_resize, timed_function
 from lib.source_finder import global_background_estimation, local_levels_background_estimation, \
     median_background_estimation, sextractor_background_estimation, find_sources, find_sources_photutils, \
     select_top_sources, select_top_sources_photutils
@@ -197,18 +197,8 @@ class PueoStarCameraOperation:
         self.telemetry_queue = DroppingQueue(maxsize=self.cfg.fq_max_size)
         self.positions_queue = DroppingQueue(maxsize=self.cfg.fq_max_size)
 
+        # Astrometry
         self.astro = Astrometry(self.cfg.ast_t3_database, self.cfg)
-
-        # TODO: Remove test section
-        if self.cfg.test:
-            self.cfg.trial_focus_pos = 4000
-            self.cfg.top_end_span_percentage = 0.66
-            self.cfg.test = False
-            self.cfg.debug = True
-            self.cfg.dummy = 'Krneki'
-            self.cfg.save(config_file)
-            self.logit("This was test")
-            sys.exit(0)
 
         # Board API (VersaLogic)
         self.versa_api = VersaAPI()
@@ -1777,9 +1767,8 @@ class PueoStarCameraOperation:
         # Single iteration keeps the camera in range.
         # TODO: If the autonomous mode is disabled it will lose track so needs to rerun the full autogain interactions again
         if is_operation and (self.img_cnt % self.cfg.autogain_update_interval) == 0 and not is_test:
-            # TODO: Add autogain routine here for this image
-            new_gain = self.autogain_maintanence(camera_settings)
-            self.logit(f'Single image autogain completed: interval: {self.cfg.autogain_update_interval} current gain: {current_gain} new gain: {new_gain}', color='cyan')
+            new_gain, gain_exec = timed_function(self.autogain_maintanence, camera_settings)
+            self.logit(f'Single image autogain completed: interval: {self.cfg.autogain_update_interval} current gain: {current_gain} new gain: {new_gain} in {gain_exec:.4f} seconds.', color='cyan')
 
         # perform astrometry
         image_file = timestamp_string

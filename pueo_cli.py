@@ -29,6 +29,8 @@ Available commands:
   get_gain                  Get current gain value
   set_gain <value>          Set gain value
   get_settings              Get Pueo settings values
+  set_level_filter          Get level filter value
+  get_level_filter <value>  Set level filter value
 """
 
 import sys

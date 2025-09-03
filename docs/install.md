@@ -278,8 +278,12 @@ sudo apt install astrometry.net
 
 # Copy INDEX files: to ```~/Projects/install/indexes/4100```
 # Create link:
+# Note: To preserve space on root, the index files are moved to raid1
 cd /usr/share/astrometry
-sudo ln -s ~/Projects/install/indexes indexes
+sudo ln -s /mnt/raid1/astrometry.net/indexes indexes
+
+# 
+# sudo ln -s ~/Projects/install/indexes indexes
 
 # Update /etc/astrometry.cfg
 sudo nano /etc/astrometry.cfg 

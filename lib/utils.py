@@ -480,6 +480,50 @@ def save_as_jpeg_with_stretch(img_16bit, jpeg_path, quality=80, lower_percentile
     with suppress(OSError):
         os.rename(temp_path, jpeg_path)
 
+
+def create_latest_image_symlink(inspection_path, image_filename, symlink_name='last_inspection_image.jpg'):
+    """
+    Create or update a symlink pointing to the most recent JPEG image in the inspection directory.
+
+    This function creates a symlink with the specified name that points to the given image file.
+    If the symlink already exists, it will be replaced to point to the new image.
+
+    Args:
+        inspection_path (str): Path to the directory containing inspection images
+        image_filename (str): Full path to the image file that was just created
+        symlink_name (str): Name of the symlink to create (default: 'last_inspection_image.jpg')
+
+    Returns:
+        bool: True if symlink was created successfully, False otherwise
+
+    Note:
+        This function only works on Linux systems and requires appropriate permissions.
+    """
+    try:
+        # Get just the filename from the full path
+        image_basename = os.path.basename(image_filename)
+
+        # Full path for the symlink
+        symlink_path = os.path.join(inspection_path, symlink_name)
+
+        # Remove existing symlink if it exists
+        if os.path.islink(symlink_path) or os.path.exists(symlink_path):
+            os.remove(symlink_path)
+
+        # Create new symlink pointing to the image
+        os.symlink(image_basename, symlink_path)
+
+        log.debug(f"Created symlink '{symlink_name}' -> '{image_basename}'")
+        return True
+
+    except OSError as e:
+        log.error(f"Error creating symlink: {e}")
+        return False
+    except Exception as e:
+        log.error(f"Unexpected error: {e}")
+        return False
+
+
 def delete_trash(
     trash: Union[str, List[Tuple[float, str]]],
     ext: str = '.txt',
@@ -624,6 +668,7 @@ def image_resize(img, scale_factors, image_filename, overlay=None, resize_mode='
         quality = jpeg_settings.get('quality', 80)
         lower_percentile = jpeg_settings.get('lower_percentile', 1)
         upper_percentile = jpeg_settings.get('upper_percentile', 99)
+        symlink_name = jpeg_settings.get('last_image_symlink_name', 'last_inspection_image.jpg')
 
         # Ensure inspection_path exists
         os.makedirs(inspection_path, exist_ok=True)
@@ -634,6 +679,8 @@ def image_resize(img, scale_factors, image_filename, overlay=None, resize_mode='
         jpeg_filename = os.path.join(inspection_path, jpeg_basename)  # Full path
 
         save_as_jpeg_with_stretch(resized_img, jpeg_filename, quality, lower_percentile, upper_percentile)
+        # Create symlink to the latest image
+        create_latest_image_symlink(inspection_path, jpeg_filename, symlink_name)
         delete_trash(inspection_path, ext='.jpg', keep=images_keep)
 
     if overlay is not None:

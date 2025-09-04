@@ -230,6 +230,7 @@ class Config(Dynamic):
     inspection_quality = 80
     inspection_lower_percentile = 1
     inspection_upper_percentile = 99
+    inspection_last_image_symlink_name = 'last_inspection_image.jpg'
 
     # [GENERAL]
     flight_mode = 'flight'
@@ -628,6 +629,7 @@ class Config(Dynamic):
         self.inspection_quality = self._config.getint('IMAGES', 'inspection_quality', fallback=self.inspection_quality)
         self.inspection_lower_percentile = self._config.getint('IMAGES', 'inspection_lower_percentile', fallback=self.inspection_lower_percentile)
         self.inspection_upper_percentile = self._config.getint('IMAGES', 'inspection_upper_percentile', fallback=self.inspection_upper_percentile)
+        self.inspection_last_image_symlink_name = self._config.get('IMAGES', 'inspection_last_image_symlink_name', fallback=self.inspection_last_image_symlink_name)
 
         # [GENERAL]
         self.flight_mode = self._config.get('GENERAL', 'flight_mode', fallback=self.flight_mode)
@@ -673,7 +675,8 @@ class Config(Dynamic):
             'quality': self.inspection_quality,
             'lower_percentile': self.inspection_lower_percentile,
             'upper_percentile': self.inspection_upper_percentile,
-            'path': self.inspection_path
+            'path': self.inspection_path,
+            'last_image_symlink_name': self.inspection_last_image_symlink_name
         }
 
         # [DEVICES]
@@ -855,6 +858,7 @@ class Config(Dynamic):
             'inspection_quality': self.inspection_quality,
             'inspection_lower_percentile': self.inspection_lower_percentile,
             'inspection_upper_percentile': self.inspection_upper_percentile,
+            'inspection_last_image_symlink_name': self.inspection_last_image_symlink_name
         }
 
         config['PATHS'] = {

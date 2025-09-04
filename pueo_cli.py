@@ -122,7 +122,7 @@ class PueoSocketClient:
         """
         try:
             # Prepare and send command
-            cmd_str = json.dumps(command) + '\n'
+            cmd_str = json.dumps(command, ensure_ascii=False) + '\n'
             start_time = time.perf_counter()
             self.socket.sendall(cmd_str.encode('utf-8'))
 
@@ -131,10 +131,12 @@ class PueoSocketClient:
             response_time = (time.perf_counter() - start_time) * 1000  # Convert to ms
 
             if response:
-                return json.loads(response.decode('utf-8').strip()), response_time
+                # Decode response and parse JSON
+                decoded_response = response.decode('utf-8').strip()
+                return json.loads(decoded_response), response_time
             return None, response_time
 
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, UnicodeDecodeError):
             self.log.error("Invalid JSON response from server")
             return None, None
         except socket.timeout:
@@ -385,7 +387,9 @@ class PueoSocketClient:
             response, rtt = self.send_command(cmd_dict)
 
             if response is not None:
-                self.log.info(f"Response time: {rtt:.1f}ms Response:\n{json.dumps(response, indent=2)}")
+                # Use ensure_ascii=False to properly display Unicode characters
+                formatted_response = json.dumps(response, indent=2, ensure_ascii=False)
+                self.log.info(f"Response time: {rtt:.1f}ms Response:\n{formatted_response}")
             else:
                 self.log.warning("No response received from server")
                 sys.exit(1)

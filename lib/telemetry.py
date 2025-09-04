@@ -104,6 +104,10 @@ Core 3:        +29.0°C  (high = +110.0°C, crit = +110.0°C)"""
         else:
             self.log.info('Sensors initialized.')
 
+        self.success_cnt = 0  # Success counter, only log success once.
+        self.error_cnt = 0    # Error logging counter
+        self.error_max = 5    # MAX error counter (do not log errors to log after error_cnt > error_max
+
         _, self.field_names = self.get_sensor_data()
 
         self.log.info(f'Sensors: {", ".join(self.field_names)}')
@@ -160,32 +164,102 @@ Core 3:        +29.0°C  (high = +110.0°C, crit = +110.0°C)"""
 
     def get_sensor_data(self) -> Tuple[Dict[str, Dict[str, float]], List[str]]:
         """
-        Get all sensor data dynamically
+        Get sensor data by querying the system's sensor information.
+
+        On Linux systems, uses the 'sensors' command to retrieve hardware sensor data.
+        On Windows systems, returns dummy data for testing purposes.
+        Handles cases where no sensors are found or the command fails.
 
         Returns:
-            tuple: (sensor_data, field_names)
-            sensor_data: Nested dictionary {adapter: {sensor: temp}}
-            field_names: List of all field names for CSV header
+            Tuple containing:
+            - sensor_data: Nested dictionary structure {adapter_name: {sensor_name: temperature_value}}
+            - field_names: List of all field names for CSV header, formatted consistently
+
+        Example:
+            sensor_data, field_names = get_sensor_data()
+            # sensor_data: {'coretemp-isa-0000': {'Package id 0': 45.0, 'Core 0': 42.0}}
+            # field_names: ['coretemp_package_id_0_temp', 'coretemp_core_0_temp']
         """
+        sensor_data = {}
+        field_names = []
+
         if self.os_type == 'Windows':
-            # TODO: On Windows, we use dummy data!!!
-            output = self.dummy_sensor_date
+            # Use dummy data for Windows systems
+            self.log.debug("Using dummy sensor data for Windows system")
+            output = self.dummy_sensor_data
         else:
             try:
-                output = subprocess.check_output(["sensors"], text=True)
-            except subprocess.CalledProcessError as e:
-                return {}, ["error"]
+                # Execute sensors command and capture output
+                # self.log.debug("Executing 'sensors' command to retrieve hardware data")
+                output = subprocess.check_output(["sensors"], text=True, stderr=subprocess.DEVNULL)
 
+                # Check if no sensors were found (common error case)
+                if "No sensors found!" in output:
+                    self.log.warning("No sensors detected. Try running 'sensors-detect' to configure sensors.")
+                    return {}, []
+
+            except subprocess.CalledProcessError as e:
+                # Command failed (sensors not installed or other error)
+                self.error_cnt += 1
+                if self.error_cnt < self.error_max:
+                    self.log.error(f"Failed to execute sensors command: {e}")
+                return {}, []
+            except FileNotFoundError:
+                # sensors command not available on system
+                self.error_cnt += 1
+                if self.error_cnt < self.error_max:
+                    self.log.error("'sensors' command not found. Install lm-sensors package.")
+                return {}, []
+            except Exception as e:
+                # Catch any other unexpected errors
+                self.error_cnt += 1
+                if self.error_cnt < self.error_max:
+                    self.log.error(f"Unexpected error reading sensor data: {e}")
+                return {}, []
+
+        # Parse the sensor output
         results = self.parse_sensors_output(output)
 
-        sensor_data = []
-        field_names = []
+        # Log successful sensor detection
+        if results:
+            pass
+            # self.log.debug(f"Successfully parsed data from {len(results)} sensors")
+        else:
+            self.error_cnt += 1
+            if self.error_cnt < self.error_max:
+                self.log.warning("No sensor data parsed from output")
+            return {}, []
+
+        # Process parsed results into structured data
         for adapter, _type, sensor, temp in results:
-            sensor_data += f'{temp} °C',
-            if str(adapter).startswith('coretemp'):
-                field_names += f'{sensor}_temp'.lower().replace(' ', '_'),
+            # Initialize adapter dictionary if it doesn't exist
+            if adapter not in sensor_data:
+                sensor_data[adapter] = {}
+
+            # Add sensor reading to the adapter
+            sensor_data[adapter][sensor] = temp
+
+            # Generate consistent field name for CSV header
+            if adapter.startswith('coretemp'):
+                # For coretemp adapters, use sensor name in field
+                field_name = f"{adapter}_{sensor}_temp".lower().replace(' ', '_').replace('-', '_')
             else:
-                field_names += f'{adapter}_temp'.lower().replace(' ', '_'),
+                # For other adapters, use adapter name in field
+                field_name = f"{adapter}_temp".lower().replace(' ', '_').replace('-', '_')
+
+            field_names.append(field_name)
+
+        # Log successful data collection
+        if sensor_data:
+            if self.success_cnt == 0:
+                self.success_cnt += 1
+                self.log.info(f"Collected sensor data from {len(sensor_data)} adapters")
+                # For critical success message, also log to console with color
+                logit(f"Successfully retrieved sensor data from {len(sensor_data)} hardware adapters", color='green')
+        else:
+            self.error_cnt += 1
+            if self.error_cnt < self.error_max:
+                self.log.warning("No sensor data collected")
 
         return sensor_data, field_names
 
@@ -232,7 +306,6 @@ class Telemetry:
 
         self.telemetry_queue = telemetry_queue
         self.t_lock = t_lock
-
 
         # Thread for reading serial data
         self.running = True
@@ -352,6 +425,11 @@ class Telemetry:
         sensor_data, field_names = self.sensors.get_sensor_data()
         data += sensor_data
         self.headers = field_names
+
+        # Dummy Temperature
+        if True:
+            data += ['123.4 °K']
+            self.headers += ['dummy_temp']
 
         # CPU Loads
         cpu_load_data = self.get_cpu_loads()

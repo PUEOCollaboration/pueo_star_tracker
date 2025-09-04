@@ -680,7 +680,8 @@ class Config(Dynamic):
             'lower_percentile': self.inspection_lower_percentile,
             'upper_percentile': self.inspection_upper_percentile,
             'path': self.inspection_path,
-            'last_image_symlink_name': self.inspection_last_image_symlink_name
+            'last_image_symlink_name': self.inspection_last_image_symlink_name,
+            'web_path': self.web_path
         }
 
         # [DEVICES]

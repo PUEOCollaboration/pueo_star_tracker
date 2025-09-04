@@ -673,7 +673,7 @@ def image_resize(img, scale_factors, image_filename, overlay=None, resize_mode='
         lower_percentile = jpeg_settings.get('lower_percentile', 1)
         upper_percentile = jpeg_settings.get('upper_percentile', 99)
         symlink_name = jpeg_settings.get('last_image_symlink_name', 'last_inspection_image.jpg')
-
+        web_path = jpeg_settings.get('web_path', 'web/')
         # Ensure inspection_path exists
         os.makedirs(inspection_path, exist_ok=True)
 
@@ -684,7 +684,7 @@ def image_resize(img, scale_factors, image_filename, overlay=None, resize_mode='
 
         save_as_jpeg_with_stretch(resized_img, jpeg_filename, quality, lower_percentile, upper_percentile)
         # Create symlink to the latest image
-        create_symlink(inspection_path, jpeg_filename, symlink_name)
+        create_symlink(web_path, jpeg_filename, symlink_name)
         delete_trash(inspection_path, ext='.jpg', keep=images_keep)
 
     if overlay is not None:

@@ -300,10 +300,8 @@ inparallel
 cd ~/Projects/pcc
 mkdir -p web
 cd web
-ln -s ../inspection_images/last_inspection_image.jpg last_inspection_image.jpg
 ln -s ../logs/astro.json astro.json 
-ln -s ../output/last_solution.log last_solution.log
-ln -s ../output/last_final_image.log
+
 
 ```
 

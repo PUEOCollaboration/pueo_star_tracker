@@ -265,6 +265,8 @@ class Config(Dynamic):
 
     inspection_path = 'inspection_images/'
 
+    web_path = 'web/'
+
     inspection_settings = {}
 
     # [DEVICES]
@@ -669,6 +671,8 @@ class Config(Dynamic):
 
         self.inspection_path = self._config.get('PATHS', 'inspection_path', fallback=self.inspection_path)
 
+        self.web_path = self._config.get('PATHS', 'web_path', fallback=self.web_path)
+
         # Create inspection_settings dict
         self.inspection_settings = {
             'images_keep': self.inspection_images_keep,
@@ -872,7 +876,8 @@ class Config(Dynamic):
             'final_path': self.final_path,
             'calibration_params_file': self.calibration_params_file,
             'gui_images_path': self.gui_images_path,
-            'inspection_path': self.inspection_path
+            'inspection_path': self.inspection_path,
+            'web_path': self.web_path
         }
 
         config['GENERAL'] = {

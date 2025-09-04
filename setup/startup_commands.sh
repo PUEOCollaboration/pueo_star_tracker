@@ -5,6 +5,11 @@
 LOG_FILE=~/Projects/pcc/logs/startup.log
 PUEO_CONSOLE_FILE=~/Projects/pcc/logs/pueo_console.log
 CEDAR_CONSOLE_FILE=~/Projects/pcc/logs/cedar_console.log
+WEB_CONSOLE_FILE=~/Projects/pcc/logs/web_console.log
+
+# Web server configuration
+WEB_PORT=8000
+WEB_DIRECTORY=~/Projects/pcc/web
 
 # Log script execution
 printf "[%s] Executed ~/scripts/startup_commands.sh\n" "$(date '+%Y-%m-%d %H:%M:%S')" >> "$LOG_FILE"
@@ -25,6 +30,15 @@ cd ~/Projects/pcc
 PUEO_PID=$!
 printf "[%s]  Process id: %d\n" "$(date '+%Y-%m-%d %H:%M:%S')" "$PUEO_PID" >> "$LOG_FILE"
 
-# Optional: Store PIDs in a file for later reference
+# Start Python HTTP Server
+printf "[%s] Starting Python HTTP Server:\n" "$(date '+%Y-%m-%d %H:%M:%S')" >> "$LOG_FILE"
+cd ~/Projects/pcc
+.venv/bin/python -m http.server "$WEB_PORT" --directory "$WEB_DIRECTORY" > "$WEB_CONSOLE_FILE" 2>&1 &
+WEB_PID=$!
+printf "[%s]  Process id: %d\n" "$(date '+%Y-%m-%d %H:%M:%S')" "$WEB_PID" >> "$LOG_FILE"
+printf "[%s]  Serving directory: %s on port: %d\n" "$(date '+%Y-%m-%d %H:%M:%S')" "$WEB_DIRECTORY" "$WEB_PORT" >> "$LOG_FILE"
+
+# Store PIDs in files for later reference
 echo "$CEDAR_PID" > ~/Projects/pcc/logs/cedar.pid
 echo "$PUEO_PID" > ~/Projects/pcc/logs/pueo.pid
+echo "$WEB_PID" > ~/Projects/pcc/logs/web.pid

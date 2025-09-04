@@ -353,7 +353,6 @@ def display_overlay_info(img, timestamp_string, astrometry, omega, display=True,
             # Get file size in MB (converted from bytes)
             file_size = os.path.getsize(foi_filename) / (1024 * 1024)  # bytes to MB conversion
             log.debug(f'Saved: {foi_filename} compression: {png_compression} file_size: {file_size:.2f} Mb in {get_dt(t0)}.')
-
         # TODO: An overlay image, do we use this image for showing on the GUI?
         foi_scaled_filename = f"{final_path}/Final_overlay_image_{filename}_{timestamp_string}_downscaled.png"
         foi_scaled_shape = image_resize(overlay_image, scale_factors, foi_scaled_filename, resize_mode=resize_mode)
@@ -481,39 +480,44 @@ def save_as_jpeg_with_stretch(img_16bit, jpeg_path, quality=80, lower_percentile
         os.rename(temp_path, jpeg_path)
 
 
-def create_latest_image_symlink(inspection_path, image_filename, symlink_name='last_inspection_image.jpg'):
+def create_symlink(path, filename, symlink_name='last_inspection_image.jpg', use_relative_path=True):
     """
-    Create or update a symlink pointing to the most recent JPEG image in the inspection directory.
-
-    This function creates a symlink with the specified name that points to the given image file.
-    If the symlink already exists, it will be replaced to point to the new image.
+    Create or update a symlink pointing to the specified file.
 
     Args:
-        inspection_path (str): Path to the directory containing inspection images
-        image_filename (str): Full path to the image file that was just created
-        symlink_name (str): Name of the symlink to create (default: 'last_inspection_image.jpg')
+        path (str): Path to the directory where the symlink should be created
+        filename (str): Full path to the target file
+        symlink_name (str): Name of the symlink to create
+        use_relative_path (bool): If True, use relative path for symlink (default: True)
 
     Returns:
-        bool: True if symlink was created successfully, False otherwise
-
-    Note:
-        This function only works on Linux systems and requires appropriate permissions.
+        bool: True if successful, False otherwise
     """
     try:
-        # Get just the filename from the full path
-        image_basename = os.path.basename(image_filename)
+        symlink_path = os.path.join(path, symlink_name)
 
-        # Full path for the symlink
-        symlink_path = os.path.join(inspection_path, symlink_name)
-
-        # Remove existing symlink if it exists
-        if os.path.islink(symlink_path) or os.path.exists(symlink_path):
+        # Remove existing symlink or file
+        if os.path.exists(symlink_path) or os.path.islink(symlink_path):
             os.remove(symlink_path)
 
-        # Create new symlink pointing to the image
-        os.symlink(image_basename, symlink_path)
+        # Create parent directory if needed
+        os.makedirs(path, exist_ok=True)
 
-        log.debug(f"Created symlink '{symlink_name}' -> '{image_basename}'")
+        if use_relative_path:
+            # Calculate relative path from symlink directory to target file
+            symlink_dir = os.path.abspath(path)
+            target_abs_path = os.path.abspath(filename)
+
+            # Get relative path from symlink directory to target
+            relative_path = os.path.relpath(target_abs_path, symlink_dir)
+            os.symlink(relative_path, symlink_path)
+            log.debug(f"Created relative symlink '{symlink_path}' -> '{relative_path}'")
+        else:
+            # Use absolute path
+            target_abs_path = os.path.abspath(filename)
+            os.symlink(target_abs_path, symlink_path)
+            log.debug(f"Created absolute symlink '{symlink_path}' -> '{target_abs_path}'")
+
         return True
 
     except OSError as e:
@@ -680,7 +684,7 @@ def image_resize(img, scale_factors, image_filename, overlay=None, resize_mode='
 
         save_as_jpeg_with_stretch(resized_img, jpeg_filename, quality, lower_percentile, upper_percentile)
         # Create symlink to the latest image
-        create_latest_image_symlink(inspection_path, jpeg_filename, symlink_name)
+        create_symlink(inspection_path, jpeg_filename, symlink_name)
         delete_trash(inspection_path, ext='.jpg', keep=images_keep)
 
     if overlay is not None:

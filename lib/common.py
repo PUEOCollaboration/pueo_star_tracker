@@ -325,32 +325,46 @@ def save_to_excel(results, filename='../logs/results.xlsx'):
     df.to_excel(filename, index=False)
 
 
-import numpy as np
-
 def _convert_to_json_serializable(obj):
     """
     Recursively converts NumPy arrays, tuples, sets, and NumPy scalar types to JSON-serializable formats.
+    Also converts NaN, Infinity, and -Infinity values to None.
 
     Args:
       obj: The object to be converted.
 
     Returns:
       The converted object, with NumPy arrays, tuples, sets, and NumPy scalar types replaced by JSON-compatible types.
+      NaN, Infinity, and -Infinity values are converted to None.
     """
+    # Handle floating point numbers (both native and numpy)
+    if isinstance(obj, (float, np.floating)):
+        if math.isnan(obj) or np.isnan(obj):
+            return None
+        if math.isinf(obj) or np.isinf(obj):
+            return None
+        return obj  # Return valid float as-is
+
+    # Handle NumPy scalar types
+    if isinstance(obj, (np.generic, np.number)):
+        converted = obj.item()  # Convert to native Python scalar
+        # Recursively process the converted value to handle potential NaN/Infinity
+        return _convert_to_json_serializable(converted)
+
+    # Handle complex data structures
     if isinstance(obj, np.ndarray):
-        return obj.tolist()
-    elif isinstance(obj, (np.generic, np.number)):  # Handles NumPy scalar types like np.uint16, np.float64
-        return obj.item()  # Convert to native Python scalar
-    elif isinstance(obj, tuple):
+        return [_convert_to_json_serializable(item) for item in obj.tolist()]
+    if isinstance(obj, tuple):
         return [_convert_to_json_serializable(item) for item in obj]
-    elif isinstance(obj, set):
+    if isinstance(obj, set):
         return [_convert_to_json_serializable(item) for item in obj]
-    elif isinstance(obj, dict):
+    if isinstance(obj, dict):
         return {k: _convert_to_json_serializable(v) for k, v in obj.items()}
-    elif isinstance(obj, list):
+    if isinstance(obj, list):
         return [_convert_to_json_serializable(item) for item in obj]
-    else:
-        return obj
+
+    # Return other types as-is (strings, integers, booleans, None, etc.)
+    return obj
 
 
 def save_to_json(results, filename="logs/results.json"):

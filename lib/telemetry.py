@@ -426,8 +426,8 @@ class Telemetry:
         data += sensor_data
         self.headers = field_names
 
-        # Dummy Temperature
-        if True:
+        # Dummy Temperature (for testing)
+        if False:
             data += ['123.4 °K']
             self.headers += ['dummy_temp']
 

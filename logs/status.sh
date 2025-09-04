@@ -43,7 +43,7 @@ show_help() {
     echo "Commands:"
     echo "  status       Show current status (default)"
     echo "  start        Stop (if running) and start services"
-    echo "  stop         Kill all CEDAR/PUEO processes"
+    echo "  stop         Kill all CEDAR/PUEO/WEB processes"
     echo "  restart      Stop + Start services"
     echo "  shutdown     Stop services and power off system"
     echo "  -h, --help   Show this help"
@@ -73,6 +73,10 @@ show_status() {
 
     pueo_pids=$(pgrep -f "pueo_star_camera_operation" | tr '\n' ',' | sed 's/,$//')
     echo -e "PUEO Server: $([[ -n "$pueo_pids" ]] && echo "${GREEN}Running (PIDs: ${pueo_pids})${NC}" || echo "${RED}Not Running${NC}")"
+
+    # 4. Web Server Status (added - more specific pattern)
+    web_pids=$(pgrep -f "python.*http\.server.*8000" | tr '\n' ',' | sed 's/,$//')
+    echo -e "WEB Server: $([[ -n "$web_pids" ]] && echo "${GREEN}Running (PIDs: ${web_pids})${NC}" || echo "${RED}Not Running${NC}")"
 }
 
 stop_services() {
@@ -90,6 +94,13 @@ stop_services() {
     if [[ -n "$pueo_pids" ]]; then
         kill $pueo_pids 2>/dev/null
         echo -e "  PUEO Server: ${RED}Terminated PIDs: ${pueo_pids}${NC}"
+    fi
+
+    # Kill WEB Server (added - specific pattern for Python HTTP server on port 8000)
+    web_pids=$(pgrep -f "python.*http\.server.*8000")
+    if [[ -n "$web_pids" ]]; then
+        kill $web_pids 2>/dev/null
+        echo -e "  WEB Server: ${RED}Terminated PIDs: ${web_pids}${NC}"
     fi
 
     sleep $TERMINATION_DELAY

@@ -58,7 +58,7 @@ from lib.versa_logic_api import VersaAPI
 from lib.camera import PueoStarCamera, DummyCamera
 from lib.focuser import Focuser
 from lib.star_comm_bridge import StarCommBridge
-from lib.utils import read_image_grayscale, read_image_BGR, display_overlay_info, save_raws, image_resize, timed_function
+from lib.utils import read_image_grayscale, read_image_BGR, display_overlay_info, save_raws, image_resize, timed_function, create_symlink
 from lib.source_finder import global_background_estimation, local_levels_background_estimation, \
     median_background_estimation, sextractor_background_estimation, find_sources, find_sources_photutils, \
     select_top_sources, select_top_sources_photutils
@@ -1880,6 +1880,10 @@ class PueoStarCameraOperation:
                 self.cfg.resize_mode,
                 self.cfg.png_compression,
                 self.is_flight)
+            # Create/update symlink to last info file
+            if self.is_flight:
+                create_symlink(self.cfg.web_path, self.foi_name, 'last_final_overlay_image.png')
+                create_symlink(self.cfg.web_path, self.foi_scaled_name, 'last_final_overlay_image_downscaled.png')
             if self.foi_scaled_name is not None:
                 self.server.write(self.foi_scaled_name, data_type='image_file', dst_filename=self.curr_scaled_name)
             else:
@@ -1929,6 +1933,8 @@ class PueoStarCameraOperation:
         if self.is_flight:
             shutil.copy2(self.info_file, self.get_daily_path(self.cfg.sd_card_path))
             shutil.copy2(self.info_file, self.get_daily_path(self.cfg.ssd_path))
+        # Create/update symlink to last info file
+        create_symlink(self.cfg.web_path, self.info_file, 'last_info_file.txt')
 
         self.logit(f'camera_take_image completed in {get_dt(t0)}.', color='green')
 

@@ -266,7 +266,7 @@ pueo-star-tracker2@pueo-star-tracker2-EPU-4011-4012:~/Projects/pcc/lib/cedar_det
 [2025-03-18T09:38:55Z INFO  cedar_detect_server] CedarDetectServer listening on 0.0.0.0:50051
 ```
 
-3. Install astrometry.net
+4. Install astrometry.net
 
 **Note:** Requires INTERNET access.
 
@@ -294,6 +294,18 @@ add_path /usr/share/astrometry/indexes/4100
 inparallel
 ```
 
+5. Setup Web Server
+```bash
+# create folder
+cd ~/Projects/pcc
+mkdir -p web
+cd web
+ln -s ../inspection_images/last_inspection_image.jpg last_inspection_image.jpg
+ln -s ../logs/astro.json astro.json 
+ln -s ../output/last_solution.log last_solution.log
+ln -s ../output/last_final_image.log
+
+```
 
 ## Configure USB for Telemetry/Focuser
 Next steps are required to allow the regular user to connect to USB.

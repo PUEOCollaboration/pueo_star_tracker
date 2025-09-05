@@ -284,9 +284,8 @@ class PueoStarCamera(Camera):
 
         # TODO: Implement Camera Retry in case of error.
 
+        self.id = None
         self.initialize_camera()
-        # Initialize the parent class
-        self.id = self.camera_id
 
         try:
             if not self.cameras_found:
@@ -297,6 +296,7 @@ class PueoStarCamera(Camera):
             else:
                 self.simulated = False
                 super().__init__(self.camera_id or self.cameras_found[0])
+                self.camera_usb_info()
         except Exception as e:
             logit(f"Error initializing camera: {e}", color='red')
             self.simulated = True
@@ -324,37 +324,77 @@ class PueoStarCamera(Camera):
             self.cameras_found = asi.list_cameras()  # Models names of the connected cameras
 
         if self.num_cameras == 1:
-            self.camera_id = 0
+            self.id = self.camera_id = 0
             self.log.debug('Found one camera: %s' % self.cameras_found[0])
             self.name = self.cameras_found[0]
-
-            # Try multiple methods to detect USB connection
-            usb_methods = [
-                self.detect_usb_connection,
-                self.get_camera_usb_info_direct
-            ]
-
-            for method in usb_methods:
-                usb_info = method()
-                if usb_info["type"] != "unknown":
-                    self.usb_info = usb_info
-                    break
-
-            self.log.info(f"Camera connected via: {self.usb_info['type']} "
-                          f"(speed: {self.usb_info['speed']}, bus: {self.usb_info['bus']}, "
-                          f"port: {self.usb_info['port']})")
-
-            # Log warning if using USB 2.0
-            if self.usb_info["type"] == "USB 2.0":
-                self.log.warning("Camera connected via USB 2.0. Performance may be limited. "
-                               "Consider using a USB 3.0 port for better frame rates.")
-
         else:
             self.log.error('No cameras found. Exiting')
             print('Switching to DUMMY Camera, serving test images.')
             # print('No cameras found. Exiting ')
             # TODO: Should exit here
             # sys.exit(0)
+
+    def camera_usb_info(self):
+        """
+        Detect and log the USB connection information for the ASI camera.
+
+        This method attempts to determine the USB connection type (USB 2.0, USB 3.0, etc.),
+        speed, bus, and port information using multiple detection strategies. It provides
+        warnings if the camera is connected via USB 2.0, which may limit performance.
+
+        The detection process uses multiple methods in fallback order:
+        1. detect_usb_connection(): Parses system USB information (lsusb, sysfs)
+        2. get_camera_usb_info_direct(): Uses ASI SDK properties if available
+
+        Returns:
+            None: Results are stored in self.usb_info and logged
+
+        Side Effects:
+            - Updates self.usb_info with connection details
+            - Logs connection information at INFO level
+            - Logs warning if USB 2.0 connection is detected
+
+        USB Connection Types:
+            - "USB 2.0": 480 Mbps (may limit camera frame rates)
+            - "USB 3.0": 5 Gbps (optimal for ASI cameras)
+            - "USB 3.1": 10 Gbps (excellent for high-speed imaging)
+            - "unknown": Connection type could not be determined
+
+        Example:
+            >>> self.camera_usb_info()
+            INFO: Camera connected via: USB 3.0 (speed: 5 Gbps, bus: Bus 002, port: Port 001)
+            WARNING: Camera connected via USB 2.0. Performance may be limited...
+
+        Notes:
+            - USB 2.0 connections may cause reduced frame rates and increased
+              risk of dropped frames with high-resolution cameras
+            - The ASI294MM supports USB 3.0 and includes a 256MB DDR3 buffer
+            - For optimal performance, connect to a USB 3.0 port with a proper USB 3.0 cable
+
+        See Also:
+            detect_usb_connection(): Detailed USB detection implementation
+            get_camera_usb_info_direct(): ASI SDK-specific USB information
+        """
+        # Try multiple methods to detect USB connection
+        usb_methods = [
+            self.detect_usb_connection,
+            self.get_camera_usb_info_direct
+        ]
+
+        for method in usb_methods:
+            usb_info = method()
+            if usb_info["type"] != "unknown":
+                self.usb_info = usb_info
+                break
+
+        self.log.info(f"Camera connected via: {self.usb_info['type']} "
+                      f"(speed: {self.usb_info['speed']}, bus: {self.usb_info['bus']}, "
+                      f"port: {self.usb_info['port']})")
+
+        # Log warning if using USB 2.0
+        if self.usb_info["type"] == "USB 2.0":
+            self.log.warning("Camera connected via USB 2.0. Performance may be limited. "
+                             "Consider using a USB 3.0 port for better frame rates.")
 
     def detect_usb_connection(self):
         """
@@ -477,7 +517,6 @@ class PueoStarCamera(Camera):
 
         try:
             # Try to get USB info from ASI SDK directly
-            # camera = asi.Camera(self.camera_id)
             camera_info = self.get_camera_property()
 
             # Some ASI cameras provide USB speed information

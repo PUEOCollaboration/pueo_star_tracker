@@ -175,7 +175,8 @@ def compute_centroids_from_still(
         detected_sources.append({"length": radius * 2, "centroid": center, "flux": flux, "std": standard_deviation, 'fwhm': fwhm})
         # Draw contours -
         color_red = (0, 0, 255)  # Red OpenCV BGR
-        if return_partial_images:
+        # Draw candidates (red) circle regardless of return_partial_images:
+        if return_partial_images or True:
             cv2.circle(img, (int(center[0]), int(center[1])), int(sources_radius*0.6), color_red, 4)
             cv2.circle(img, (int(center[0]), int(center[1])), 1, color_red, -1)
 
@@ -195,8 +196,9 @@ def compute_centroids_from_still(
 
     # Draw circle around valid source
     # (OpenCV uses BGR)
-    color_blue = (255, 0, 0)  # Blue
-    if return_partial_images:
+    color_blue = (255, 0, 0)  # Blue - BGR
+    # Draw valid sources (blue) circle regardless of return_partial_images:
+    if return_partial_images or True:
         for filtered_source in filtered_sources:
             cv2.circle(
                 img,
@@ -503,7 +505,8 @@ def compute_centroids_from_trail(
         )
         # Draw circle around detected sources red
         color_red = (0, 0, 255)  # Red (BGR)
-        if return_partial_images:
+        # Draw candidates (red) circle regardless of return_partial_images:
+        if return_partial_images or True:
             cv2.circle(img, (int(source[2]), int(source[1])), int(sources_radius*0.6), color_red, 2)
             cv2.circle(img, (int(source[2]), int(source[1])), 1, color_red, -1)
 
@@ -522,7 +525,8 @@ def compute_centroids_from_trail(
         if detected_source["length"] < upper_bound and detected_source["length"] > lower_bound:
             filtered_sources.append(detected_source)
             # Draw circle around possible star - valid source (Red Circle)
-            color_blue = (255, 0, 0)  # Red OpenCV uses BGR
+            color_blue = (255, 0, 0)  # Blue OpenCV uses BGR
+            # Draw valid sources (blue) circle regardless of return_partial_images:
             if return_partial_images:
                 cv2.circle(
                     img,

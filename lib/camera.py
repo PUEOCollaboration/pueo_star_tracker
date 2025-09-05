@@ -279,6 +279,7 @@ class PueoStarCamera(Camera):
         self.camera_info = {}
         self.simulated = True
         self.name = 'DummyCamera'
+        self.usb_info = None
 
         # TODO: Implement Camera Retry in case of error.
 
@@ -325,12 +326,147 @@ class PueoStarCamera(Camera):
             self.camera_id = 0
             self.log.debug('Found one camera: %s' % self.cameras_found[0])
             self.name = self.cameras_found[0]
+
+            # Detect USB connection information
+            self.usb_info = self.detect_usb_connection()
+            self.log.info(f"Camera connected via: {self.usb_info['type']} "
+                          f"(speed: {self.usb_info['speed']}, port: {self.usb_info['port']})")
+
         else:
             self.log.error('No cameras found. Exiting')
             print('Switching to DUMMY Camera, serving test images.')
             # print('No cameras found. Exiting ')
             # TODO: Should exit here
             # sys.exit(0)
+
+    def detect_usb_connection(self):
+        """
+        Detect the USB connection type and speed for ASI cameras.
+
+        Returns:
+            dict: USB connection information including type, speed, and port
+        """
+        usb_info = {"type": "unknown", "speed": "unknown", "port": "unknown"}
+
+        try:
+            # Method 1: Check using lsusb on Linux
+            if os.name == 'posix':
+                result = subprocess.run(['lsusb', '-t'], capture_output=True, text=True, timeout=5)
+                if result.returncode == 0:
+                    usb_info = self.parse_lsusb_output(result.stdout)
+
+            # Method 2: Check USB device tree (cross-platform fallback)
+            if usb_info["type"] == "unknown":
+                usb_info = self.check_usb_device_tree()
+
+        except Exception as e:
+            self.log.warning(f"USB detection failed: {str(e)}")
+
+        return usb_info
+
+    def parse_lsusb_output(self, lsusb_output):
+        """
+        Parse lsusb -t output to find ASI camera and determine USB type.
+
+        Args:
+            lsusb_output (str): Output from 'lsusb -t' command
+
+        Returns:
+            dict: USB connection information
+        """
+        usb_info = {"type": "unknown", "speed": "unknown", "port": "unknown"}
+
+        # Look for ZWO ASI cameras in the USB tree
+        lines = lsusb_output.split('\n')
+        for line in lines:
+            if 'ZWO' in line or 'ASI' in line:
+                # Extract USB speed information
+                if '480M' in line:
+                    usb_info["type"] = "USB 2.0"
+                    usb_info["speed"] = "480 Mbps"
+                elif '5000M' in line:
+                    usb_info["type"] = "USB 3.0"
+                    usb_info["speed"] = "5 Gbps"
+                elif '10000M' in line:
+                    usb_info["type"] = "USB 3.1"
+                    usb_info["speed"] = "10 Gbps"
+
+                # Extract port information
+                port_match = re.search(r'Port (\d+):', line)
+                if port_match:
+                    usb_info["port"] = f"Port {port_match.group(1)}"
+
+                break
+
+        return usb_info
+
+    def check_usb_device_tree(self):
+        """
+        Alternative method to check USB device tree for connection info.
+
+        Returns:
+            dict: USB connection information
+        """
+        usb_info = {"type": "unknown", "speed": "unknown", "port": "unknown"}
+
+        try:
+            # Check sysfs for USB information (Linux specific)
+            if os.path.exists('/sys/bus/usb/devices/'):
+                for device in os.listdir('/sys/bus/usb/devices/'):
+                    if device.startswith('usb'):
+                        product_path = f'/sys/bus/usb/devices/{device}/product'
+                        if os.path.exists(product_path):
+                            with open(product_path, 'r') as f:
+                                product = f.read().strip()
+                                if 'ASI' in product or 'ZWO' in product:
+                                    # Check speed
+                                    speed_path = f'/sys/bus/usb/devices/{device}/speed'
+                                    if os.path.exists(speed_path):
+                                        with open(speed_path, 'r') as speed_file:
+                                            speed = speed_file.read().strip()
+                                            if speed == '480':
+                                                usb_info["type"] = "USB 2.0"
+                                                usb_info["speed"] = "480 Mbps"
+                                            elif speed == '5000':
+                                                usb_info["type"] = "USB 3.0"
+                                                usb_info["speed"] = "5 Gbps"
+                                    break
+        except Exception as e:
+            self.log.debug(f"USB device tree check failed: {str(e)}")
+
+        return usb_info
+
+    def get_usb_bandwidth_recommendation(self):
+        """
+        Provide USB bandwidth recommendations based on connection type.
+
+        Returns:
+            dict: Bandwidth recommendations for optimal performance
+        """
+        recommendations = {
+            "USB 2.0": {
+                "max_bandwidth": 40,  # 40% of USB 2.0 max bandwidth
+                "recommendation": "Consider upgrading to USB 3.0 for better performance",
+                "limitations": "Limited to ~480 Mbps, may affect high frame rates"
+            },
+            "USB 3.0": {
+                "max_bandwidth": 80,  # 80% of USB 3.0 max bandwidth
+                "recommendation": "Optimal for most ASI cameras",
+                "limitations": "5 Gbps bandwidth supports high-resolution imaging"
+            },
+            "USB 3.1": {
+                "max_bandwidth": 90,  # 90% of USB 3.1 max bandwidth
+                "recommendation": "Excellent for high-speed imaging",
+                "limitations": "None for astronomical applications"
+            },
+            "unknown": {
+                "max_bandwidth": 60,  # Conservative default
+                "recommendation": "Check USB connection manually",
+                "limitations": "Unknown connection may cause stability issues"
+            }
+        }
+
+        return recommendations.get(self.usb_info["type"], recommendations["unknown"])
 
     def set_camera_defaults(self):
         # Set some sensible defaults. They will need adjusting depending upon
@@ -347,10 +483,13 @@ class PueoStarCamera(Camera):
         self.disable_dark_subtract()  # were not subtracting darks.
         logit(f'{"disable_dark_subtract":>23s} Yes', color='yellow')
         # Use minimum USB bandwidth permitted
-        asi_bandwidthoverload_custom_value = 60
+        # Note: Using asi_bandwidthoverload_custom_value = 60
+        #  60 -> Image captured in ~1.4s
+        # 100 -> Image captured in ~1.2s
+
         asi_bandwidthoverload_max_value = self.get_controls()['BandWidth']['MaxValue'] # 100
-        # self.set_control_value(asi.ASI_BANDWIDTHOVERLOAD, asi_bandwidthoverload_max_value)
-        self.set_control_value(asi.ASI_BANDWIDTHOVERLOAD, asi_bandwidthoverload_custom_value)
+        self.set_control_value(asi.ASI_BANDWIDTHOVERLOAD, asi_bandwidthoverload_max_value)
+        # self.set_control_value(asi.ASI_BANDWIDTHOVERLOAD, asi_bandwidthoverload_custom_value)
         logit(f'{"disable_dark_subtract:":>23s} {asi_bandwidthoverload_max_value}', color='yellow')
         # set initial gains & exposure value. These were best measured in the lab.
         self.set_control_value(asi.ASI_GAIN, self.cfg.min_gain_setting)

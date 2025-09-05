@@ -1530,7 +1530,7 @@ class PueoStarCameraOperation:
             f'Single image autogain completed: interval: {self.cfg.autogain_update_interval} current gain: {current_gain} new gain: {new_gain} in {gain_exec:.4f} seconds.',
             color='cyan')
 
-    def info_add_image_info(self, camera_settings, curr_utc_timestamp):
+    def info_add_image_info_old(self, camera_settings, curr_utc_timestamp):
         unique_pixel_values = np.unique(self.curr_img)  # Get distinct pixel values
         median_pixel_value = np.median(unique_pixel_values)  # Median of unique counts
 
@@ -1560,6 +1560,72 @@ class PueoStarCameraOperation:
                 file.write(f"{key}: {value}\n")
             else:
                 file.write("Distortion calibration file not found.\n")
+
+    def info_add_image_info(self, camera_settings, curr_utc_timestamp):
+        """
+        Append image metadata and statistics to info file with optimized performance.
+
+        This function efficiently calculates image statistics and writes metadata to
+        a log file, with special optimizations for large uint16 images (4000x3000+).
+
+        Args:
+            camera_settings (dict): Camera configuration parameters including
+                exposure, gain, and temperature.
+            curr_utc_timestamp (str): UTC timestamp of image capture.
+
+        Performance optimizations:
+        - Uses np.min/max on flattened array views instead of full arrays
+        - Calculates mean without creating temporary arrays
+        - Replaces np.unique + np.median with np.percentile for median estimation
+        - Buffers file writes to reduce I/O overhead
+        - Precomputes values outside of write loop
+        """
+        t0 = time.monotonic()
+        # Precompute all image statistics in a single efficient pass
+        img_flat = self.curr_img.reshape(-1)  # Create view, no copy
+
+        # Calculate min/max - fastest method for uint16
+        min_val = np.min(img_flat)
+        max_val = np.max(img_flat)
+
+        # Calculate mean - optimized for large arrays
+        mean_val = np.mean(img_flat, dtype=np.float32)  # Use float32 for speed
+
+        # Estimate median using percentile (much faster than unique+median)
+        # For typical astronomical images, this is sufficiently accurate
+        median_estimate = np.percentile(img_flat, 50)
+
+        # Precompute temperature values
+        detector_temp = camera_settings['Temperature'] / 10
+        cpu_temp = self.get_cpu_temp()
+
+        # Prepare all file content in memory first to minimize I/O
+        file_content = [
+            "Image type : Single standard operating image\n",
+            f"system timestamp : {curr_utc_timestamp}\n",
+            f"exposure time (us) : {camera_settings['Exposure']}\n",
+            f"gain (cB) : {camera_settings['Gain']}\n",
+            f"focus position : {self.focuser.focus_position}\n",
+            f"aperture position : {self.focuser.aperture_pos}, {self.focuser.aperture_f_val}\n",
+            f"min/max pixel value (counts) : {min_val} / {max_val}\n",
+            f"mean/median pixel value (counts) : {mean_val:.1f} / {median_estimate:.1f}\n",
+            f"detector temperature : {detector_temp} °C\n",
+            f"CPU Temperature: {cpu_temp} °C\n"
+        ]
+
+        # Add distortion parameters if available
+        if hasattr(self, 'distortion_calibration_params') and self.distortion_calibration_params:
+            file_content.append("estimated distortion parameters:\n")
+            for key, value in self.distortion_calibration_params.items():
+                file_content.append(f"{key}: {value}\n")
+        else:
+            file_content.append("Distortion calibration file not found.\n")
+
+        # Write all content in a single I/O operation
+        with open(self.info_file, "a", encoding='utf-8', buffering=8192) as file:
+            file.writelines(file_content)
+
+        self.log.debug(f'Saved image info in {get_dt(t0)}.')
 
     def get_disk_usage(self, path: str = "/"):
         """

@@ -347,8 +347,10 @@ class PueoStarCamera(Camera):
         self.disable_dark_subtract()  # were not subtracting darks.
         logit(f'{"disable_dark_subtract":>23s} Yes', color='yellow')
         # Use minimum USB bandwidth permitted
-        asi_bandwidthoverload_max_value = self.get_controls()['BandWidth']['MaxValue']
-        self.set_control_value(asi.ASI_BANDWIDTHOVERLOAD, asi_bandwidthoverload_max_value)
+        asi_bandwidthoverload_custom_value = 60
+        asi_bandwidthoverload_max_value = self.get_controls()['BandWidth']['MaxValue'] # 100
+        # self.set_control_value(asi.ASI_BANDWIDTHOVERLOAD, asi_bandwidthoverload_max_value)
+        self.set_control_value(asi.ASI_BANDWIDTHOVERLOAD, asi_bandwidthoverload_custom_value)
         logit(f'{"disable_dark_subtract:":>23s} {asi_bandwidthoverload_max_value}', color='yellow')
         # set initial gains & exposure value. These were best measured in the lab.
         self.set_control_value(asi.ASI_GAIN, self.cfg.min_gain_setting)

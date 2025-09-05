@@ -733,7 +733,7 @@ class PueoStarCameraOperation:
             # find the next largest pixel value
             second_largest_pix_value = int(bins[0])
 
-            self.log.debug(f'Exec np.linspace/img.flatten/np.histogram/np.max in sec: {et1}/{et2}/{et3}/{et4}')
+            self.log.debug(f'Exec np.linspace/img.flatten/np.histogram/np.max in sec: {et1}/{et2}/{et3}/{et4} arr dtype: {arr.dtype}')
             self.log.debug(f'bin: {len(bins)} counts: {len(counts)}')
             try:
                 for i in range(n - 1, -1, -1):

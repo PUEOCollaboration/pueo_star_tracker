@@ -734,14 +734,19 @@ class PueoStarCameraOperation:
             except IndexError as e:
                 self.log.error(e)
                 raise IndexError(e)
-            plt.figure()
-            plt.hist(bins[:-1], bins, weights=counts)
-            plt.xlabel('Gain Brightness, counts')
-            plt.ylabel('Frequency, pixels')
-            plt.title(f'hpv: {high_pix_value}, slp: {second_largest_pix_value}, lpv: {min(arr)}')
-            plt.grid()
-            # plt.show() # Showing only in TESTING phase!
-            self.save_fig(basename, plt)
+
+            # TODO: Decide if creating a plot is required for autogain
+            if self.cfg.return_partial_images or True:
+                t0 = time.monotonic()
+                plt.figure()
+                plt.hist(bins[:-1], bins, weights=counts)
+                plt.xlabel('Gain Brightness, counts')
+                plt.ylabel('Frequency, pixels')
+                plt.title(f'hpv: {high_pix_value}, slp: {second_largest_pix_value}, lpv: {min(arr)}')
+                plt.grid()
+                # plt.show() # Showing only in TESTING phase!
+                self.save_fig(basename, plt)
+                self.log.debug(f'Image plot created in {get_dt(t0)}.')
 
             image_saturated = True
             if high_pix_value == pixel_saturated_value:
@@ -777,8 +782,7 @@ class PueoStarCameraOperation:
                 #calculate gain adjustment
                 new_gain_value = self.calculate_gain_adjustment(old_gain_value, high_pix_value, desired_max_pix_value)
 
-                self.logit(f'Old Gain Value: {old_gain_value}')
-                self.logit(f'New Gain Value: {new_gain_value}')
+                self.logit(f'Old/New Gain Value: {old_gain_value}/{new_gain_value}')
                 self.camera.set_control_value(asi.ASI_GAIN, new_gain_value)
             else:
                 self.logit(f"Image is saturated. Setting gain to halfway.")
@@ -791,10 +795,10 @@ class PueoStarCameraOperation:
                         f"New gain too high. Setting gain={self.cfg.max_gain_setting}. Recommend increasing exposure time.")
                     new_gain_value = self.cfg.max_gain_setting
 
-                self.logit(f'Old Gain Value: {old_gain_value}')
-                self.logit(f'New Gain Value: {new_gain_value}')
+                self.logit(f'Old/New Gain Value: {old_gain_value}/{new_gain_value}')
                 self.camera.set_control_value(asi.ASI_GAIN, new_gain_value)
-            loop_counts = loop_counts + 1
+            # Increment the loop_counts
+            loop_counts += 1
         self.logit("##########################Auto Gain Routine Summary Results: ###############################", color='green')
         self.logit(f'desired_max_pix_value: {desired_max_pix_value} [counts]')
         self.logit(f'largest count in image is: {high_pix_value} [counts]')
@@ -1468,18 +1472,21 @@ class PueoStarCameraOperation:
         timestamp_string = current_timestamp(self.timestamp_fmt)
         auto_gain_image_path = self.cfg.auto_gain_image_path_tmpl.format(timestamp_string=timestamp_string)
         os.mkdir(auto_gain_image_path)
-        if self.check_gain_routine(self.curr_img, self.desired_max_pix_value, self.pixel_saturated_value,
-                                   self.pixel_count_tolerance, auto_gain_image_path):
+        is_check_gain, et1 = timed_function(self.check_gain_routine,
+                                            self.curr_img, self.desired_max_pix_value, self.pixel_saturated_value,
+                                            self.pixel_count_tolerance, auto_gain_image_path)
+        if is_check_gain:
             self.server.write("Performing autogain maintenance.")
             curr_gain_value = camera_settings['Gain']
-            self.best_gain_value = self.do_auto_gain_routine(
-                auto_gain_image_path, curr_gain_value,
-                self.desired_max_pix_value, self.pixel_saturated_value, self.pixel_count_tolerance,
-                max_iterations=1)
-            self.logit(f"Auto gain done. Best gain: {self.best_gain_value}")
+            self.best_gain_valuem, et2 = timed_function(self.do_auto_gain_routine,
+                                                        auto_gain_image_path, curr_gain_value,
+                                                        self.desired_max_pix_value, self.pixel_saturated_value,
+                                                        self.pixel_count_tolerance,
+                                                        max_iterations=1)
+            self.logit(f"Auto gain done. Old gain: {curr_gain_value} Best gain: {self.best_gain_value} Exec: {et1}, {et2} sec.")
             gain_value = self.best_gain_value
         else:
-            self.logit(f"Gain value is {gain_value}. No need to adjust.", color='green')
+            self.logit(f"Auto gain done. Gain value is {gain_value}. No need to adjust. Exce time: {et1} sec.", color='green')
 
         return gain_value
 

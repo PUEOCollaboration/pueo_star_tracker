@@ -275,8 +275,14 @@ sudo apt update
 sudo apt upgrade
 sudo apt install astrometry.net 
 
+# INDEX FILES:
+cd /mnt/raid1
+sudo mkdir astrometry.net
+sudo chown pst:pst astrometry.net
 
-# Copy INDEX files: to ```~/Projects/install/indexes/4100```
+# Copy INDEX folder from local (setup folder) files: to /mnt/raid1/astrometry.net/
+
+# 
 # Create link:
 # Note: To preserve space on root, the index files are moved to raid1
 cd /usr/share/astrometry
@@ -301,7 +307,7 @@ cd ~/Projects/pcc
 mkdir -p web
 cd web
 ln -s ../logs/astro.json astro.json 
-
+# Other links are created dynamically.
 
 ```
 

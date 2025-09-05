@@ -7,6 +7,9 @@ rm telemetry.log
 rm telemetry.log.*
 rm debug-server.log
 rm debug-server.log.*
+rm debug-client.log
+rm debug-client.log.*
 rm pueo_console.log
 rm pueo_console.log.*
 
+rm *console.log

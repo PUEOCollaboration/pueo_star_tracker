@@ -412,7 +412,7 @@ class PueoStarCamera(Camera):
             if os.name == 'posix':
                 result = subprocess.run(['lsusb', '-t'], capture_output=True, text=True, timeout=5)
                 if result.returncode == 0:
-                    usb_info = self.parse_lsusb_output_improved(result.stdout)
+                    usb_info = self.parse_lsusb_output(result.stdout)
 
             # Method 2: Additional check using lsusb -v for more details
             if usb_info["type"] == "unknown":
@@ -423,7 +423,7 @@ class PueoStarCamera(Camera):
 
         return usb_info
 
-    def parse_lsusb_output_improved(self, lsusb_output):
+    def parse_lsusb_output(self, lsusb_output):
         """
         Parse lsusb -t output with improved detection for ASI cameras.
 

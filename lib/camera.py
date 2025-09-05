@@ -8,6 +8,7 @@ from datetime import timezone
 import sys
 import os
 import logging
+import subprocess
 
 # External imports
 from zwoasi import Camera

@@ -68,7 +68,6 @@ class Focuser:
 
         if status:
             logit('Focuser Initialized Successfully.', color='green')
-            self.log.info('Focuser Initialized Successfully.')
         else:
             logit('Focuser NOT Initialized.', color='red')
             self.log.error('Focuser NOT Initialized.')

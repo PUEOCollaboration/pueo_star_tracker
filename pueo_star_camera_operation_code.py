@@ -509,6 +509,8 @@ class PueoStarCameraOperation:
         camera_settings = self.camera.get_control_values()
         self.logit(f"exposure time (us) : {camera_settings['Exposure']}")
         self.logit(f"gain (cB) : {camera_settings['Gain']}")
+        log_msg = 'Capturing image image.' if img is None else 'Using provided/existing image.'
+        self.log.debug(log_msg)
         img = self.camera.capture() if img is None else img
         self.logit(f"Max pixel: {np.max(img)}, Min pixel: {np.min(img)}.")
         self.image_list.append(img)
@@ -711,6 +713,8 @@ class PueoStarCameraOperation:
             # Take image or use existing self.curr_img for single gain update
             img = self.curr_img if max_iterations is not None and max_iterations == 1 else None
             img, basename = self.capture_timestamp_save(auto_gain_image_path, inserted_string, img)
+            self.log.debug('Image captured.')
+
             bins = np.linspace(0, pixel_saturated_value, self.cfg.autogain_num_bins)
             # Creating a histogram requires flatten + histogram
             arr = img.flatten()

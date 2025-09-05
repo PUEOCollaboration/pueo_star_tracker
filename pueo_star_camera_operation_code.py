@@ -194,6 +194,8 @@ class PueoStarCameraOperation:
         self.curr_star_centroids = None
         self.contours_img = None
 
+        self._autogain_thread = None  # Initialize as None
+
         self.telemetry_queue = DroppingQueue(maxsize=self.cfg.fq_max_size)
         self.positions_queue = DroppingQueue(maxsize=self.cfg.fq_max_size)
 
@@ -715,17 +717,23 @@ class PueoStarCameraOperation:
             img, basename = self.capture_timestamp_save(auto_gain_image_path, inserted_string, img)
             self.log.debug('Image captured.')
 
-            bins = np.linspace(0, pixel_saturated_value, self.cfg.autogain_num_bins)
+            bins, et1 = timed_function(np.linspace,0, pixel_saturated_value, self.cfg.autogain_num_bins)
             # Creating a histogram requires flatten + histogram
-            arr = img.flatten()
-            counts, bins = np.histogram(arr, bins=bins)
+            arr, et2 = timed_function(img.flatten)
+
+            (counts, bins), et3 = timed_function(np.histogram, arr, bins=bins)
+
             # There is one counts less than bins, therefore we iterate over counts, not bins
 
             n = len(counts)
-            high_pix_value = max(arr)
+            # high_pix_value, et4 = timed_function(max, arr)
+            high_pix_value, et4 = timed_function(np.max, arr)
+
             min_count = self.cfg.min_count # [IMAGE] min_count
             # find the next largest pixel value
             second_largest_pix_value = int(bins[0])
+
+            self.log.debug(f'Exec np.linspace/img.flatten/np.histogram/np.max in sec: {et1}/{et2}/{et3}/{et4}')
             self.log.debug(f'bin: {len(bins)} counts: {len(counts)}')
             try:
                 for i in range(n - 1, -1, -1):
@@ -1463,7 +1471,7 @@ class PueoStarCameraOperation:
             self.log.error(f"An error occurred reading CPU temperature: {e}")
         return None
 
-    def autogain_maintanence(self, camera_settings):
+    def autogain_maintenance(self, camera_settings):
         """
         Comment by Windell: dont only want to do this when in autonomous mode. It should be done whenever it is asked to.
         Checking for autonomous mode should happen earlier.
@@ -1482,7 +1490,7 @@ class PueoStarCameraOperation:
         if is_check_gain:
             self.server.write("Performing autogain maintenance.")
             curr_gain_value = camera_settings['Gain']
-            self.best_gain_valuem, et2 = timed_function(self.do_auto_gain_routine,
+            self.best_gain_value, et2 = timed_function(self.do_auto_gain_routine,
                                                         auto_gain_image_path, curr_gain_value,
                                                         self.desired_max_pix_value, self.pixel_saturated_value,
                                                         self.pixel_count_tolerance,
@@ -1493,6 +1501,13 @@ class PueoStarCameraOperation:
             self.logit(f"Auto gain done. Gain value is {gain_value}. No need to adjust. Exce time: {et1} sec.", color='green')
 
         return gain_value
+
+    def _run_autogain_maintenance(self, camera_settings, current_gain):
+        """Wrapper function to run autogain maintenance and log results."""
+        new_gain, gain_exec = timed_function(self.autogain_maintenance, camera_settings)
+        self.logit(
+            f'Single image autogain completed: interval: {self.cfg.autogain_update_interval} current gain: {current_gain} new gain: {new_gain} in {gain_exec:.4f} seconds.',
+            color='cyan')
 
     def info_add_image_info(self, camera_settings, curr_utc_timestamp):
         unique_pixel_values = np.unique(self.curr_img)  # Get distinct pixel values
@@ -1777,9 +1792,26 @@ class PueoStarCameraOperation:
         # Periodic Autogain (in autonomous mode)
         # Single iteration keeps the camera in range.
         # TODO: If the autonomous mode is disabled it will lose track so needs to rerun the full autogain interactions again
+        is_threaded_autogain_maintenance = True
         if is_operation and (self.img_cnt % self.cfg.autogain_update_interval) == 0 and not is_test:
-            new_gain, gain_exec = timed_function(self.autogain_maintanence, camera_settings)
-            self.logit(f'Single image autogain completed: interval: {self.cfg.autogain_update_interval} current gain: {current_gain} new gain: {new_gain} in {gain_exec:.4f} seconds.', color='cyan')
+            if not is_threaded_autogain_maintenance:
+                self.log.debug('Running autogain_maintenance in a MAIN thread.')
+                new_gain, gain_exec = timed_function(self.autogain_maintenance, camera_settings)
+                self.logit(f'Single image autogain completed: interval: {self.cfg.autogain_update_interval} current gain: {current_gain} new gain: {new_gain} in {gain_exec:.4f} seconds.', color='cyan')
+            else:
+                # Periodic Autogain (in autonomous mode)
+                # Single iteration keeps the camera in range.
+                # TODO: If the autonomous mode is disabled it will lose track so needs to rerun the full autogain interactions again
+                # Check if previous autogain thread is still running
+                if self._autogain_thread is None or not self._autogain_thread.is_alive():
+                    # Start autogain in a new thread
+                    self.log.debug('Running autogain_maintenance in a NEW thread.')
+                    self._autogain_thread = threading.Thread(
+                        target=self._run_autogain_maintenance,
+                        args=(camera_settings, current_gain),
+                        daemon=True
+                    )
+                self._autogain_thread.start()
 
         # perform astrometry
         image_file = timestamp_string

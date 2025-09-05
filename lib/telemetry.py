@@ -72,7 +72,7 @@ class DummySerial:
 class Sensors:
     """Sensors Class Implementation"""
 
-    dummy_sensor_date = """drivetemp-scsi-0-0
+    dummy_sensor_data = """drivetemp-scsi-0-0
 Adapter: SCSI adapter
 temp1:        +28.0°C  (low  =  +0.0°C, high = +70.0°C)
                        (crit low =  +0.0°C, crit = +70.0°C)

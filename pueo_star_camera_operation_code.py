@@ -747,8 +747,8 @@ class PueoStarCameraOperation:
                 self.log.error(e)
                 raise IndexError(e)
 
-            # TODO: Decide if creating a plot is required for autogain
-            if self.cfg.return_partial_images or True:
+            if self.cfg.return_partial_images:
+                # Create and save the histogram plot image
                 t0 = time.monotonic()
                 plt.figure()
                 plt.hist(bins[:-1], bins, weights=counts)
@@ -759,6 +759,27 @@ class PueoStarCameraOperation:
                 # plt.show() # Showing only in TESTING phase!
                 self.save_fig(basename, plt)
                 self.log.debug(f'Image plot created in {get_dt(t0)}.')
+
+            # Save histogram data to text file
+            txt_filename = f'{basename}_histogram.txt'
+            try:
+                with open(txt_filename, 'w') as f:
+                    # Write header with metadata
+                    f.write(f"# Histogram data for: {basename}\n")
+                    f.write(f"# High pixel value: {high_pix_value}\n")
+                    f.write(f"# Second largest pixel value: {second_largest_pix_value}\n")
+                    f.write(f"# Low pixel value: {min(arr)}\n")
+                    f.write(f"# Number of bins: {len(bins)}\n")
+                    f.write(f"# Total pixels: {np.sum(counts)}\n")
+                    f.write("# Bin_Left_Edge,Bin_Right_Edge,Count\n")
+
+                    # Write bin edges and counts in a readable format
+                    for i in range(len(counts)):
+                        f.write(f"{bins[i]:.1f},{bins[i + 1]:.1f},{counts[i]}\n")
+
+                self.log.debug(f'Histogram data saved to {txt_filename}')
+            except Exception as e:
+                self.log.error(f'Failed to save histogram data to {txt_filename}: {e}')
 
             image_saturated = True
             if high_pix_value == pixel_saturated_value:
@@ -1793,14 +1814,11 @@ class PueoStarCameraOperation:
         # Single iteration keeps the camera in range.
         # TODO: If the autonomous mode is disabled it will lose track so needs to rerun the full autogain interactions again
         is_threaded_autogain_maintenance = True
-        if is_operation and (self.img_cnt % self.cfg.autogain_update_interval) == 0 and not is_test:
-            if not is_threaded_autogain_maintenance:
-                self.log.debug('Running autogain_maintenance in a MAIN thread.')
-                new_gain, gain_exec = timed_function(self.autogain_maintenance, camera_settings)
-                self.logit(f'Single image autogain completed: interval: {self.cfg.autogain_update_interval} current gain: {current_gain} new gain: {new_gain} in {gain_exec:.4f} seconds.', color='cyan')
-            else:
-                # Periodic Autogain (in autonomous mode)
-                # Single iteration keeps the camera in range.
+        if is_operation and self.cfg.autogain_update_interval != 0 and (self.img_cnt % self.cfg.autogain_update_interval) == 0 and not is_test:
+            # Periodic Autogain (in autonomous mode)
+            # Single iteration keeps the camera in range.
+
+            if is_threaded_autogain_maintenance:
                 # TODO: If the autonomous mode is disabled it will lose track so needs to rerun the full autogain interactions again
                 # Check if previous autogain thread is still running
                 if self._autogain_thread is None or not self._autogain_thread.is_alive():
@@ -1812,8 +1830,14 @@ class PueoStarCameraOperation:
                         daemon=True
                     )
                 self._autogain_thread.start()
+            else:
+                self.log.debug('Running autogain_maintenance in a MAIN thread.')
+                new_gain, gain_exec = timed_function(self.autogain_maintenance, camera_settings)
+                self.logit(
+                    f'Single image autogain completed: interval: {self.cfg.autogain_update_interval} current gain: {current_gain} new gain: {new_gain} in {gain_exec:.4f} seconds.',
+                    color='cyan')
 
-        # perform astrometry
+        # Perform astrometry
         image_file = timestamp_string
         self.logit(f"curr image name : {image_file}")
 

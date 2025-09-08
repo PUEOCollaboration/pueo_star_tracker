@@ -95,6 +95,7 @@ class PueoSocketClient:
     def connect(self) -> bool:
         """Establish connection to the server."""
         try:
+            self.log.debug(f"Connecting to server at {self.server_ip}:{self.port}")
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.socket.settimeout(self.socket_timeout)
             self.socket.connect((self.server_ip, self.port))

@@ -287,8 +287,10 @@ class Config(Dynamic):
     msg_max_size = 128          # Max number of messages in message queue
 
     # [GUI]
+    enable_gui_data_exchange = False  # Controls whether the GUI can receive images through the message queue.
     images_keep = 5  # Number of images to keep
     log_reverse = False  # # Set ti Tru to have the Server Log shown in reverse
+
 
     # Member functions
     def __init__(self, config_file="conf/config.ini", dynamic_file="conf/dynamic.ini"):
@@ -703,6 +705,7 @@ class Config(Dynamic):
         self.msg_max_size = self._config.getint('STAR_COMM_BRIDGE', 'msg_max_size', fallback=self.msg_max_size)
 
         # [GUI]
+        self.enable_gui_data_exchange = self._config.getboolean('GUI', 'enable_gui_data_exchange', fallback=self.enable_gui_data_exchange)
         self.images_keep = self._config.getint('GUI', 'images_keep', fallback=self.images_keep)
         self.log_reverse = self._config.getboolean('GUI', 'log_reverse', fallback=self.log_reverse)
 
@@ -916,6 +919,7 @@ class Config(Dynamic):
         }
 
         config['GUI'] = {
+            'enable_gui_data_exchange': self.enable_gui_data_exchange,
             'images_keep': self.images_keep,
             'log_reverse': self.log_reverse
         }

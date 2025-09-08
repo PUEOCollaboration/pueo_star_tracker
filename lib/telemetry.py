@@ -99,8 +99,10 @@ Core 3:        +29.0°C  (high = +110.0°C, crit = +110.0°C)"""
     def __init__(self, log):
         self.log = log
         self.os_type = platform.system()
+        self.is_dummy = False
         if self.os_type == 'Windows':
             self.log.warning('Windows DETECTED. Using Dummy DATA!')
+            self.is_dummy = True
         else:
             self.log.info('Sensors initialized.')
 
@@ -185,7 +187,7 @@ Core 3:        +29.0°C  (high = +110.0°C, crit = +110.0°C)"""
 
         if self.os_type == 'Windows':
             # Use dummy data for Windows systems
-            self.log.debug("Using dummy sensor data for Windows system")
+            # self.log.debug("Using dummy sensor data for Windows system")
             output = self.dummy_sensor_data
         else:
             try:
@@ -479,7 +481,8 @@ class Telemetry:
                 cprint(f'  Header: {header_line}', color='cyan')
 
             self.log.info(f'Telemetry header: {header_line}')  # Log telemetry data
-        self.log.info(f'Telemetry data: {data_line}')  # Log telemetry data
+        td_txt = 'Dummy Telemetry' if self.sensors.is_dummy else 'Telemetry'
+        self.log.info(f'{td_txt} data: {data_line}')  # Log telemetry data
 
         if is_print:
             cprint(f'    Data: {data_line}', color='white')

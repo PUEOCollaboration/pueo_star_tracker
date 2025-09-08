@@ -41,7 +41,6 @@ import cv2
 # import imageio.v3 as iio
 # from astropy import modeling
 from scipy.optimize import curve_fit
-from scipy.spatial.transform import Rotation
 from PIL import Image
 import matplotlib.pyplot as plt
 import numpy as np
@@ -56,6 +55,7 @@ from lib.common import archive_folder, delete_folder
 from lib.config import Config
 from lib.versa_logic_api import VersaAPI
 from lib.camera import PueoStarCamera, DummyCamera
+from lib.compute import Compute
 from lib.focuser import Focuser
 from lib.star_comm_bridge import StarCommBridge
 from lib.utils import read_image_grayscale, read_image_BGR, display_overlay_info, save_raws, image_resize, timed_function, create_symlink
@@ -200,7 +200,7 @@ class PueoStarCameraOperation:
         self.positions_queue = DroppingQueue(maxsize=self.cfg.fq_max_size)
 
         # Astrometry
-        self.astro = Astrometry(self.cfg.ast_t3_database, self.cfg)
+        self.astro = Astrometry(self.cfg.ast_t3_database, self.cfg, self.log)
 
         # Board API (VersaLogic)
         self.versa_api = VersaAPI()
@@ -219,6 +219,10 @@ class PueoStarCameraOperation:
 
         # Wait 2 secs in case Camera/Focuser got started.
         time.sleep(2)
+
+        # Create compute object
+
+        self.compute = Compute(self.log)
 
         # Create camera object
         self.camera = PueoStarCamera(self.cfg)
@@ -346,11 +350,11 @@ class PueoStarCameraOperation:
         score = laplacian.var()
         return score
 
-    def plt_savefig(self, plt, mage_file, is_preserve=True):
+    def plt_savefig(self, plt, image_file, is_preserve=True):
         """Saves an image and sends it to the messenger."""
-        self.logit(f'Saving image: {mage_file}')
-        plt.savefig(mage_file)
-        self.server.write(mage_file, data_type='image_file', is_preserve=is_preserve)
+        self.logit(f'Saving image: {image_file}')
+        plt.savefig(image_file)
+        self.server.write(image_file, data_type='image_file', is_preserve=is_preserve)
 
     def fit_best_focus(self, focus_image_path, focus_positions, focus_scores, diameter_scores, max_focus_position,
                        focus_method='sequence_contrast'):
@@ -695,7 +699,7 @@ class PueoStarCameraOperation:
         if max_autogain_iterations > 1:
             # take image using these settings.
             self.camera.set_control_value(asi.ASI_GAIN, new_gain_value)
-            self.logit(f'New Gain Value: {new_gain_value}')
+            self.logit(f'Initial (New) Gain Value: {new_gain_value}')
             if self.focuser.aperture_position == 'closed':
                 self.logit('Opening Aperture.')
                 self.focuser.open_aperture()
@@ -803,7 +807,8 @@ class PueoStarCameraOperation:
                 self.logit("Counts too low.")
                 self.logit(f"Pixel count difference: {difference}")
             else:
-                # highest value is high enough.
+                # Highest value is high enough.
+                # Fount desired gain, exiting the iterations loop
                 self.logit("Pixels counts are in range. Ending iterations.")
                 self.logit(f"Pixel count difference: {difference}")
                 is_done = False
@@ -819,6 +824,7 @@ class PueoStarCameraOperation:
                 self.camera.set_control_value(asi.ASI_GAIN, new_gain_value)
             else:
                 self.logit(f"Image is saturated. Setting gain to halfway.")
+                # TODO: Saturated image, we started from middle gain
                 new_gain_value = int(0.5*(self.cfg.max_gain_setting-self.cfg.min_gain_setting))
                 if new_gain_value < self.cfg.min_gain_setting:
                     self.logit(f"New gain too low. Setting gain={self.cfg.min_gain_setting}. Recommend decreasing exposure time.")
@@ -930,14 +936,16 @@ class PueoStarCameraOperation:
             except IndexError as e:
                 self.log.error(e)
                 raise IndexError(e)
-            plt.figure()
-            plt.hist(bins[:-1], bins, weights=counts)
-            plt.xlabel('Brightness, counts')
-            plt.ylabel('Frequency, pixels')
-            plt.title(f'hpv: {high_pix_value}, slp: {second_largest_pix_value}, lpv: {min(arr)}')
-            plt.grid()
-            # plt.show() # Showing only in TESTING phase!
-            self.save_fig(basename, plt)
+
+            if self.cfg.return_partial_images:
+                plt.figure()
+                plt.hist(bins[:-1], bins, weights=counts)
+                plt.xlabel('Brightness, counts')
+                plt.ylabel('Frequency, pixels')
+                plt.title(f'hpv: {high_pix_value}, slp: {second_largest_pix_value}, lpv: {min(arr)}')
+                plt.grid()
+                # plt.show() # Showing only in TESTING phase!
+                self.save_fig(basename, plt)
 
             image_saturated = True
             if high_pix_value == pixel_saturated_value:
@@ -1801,6 +1809,29 @@ class PueoStarCameraOperation:
             return result.get()  # Retrieve result from AsyncResult
         return result  # Direct function result
 
+    def compute_angular_velocity(self):
+        """Compute angular velocity wrapper"""
+        delta_t_sec = self.curr_time - self.prev_time
+        angular_velocity = a_v = self.compute.angular_velocity(self.astrometry, self.prev_astrometry, delta_t_sec)
+
+        keys_in_order = ["roll_rate", "az_rate", "el_rate"]
+
+        self.omega = [angular_velocity[key] for key in keys_in_order]
+
+        # Write results to a file
+        self.info_add_angular_velocity_info(angular_velocity, delta_t_sec)
+        # Get current orientation for logging
+        ra = self.astrometry.get('RA', 'N/A')
+        dec = self.astrometry.get('Dec', 'N/A')
+        roll = self.astrometry.get('Roll', 'N/A')
+
+        # Log the results
+        self.log.debug(f'Angular velocity: {angular_velocity}')
+        self.server.write(f'{self.curr_time}, RA: {ra}, DEC: {dec}, ROLL: {roll} [deg]')
+        self.server.write(f'{self.curr_time}, Ω_roll: {a_v["roll_rate"]}, Ω_az: {a_v["az_rate"]}, Ω_el: {a_v["el_rate"]} [deg/sec]')
+
+        return angular_velocity
+
     def camera_take_image(self, cmd=None, is_operation=False, is_test=False):
         """
         Take camera image and
@@ -1831,6 +1862,22 @@ class PueoStarCameraOperation:
         dt = datetime.datetime.now(timezone.utc)
         utc_time = dt.replace(tzinfo=timezone.utc)
         curr_utc_timestamp = utc_time.timestamp()
+
+        #  Flight computer ASTRO POSITION:
+        position = {
+            'timestamp':  utc_time.isoformat(),
+            'solver': self.solver,
+            'solver_name': self.astro.get_solver_name(self.solver),
+            'astro_position': [None, None, None],
+            'FOV': None,
+            'RMSE': None,
+            'RMS': [None, None, None],
+            'sources': 0,
+            'matched_stars': 0,
+            'probability': float(0.0),
+            'angular_velocity': [None, None, None]  # Initialize empty angular velocity dict
+        }
+
         # curr_serial_utc_timestamp = self.serial_utc_update + time.monotonic() - self.serial_time_datum
         timestamp_string = dt.strftime(self.timestamp_fmt)  # Used for filename, ':' should not be used.
 
@@ -1964,7 +2011,7 @@ class PueoStarCameraOperation:
         if is_raw:
             # Only took the raw image, no solving
             self.logit(f'camera_take_image (RAW image/no solving) completed in {get_dt(t0)}.', color='green')
-            return
+            return position
 
         # Get the return values
         self.astrometry, self.curr_star_centroids, self.contours_img = self.get_result(astrometry_result)
@@ -1973,31 +2020,16 @@ class PueoStarCameraOperation:
         if self.astrometry is None:
             self.log.warning(f'No solution for astrometry.')
             self.server.write(f'Solving of image (do_astrometry) did not produce any solutions.', 'warning')
-            return
+            return position
 
         # Append additional image metadata log to a file.
         self.info_add_astro_info()
 
         # Calculate Angular velocity
-        # Old implementation using images
-        # self.calc_angular_velocity(curr_utc_timestamp)
-        # New implementation using two astrometry results
-        solutions_dt = self.curr_time - self.prev_time
         angular_velocity = {}
         self.omega = [float('nan')] * 3
         with suppress(KeyError, ValueError, TypeError):
-            angular_velocity = self.compute_angular_velocity(self.astrometry, self.prev_astrometry, solutions_dt)
-            keys_in_order = ["roll_rate", "az_rate", "el_rate"]
-            self.omega = [angular_velocity[key] for key in keys_in_order]
-          # Debug Variant
-        if False:
-            try:
-                angular_velocity = self.compute_angular_velocity(self.astrometry, self.prev_astrometry, solutions_dt)
-            except Exception as e:
-                self.log.error(f"Failed to compute angular velocity: {e}")
-                self.log.error(f"Exception type: {type(e).__name__}")
-                self.log.error(f"Stack trace:\n{traceback.format_exc()}")
-                angular_velocity = {}
+            angular_velocity = self.compute_angular_velocity()
 
         # Display overlay image
         # foi ~ Final Overlay Image
@@ -2012,39 +2044,24 @@ class PueoStarCameraOperation:
                 self.cfg.scale_factors,
                 self.cfg.resize_mode,
                 self.cfg.png_compression,
-                self.is_flight)
+                self.is_flight,
+                self.cfg.enable_gui_data_exchange)
             # Create/update symlink to last info file
             if self.is_flight:
                 create_symlink(self.cfg.web_path, self.foi_name, 'last_final_overlay_image.png')
                 create_symlink(self.cfg.web_path, self.foi_scaled_name, 'last_final_overlay_image_downscaled.png')
-            if self.foi_scaled_name is not None:
+            if self.cfg.enable_gui_data_exchange and self.foi_scaled_name is not None:
                 self.server.write(self.foi_scaled_name, data_type='image_file', dst_filename=self.curr_scaled_name)
-            else:
-                cprint('Error no scaled image', color='red')
-                self.log.error('foi_scaled_name was None, no downscaled image generated.')
+            # else:
+            #     cprint('Error no scaled image', color='red')
+            #     self.log.error('foi_scaled_name was None, no downscaled image generated.')
             self.prev_time = self.curr_time
             self.prev_img = self.curr_img
             self.prev_astrometry = self.astrometry
             self.prev_star_centroids = self.curr_star_centroids
             self.prev_image_name = self.curr_image_name
 
-
         # Send the file to clients
-        #  Flight computer ASTRO POSITION:
-        _dt = datetime.datetime.fromtimestamp(curr_utc_timestamp)
-        current_ts = _dt.isoformat()
-        position = {
-            'timestamp':  current_ts,
-            'solver': self.solver,
-            'astro_position': [None, None, None],
-            'FOV': None,
-            'RMSE': None,
-            'RMS': [None, None, None],
-            'sources': 0,
-            'matched_stars': 0,
-            'probability': 1,
-            'angular_velocity': [None, None, None]  # Initialize empty angular velocity dict
-        }
         if self.astrometry is not None:
             position['astro_position'] = [self.astrometry.get('RA'), self.astrometry.get('Dec'), self.astrometry.get('Roll')]
             position['FOV'] = self.astrometry.get('FOV')
@@ -2060,9 +2077,10 @@ class PueoStarCameraOperation:
         save_to_json(position, self.cfg.astro_path)
 
         self.curr_scaled_name = self.curr_scaled_name or self.foi_scaled_name
-        info_filename = f'{self.curr_scaled_name[:-4]}.txt'  # .png -> .txt
-        self.server.write(self.info_file, data_type='info_file', dst_filename=info_filename)
-        # Copy to sd_card and ssd_path
+        if self.cfg.enable_gui_data_exchange:
+            info_filename = f'{self.curr_scaled_name[:-4]}.txt'  # .png -> .txt
+            self.server.write(self.info_file, data_type='info_file', dst_filename=info_filename)
+        # Copy info file to sd_card and ssd_path
         if self.is_flight:
             shutil.copy2(self.info_file, self.get_daily_path(self.cfg.sd_card_path))
             shutil.copy2(self.info_file, self.get_daily_path(self.cfg.ssd_path))
@@ -2070,193 +2088,7 @@ class PueoStarCameraOperation:
         create_symlink(self.cfg.web_path, self.info_file, 'last_info_file.txt')
 
         self.logit(f'camera_take_image completed in {get_dt(t0)}.', color='green')
-
-    def _radec_roll_to_rotation(self, ra_deg, dec_deg, roll_deg):
-        """
-        Convert RA, Dec, and Roll angles to a rotation matrix using standard astronomical transformations.
-
-        This function constructs the rotation matrix that transforms from the International
-        Celestial Reference Frame (ICRF) to the camera's body frame. The transformation
-        follows the standard astronomical convention:
-
-        1. Rotate by RA around the Z-axis (pointing toward North Celestial Pole)
-        2. Rotate by -Dec around the Y-axis (negative because declination increases northward
-           from the celestial equator, which corresponds to a negative rotation in the
-           right-handed coordinate system where Y points east)
-        3. Rotate by Roll around the X-axis (now aligned with the camera boresight)
-
-        The resulting matrix R satisfies: v_camera = R @ v_icrf
-
-        Args:
-            ra_deg (float): Right Ascension in degrees
-            dec_deg (float): Declination in degrees
-            roll_deg (float): Roll angle in degrees
-
-        Returns:
-            numpy.ndarray: 3x3 rotation matrix representing the camera orientation
-        """
-        ra = np.deg2rad(ra_deg)
-        dec = np.deg2rad(dec_deg)
-        roll = np.deg2rad(roll_deg)
-
-        # Standard astronomical sequence: R = R_roll(X) @ R_-dec(Y) @ R_ra(Z)
-        R_z = Rotation.from_rotvec([0, 0, ra]).as_matrix()  # Rotate by RA around Z
-        R_y = Rotation.from_rotvec([0, -dec, 0]).as_matrix()  # Rotate by -Dec around Y
-        R_x = Rotation.from_rotvec([roll, 0, 0]).as_matrix()  # Rotate by Roll around X
-
-        # Combine the rotations: First RA, then Dec, then Roll.
-        return R_x @ R_y @ R_z
-
-    def _decompose_rotation_to_local_axes(self, R1, R2):
-        """
-        Decompose the relative rotation between two orientations into camera-axis components.
-
-        This function calculates the components of the angular velocity vector that would
-        transform the camera from orientation R1 to orientation R2. The method involves:
-
-        1. Computing the relative rotation matrix: R_rel = R2 @ R1.T
-        2. Extracting the rotation vector from R_rel using matrix logarithm
-        3. Projecting this rotation vector onto the camera's local axes (X, Y, Z) defined by R1
-
-        The rotation vector represents the integrated angular displacement (ω * Δt) between
-        the two orientations. Its projection onto the camera axes gives the components of
-        this displacement along each axis.
-
-        Args:
-            R1 (numpy.ndarray): 3x3 rotation matrix representing initial camera orientation
-            R2 (numpy.ndarray): 3x3 rotation matrix representing final camera orientation
-
-        Returns:
-            tuple: Components of the rotation vector along camera axes:
-                - d_roll_rad: Component along Z-axis (roll/boresight direction) in radians
-                - d_az_rad: Component along X-axis (azimuth/right direction) in radians
-                - d_el_rad: Component along Y-axis (elevation/up direction) in radians
-        """
-        # Calculate the relative rotation matrix from frame1 to frame2
-        R_rel = R2 @ R1.T  # This is R_{2<-1} = R2 * R1^{-1}
-
-        # Extract rotation vector from relative rotation matrix
-        # This vector represents the axis*angle rotation that transforms R1 to R2
-        # Its magnitude is the rotation angle in radians, direction is rotation axis
-        delta_theta_vec = Rotation.from_matrix(R_rel).as_rotvec()
-
-        # The rotation vector magnitude should be < π for unambiguous interpretation
-        rotation_angle = np.linalg.norm(delta_theta_vec)
-        if rotation_angle > np.pi:
-            # Handle large rotations by taking the complementary angle
-            delta_theta_vec = delta_theta_vec * (1 - 2 * np.pi / rotation_angle)
-
-        # Get the axes of the initial camera frame (R1)
-        # The columns of R1 are the world axes expressed in the camera frame
-        right = R1[:, 0]  # Camera's X-axis (azimuth/right direction)
-        up = R1[:, 1]  # Camera's Y-axis (elevation/up direction)
-        forward = R1[:, 2]  # Camera's Z-axis (roll/boresight direction)
-
-        # Project the rotation vector onto the initial camera axes
-        # These projections give the components of angular displacement along each axis
-        d_roll = np.dot(delta_theta_vec, forward)  # Z-axis component
-        d_az = np.dot(delta_theta_vec, right)  # X-axis component
-        d_el = np.dot(delta_theta_vec, up)  # Y-axis component
-
-        return d_roll, d_az, d_el
-
-    def compute_angular_velocity(self, astrometry_curr, astrometry_prev, delta_t_sec):
-        """
-        Compute angular velocity between two astrometry solutions.
-
-        This function calculates the instantaneous angular velocity of the camera
-        between two orientations specified by their RA, Dec, and Roll values. The
-        calculation involves:
-
-        1. Converting both orientations to rotation matrices using standard
-           astronomical transformations
-        2. Computing the relative rotation between the orientations
-        3. Decomposing this rotation into components along the camera's local axes
-        4. Converting these displacement components to angular velocity by dividing
-           by the time difference
-
-        The resulting angular velocity vector components represent the camera's
-        rotational speed around its own axes (roll, azimuth, elevation) during
-        the time interval.
-
-        Args:
-            astrometry_curr (dict): Current astrometry solution with keys:
-                'RA', 'Dec', 'Roll' (all in degrees)
-            astrometry_prev (dict): Previous astrometry solution with keys:
-                'RA', 'Dec', 'Roll' (all in degrees)
-            delta_t_sec (float): Time difference between solutions in seconds
-
-        Returns:
-            dict: Dictionary containing angular velocities in deg/s for:
-                - roll_rate: Rotation around camera's Z-axis (boresight/roll)
-                - az_rate: Rotation around camera's X-axis (azimuth/right)
-                - el_rate: Rotation around camera's Y-axis (elevation/up)
-
-        Raises:
-            KeyError: If required keys are missing from input dictionaries
-            ValueError: If delta_t_sec is zero or negative
-        """
-
-        no_velocity = {
-            "roll_rate": float('nan'),
-            "az_rate": float('nan'),
-            "el_rate": float('nan')
-        }
-
-        if delta_t_sec <= 0:
-            raise ValueError("delta_t_sec must be positive")
-
-        # Extract orientation parameters
-        try:
-            ra1, dec1, roll1 = (astrometry_prev['RA'], astrometry_prev['Dec'], astrometry_prev['Roll'])
-            ra2, dec2, roll2 = (astrometry_curr['RA'], astrometry_curr['Dec'], astrometry_curr['Roll'])
-        except KeyError as e:
-            return no_velocity
-            # raise KeyError(f"Missing required key in astrometry dict: {e}")
-
-        # Combined validation in one block
-        all_values = [ra1, dec1, roll1, ra2, dec2, roll2]
-
-        if any(v is None or np.isnan(v) for v in all_values):
-            invalid_type = "None" if any(v is None for v in all_values) else "NaN"
-            self.log.warning(f"One or more orientation values are {invalid_type}, returning NaN angular velocity")
-            return no_velocity
-
-        # Check for identical orientations to avoid division by numerical noise
-        atol = 1e-10
-        if (np.isclose(ra1,ra2, atol=atol) and
-                np.isclose(dec1, dec2, atol=atol) and
-                np.isclose(roll1, roll2, atol=atol)):
-            return no_velocity
-
-        # Convert to rotation matrices
-        R1 = self._radec_roll_to_rotation(ra1, dec1, roll1)
-        R2 = self._radec_roll_to_rotation(ra2, dec2, roll2)
-
-        # Decompose relative rotation into components of the rotation vector
-        d_roll_rad, d_az_rad, d_el_rad = self._decompose_rotation_to_local_axes(R1, R2)
-
-        # Convert components of rotation vector to angular velocities (rad/s to deg/s)
-        angular_velocity = a_v= {
-            "roll_rate": np.rad2deg(d_roll_rad) / delta_t_sec,
-            "az_rate": np.rad2deg(d_az_rad) / delta_t_sec,
-            "el_rate": np.rad2deg(d_el_rad) / delta_t_sec
-        }
-
-        # Write results to a file
-        self.info_add_angular_velocity_info(angular_velocity, delta_t_sec)
-        # Get current orientation for logging
-        ra = astrometry_curr.get('RA', 'N/A')
-        dec = astrometry_curr.get('Dec', 'N/A')
-        roll = astrometry_curr.get('Roll', 'N/A')
-
-        # Log the results
-        self.log.debug(f'Angular velocity: {angular_velocity}')
-        self.server.write(f'{self.curr_time}, RA: {ra}, DEC: {dec}, ROLL: {roll} [deg]')
-        self.server.write(f'{self.curr_time}, Ω_roll: {a_v["roll_rate"]}, Ω_az: {a_v["az_rate"]}, Ω_el: {a_v["el_rate"]} [deg/sec]')
-        self.log.debug(f'done')
-
-        return angular_velocity
+        return position
 
     def camera_run_autogain(self, cmd):
         """

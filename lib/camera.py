@@ -83,6 +83,8 @@ class DummyCamera:
         self.simulated = True
         self.name = 'DummyCamera'
 
+        self.camera.get_dropped_frames()
+
     @property
     def file_size(self):
         """Get the size of the current image file in bytes.

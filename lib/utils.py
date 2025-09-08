@@ -241,7 +241,7 @@ def overlay_raw(img, downscale_factors, message):
     return overlay_image
 
 
-def display_overlay_info(img, timestamp_string, astrometry, omega, display=True, image_filename=None, final_path='./output', partial_results_path="./partial_results", scale_factors=(8, 8), resize_mode='downscale', png_compression=0, is_save=True):
+def display_overlay_info(img, timestamp_string, astrometry, omega, display=True, image_filename=None, final_path='./output', partial_results_path="./partial_results", scale_factors=(8, 8), resize_mode='downscale', png_compression=0, is_save=True, is_downsize=False):
     """Displays text overlay information about astrometry on output image.
     """
 
@@ -274,12 +274,16 @@ def display_overlay_info(img, timestamp_string, astrometry, omega, display=True,
     cv2.putText(overlay_image, timestamp, (text_x, text_y), font, fontsize, font_color, font_thickness, line_type)
     text_y += text_size[1] + line_spacing  # Adjust Y-coordinate for the next text
 
-    solver = astrometry['solver'] if astrometry else ''
+    solver = astrometry['solver_name'] if astrometry else ''
     if astrometry and astrometry.get('RA', 0):
         # astrometry info
         ra = astrometry.get('RA', 0.0)
         dec = astrometry.get('Dec', 0.0)
         roll = astrometry.get('Roll', 0.0)
+
+        ra_rms = astrometry.get('RA_RMS', 0.0)
+        dec_rms = astrometry.get('Dec_RMS', 0.0)
+        roll_rms = astrometry.get('Roll_RMS', 0.0)
 
         # body rates info
         #omegax = omega[0]
@@ -290,7 +294,7 @@ def display_overlay_info(img, timestamp_string, astrometry, omega, display=True,
         astrometric_position = f"Astrometric Position ({solver}): ({ra:.4f}, {dec:.4f}, {roll:.4f}) deg"
         _rmse = astrometry.get('Cross-Boresight RMSE', 0.0) if 'Cross-Boresight RMSE' in astrometry else astrometry.get('RMSE', 0.0)
         # rmse = f"RMSE: {_rmse/3600.0:.4E} deg"
-        rmse = f"RMSE: {_rmse:.4E} arcsec"
+        rmse = f"RMSE: {_rmse:.3f} arcsec, RMS: ({ra_rms:.3f}, {dec_rms:.3f}, {roll_rms:.3f}) arcesc"
         # velocity = f"Angular velocity: (omegax, omegay, omegaz) = ({omegax:.4E}, {omegay:.4E}, {omegaz:.4E}) deg/s"
         # Or even more explicitly:
         # velocity = f"Angular velocity: w_x = {omega[0]:.4E}, w_y = {omega[1]:.4E}, w_z = {omega[2]:.4E} deg/s"
@@ -353,9 +357,11 @@ def display_overlay_info(img, timestamp_string, astrometry, omega, display=True,
             # Get file size in MB (converted from bytes)
             file_size = os.path.getsize(foi_filename) / (1024 * 1024)  # bytes to MB conversion
             log.debug(f'Saved: {foi_filename} compression: {png_compression} file_size: {file_size:.2f} Mb in {get_dt(t0)}.')
-        # TODO: An overlay image, do we use this image for showing on the GUI?
-        foi_scaled_filename = f"{final_path}/Final_overlay_image_{filename}_{timestamp_string}_downscaled.png"
-        foi_scaled_shape = image_resize(overlay_image, scale_factors, foi_scaled_filename, resize_mode=resize_mode)
+        # A downscaled overlay image used image for showing on the GUI
+        foi_scaled_shape = foi_scaled_filename = None
+        if is_downsize:
+            foi_scaled_filename = f"{final_path}/Final_overlay_image_{filename}_{timestamp_string}_downscaled.png"
+            foi_scaled_shape = image_resize(overlay_image, scale_factors, foi_scaled_filename, resize_mode=resize_mode)
 
     # Display image
     if display:

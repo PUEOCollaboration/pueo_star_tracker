@@ -302,6 +302,8 @@ class StarCommBridge:
 
         # Remember what command has been started
         if commands == Commands.CHECK_STATUS:
+            # TODO: Remove or writing IMAGES to messages (introduce CFG gui_support = False)
+            # TODO: Include status data having all data required for Web Dashboard
             # TODO: Remove time.sleep()
             # time.sleep(1)
             message = 'Idle'
@@ -359,8 +361,18 @@ class StarCommBridge:
             if commands == Commands.TAKE_IMAGE:
                 # Execute the take image command here
                 if self.server.operation_enabled is not None and not self.server.operation_enabled and self.server.is_ready():
-                    self.server.camera_take_image(cmd)
-                    ret = Status.get_status(Status.SUCCESS, "Image captured.")
+                    position = self.server.camera_take_image(cmd)
+                    additional_message = 'Solved.'
+                    if cmd.mode == 'raw':
+                        additional_message = 'Raw mode. No solving.'
+                    else:
+                        # Get the astro_position list, defaulting to [None, None, None] if the key doesn't exist
+                        astro_pos = position.get('astro_position', [None, None, None])
+                        # Check if every element in the list is None
+                        if all(elem is None for elem in astro_pos):
+                            additional_message = 'Solution not found.'
+                    ret = Status.get_status(Status.SUCCESS, f"Image captured. {additional_message}")
+                    ret['position'] = position
                 elif not self.server.is_ready():
                     self.server.server.messages.write(f'Warning: Cannot take image, server is not ready: {self.server.is_ready()}','warning')
                     ret = Status.get_status(Status.ERROR,f"Warning: Cannot take image, server not ready: {self.server.status}")

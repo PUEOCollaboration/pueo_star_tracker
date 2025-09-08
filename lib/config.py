@@ -202,6 +202,7 @@ class Config(Dynamic):
     an_depth = 20  # int
     an_sigma = 6.0  # float
     an_nsigma = 8.0  # float
+    an_crpix_center = True # bool
 
     # MUST be False
     an_corr = False # bool
@@ -225,6 +226,11 @@ class Config(Dynamic):
     raw_scale_factor_x = 8
     raw_scale_factor_y = 8
     raw_scale_factors = (raw_scale_factor_x, raw_scale_factor_y)
+
+    foi_resize_mode = 'downscale'
+    foi_scale_factor_x = 4
+    foi_scale_factor_y = 4
+    foi_scale_factors = (foi_scale_factor_x, foi_scale_factor_y)
 
     inspection_images_keep = 100
     inspection_quality = 80
@@ -604,6 +610,7 @@ class Config(Dynamic):
 
         self.an_sigma = self._config.getfloat('ASTROMETRY.NET', 'sigma', fallback=self.an_sigma)
         self.an_nsigma = self._config.getfloat('ASTROMETRY.NET', 'nsigma', fallback=self.an_nsigma)
+        self.an_crpix_center = self._config.getboolean('ASTROMETRY.NET', 'an_crpix_center', fallback=self.an_crpix_center)
 
         self.an_corr = self._config.getboolean('ASTROMETRY.NET', 'corr', fallback=self.an_depth)
         self.an_new_fits = self._config.getboolean('ASTROMETRY.NET', 'new_fits', fallback=self.an_new_fits)
@@ -628,6 +635,11 @@ class Config(Dynamic):
         self.raw_scale_factor_x = self._config.getfloat('IMAGES', 'raw_scale_factor_x', fallback=self.raw_scale_factor_x)
         self.raw_scale_factor_y = self._config.getfloat('IMAGES', 'raw_scale_factor_y', fallback=self.raw_scale_factor_y)
         self.raw_scale_factors = (self.raw_scale_factor_x, self.raw_scale_factor_y)
+
+        self.foi_resize_mode = self._config.get('IMAGES', 'foi_resize_mode', fallback=self.foi_resize_mode)
+        self.foi_scale_factor_x = self._config.getfloat('IMAGES', 'foi_scale_factor_x', fallback=self.foi_scale_factor_x)
+        self.foi_scale_factor_y = self._config.getfloat('IMAGES', 'foi_scale_factor_y', fallback=self.foi_scale_factor_y)
+        self.foi_scale_factors = (self.foi_scale_factor_x, self.foi_scale_factor_y)
 
         self.inspection_images_keep = self._config.getint('IMAGES', 'inspection_images_keep', fallback=self.inspection_images_keep)
         self.inspection_quality = self._config.getint('IMAGES', 'inspection_quality', fallback=self.inspection_quality)
@@ -861,6 +873,10 @@ class Config(Dynamic):
             'raw_resize_mode': self.raw_resize_mode,
             'raw_scale_factor_x': self.raw_scale_factor_x,
             'raw_scale_factor_y': self.raw_scale_factor_y,
+
+            'foi_resize_mode': self.foi_resize_mode,
+            'foi_scale_factor_x': self.foi_scale_factor_x,
+            'foi_scale_factor_y': self.foi_scale_factor_y,
 
             'inspection_images_keep': self.inspection_images_keep,
             'inspection_quality': self.inspection_quality,

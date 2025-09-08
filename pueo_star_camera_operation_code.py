@@ -2041,11 +2041,10 @@ class PueoStarCameraOperation:
                 self.curr_image_name,
                 self.get_daily_path(self.cfg.final_path),
                 self.cfg.partial_results_path,
-                self.cfg.scale_factors,
-                self.cfg.resize_mode,
+                self.cfg.foi_scale_factors,
+                self.cfg.foi_resize_mode,
                 self.cfg.png_compression,
-                self.is_flight,
-                self.cfg.enable_gui_data_exchange)
+                self.is_flight)
             # Create/update symlink to last info file
             if self.is_flight:
                 create_symlink(self.cfg.web_path, self.foi_name, 'last_final_overlay_image.png')

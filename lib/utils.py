@@ -241,7 +241,7 @@ def overlay_raw(img, downscale_factors, message):
     return overlay_image
 
 
-def display_overlay_info(img, timestamp_string, astrometry, omega, display=True, image_filename=None, final_path='./output', partial_results_path="./partial_results", scale_factors=(8, 8), resize_mode='downscale', png_compression=0, is_save=True, is_downsize=False):
+def display_overlay_info(img, timestamp_string, astrometry, omega, display=True, image_filename=None, final_path='./output', partial_results_path="./partial_results", scale_factors=(8, 8), resize_mode='downscale', png_compression=0, is_save=True, is_downsize=True):
     """Displays text overlay information about astrometry on output image.
     """
 
@@ -353,13 +353,16 @@ def display_overlay_info(img, timestamp_string, astrometry, omega, display=True,
         if is_save:
             t0 = time.perf_counter()
             # Save using png compression
-            cv2.imwrite(foi_filename, overlay_image, [int(cv2.IMWRITE_PNG_COMPRESSION), png_compression])
-            # Get file size in MB (converted from bytes)
-            file_size = os.path.getsize(foi_filename) / (1024 * 1024)  # bytes to MB conversion
-            log.debug(f'Saved: {foi_filename} compression: {png_compression} file_size: {file_size:.2f} Mb in {get_dt(t0)}.')
+            # Note The final overlay image can and shall only be saved as downscaled version
+            if False:
+                cv2.imwrite(foi_filename, overlay_image, [int(cv2.IMWRITE_PNG_COMPRESSION), png_compression])
+                # Get file size in MB (converted from bytes)
+                # file_size = os.path.getsize(foi_filename) / (1024 * 1024)  # bytes to MB conversion
+                # log.debug(f'Saved: {foi_filename} compression: {png_compression} file_size: {file_size:.2f} Mb in {get_dt(t0)}.')
         # A downscaled overlay image used image for showing on the GUI
         foi_scaled_shape = foi_scaled_filename = None
         if is_downsize:
+            # Saving final overlay image
             foi_scaled_filename = f"{final_path}/Final_overlay_image_{filename}_{timestamp_string}_downscaled.png"
             foi_scaled_shape = image_resize(overlay_image, scale_factors, foi_scaled_filename, resize_mode=resize_mode)
 
@@ -485,6 +488,17 @@ def save_as_jpeg_with_stretch(img_16bit, jpeg_path, quality=80, lower_percentile
     with suppress(OSError):
         os.rename(temp_path, jpeg_path)
 
+def save_as_jp2(image, jp2path, compression_x1000=1000):
+    # Define compression parameters for JPEG 2000
+    compression_params = [
+        cv2.IMWRITE_JPEG2000_COMPRESSION_X1000, compression_x1000,  # Compression ratio (1000 = lossless, lower values for lossy)
+        # Note: Some OpenCV builds may not fully support lossless compression:cite[2]:cite[7]
+    ]
+
+    # Save the image with JPEG 2000 compression
+    success = cv2.imwrite(jp2path, image, compression_params)
+    if not success:
+        raise ValueError("Failed to write the image. Check compression parameters or OpenCV backend.")
 
 def create_symlink(path, filename, symlink_name='last_inspection_image.jpg', use_relative_path=True):
     """
@@ -596,8 +610,9 @@ def delete_trash(
             log.debug(f"Error deleting {file}: {e}")
 
 
-def image_resize(img, scale_factors, image_filename, overlay=None, resize_mode='downscale', png_compression=0,
-                 is_inspection=False, jpeg_settings: dict | None = None):
+def image_resize(img, scale_factors, image_filename, overlay=None, resize_mode='downscale',
+                 png_compression=0,
+                 is_inspection=False, jpeg_settings: dict | None = None, is_save_jp2=False):
     """
     Resize an image using either downscaling (with interpolation or local mean) or downsampling.
 
@@ -656,9 +671,14 @@ def image_resize(img, scale_factors, image_filename, overlay=None, resize_mode='
         new_dimensions = (new_width, new_height)
 
         # Resize the image using OpenCV's resize function with INTER_AREA interpolation
-        resized_img = cv2.resize(img, new_dimensions, interpolation=cv2.INTER_AREA)
-        log.debug(f'resized: {img.shape} -> {resized_img.shape}')
-        pass
+        msg_txt = 'resized'
+        if scale_factors[0] != 1.0 or scale_factors[0] != 1.0:
+            resized_img = cv2.resize(img, new_dimensions, interpolation=cv2.INTER_AREA)
+        else:
+            resized_img = img
+            msg_txt = 'size preserved'
+        log.debug(f'{msg_txt}: {img.shape} -> {resized_img.shape}')
+
     elif resize_mode == 'downsample':
         # Downsample by selecting every nth pixel
         resized_img = img[::int(scale_factors[0]), ::int(scale_factors[1])]
@@ -685,10 +705,18 @@ def image_resize(img, scale_factors, image_filename, overlay=None, resize_mode='
 
         # Create proper path for JPEG file
         base_filename = os.path.basename(image_filename)  # Get just the filename
+
         jpeg_basename = base_filename.replace(".png", ".jpg")
         jpeg_filename = os.path.join(inspection_path, jpeg_basename)  # Full path
 
+        jp2_basename = base_filename.replace(".png", ".jp2")
+        jp2_filename = os.path.join(inspection_path, jp2_basename)  # Full path
+
         save_as_jpeg_with_stretch(resized_img, jpeg_filename, quality, lower_percentile, upper_percentile)
+        # TODO: Revisit using JPEG2000
+        if save_as_jp2:
+            save_as_jp2(resized_img, jp2_filename,500) # Target ~10:1 compression
+
         # Create symlink to the latest image
         create_symlink(web_path, jpeg_filename, symlink_name)
         delete_trash(inspection_path, ext='.jpg', keep=images_keep)
@@ -699,7 +727,16 @@ def image_resize(img, scale_factors, image_filename, overlay=None, resize_mode='
 
     print_img_info(resized_img, 'resized')
 
+    # Save as PNG
     cv2.imwrite(image_filename, resized_img, [int(cv2.IMWRITE_PNG_COMPRESSION), png_compression])
+
+    # Save as JP2
+    # TODO: Decide and reinspect this saving the RAW as jp2
+    if is_save_jp2:
+        pass
+        # jp2_filename = image_filename.replace(".png", ".jp2")
+        # save_as_jp2(resized_img, jp2_filename, 400)  # Target ~10:1 compression
+
     # Get file size in MB (converted from bytes)
     file_size = os.path.getsize(image_filename) / (1024 * 1024)  # bytes to MB conversion
     log.debug(f'Saved resized image to path: {image_filename} compression: {png_compression} file_size: {file_size:.2f} Mb in {get_dt(t0)}.')
@@ -721,7 +758,7 @@ def save_raws(img, ssd_path="", sd_card_path="", image_name="",
         # Save RAW Image
         raw_image_resized_shape = image_resize(img1, raw_scale_factors, image_filename, None,
                                            resize_mode=raw_resize_mode, png_compression=png_compression,
-                                           is_inspection=False)
+                                           is_inspection=False, is_save_jp2=True)
         # img1 = convert_dummy_to_mono(img1) # if RGB it will convert, else nothing orig image is returned
         # cv2.imwrite(image_filename, img1, [int(cv2.IMWRITE_PNG_COMPRESSION), png_compression])
         log.debug(f'Saved original image to ssd path: {image_filename} in {get_dt(t0)}.')

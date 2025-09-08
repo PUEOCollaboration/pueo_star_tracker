@@ -588,9 +588,9 @@ class AstrometryNetParser:
         if fov_match:
             fov1 = float(fov_match.group(1))
             fov2 = float(fov_match.group(2))
-            result['FOV'] = np.float64((fov1 + fov2) / 2)
-            result['FOV_width'] = np.float64(fov1)
-            result['FOV_height'] = np.float64(fov2)
+            result['FOV'] = np.float64(fov1) # Returning the HORIZONTAL
+            result['h_FOV'] = np.float64(fov1)
+            result['v_FOV'] = np.float64(fov2)
 
         # Parse rotation angle
         rotation_match = re.search(r'Field rotation angle: up is ([\d.]+) degrees E of N', stdout)
@@ -816,10 +816,10 @@ class AstrometryNetParser:
                         # Structured array format
                         x_coords = data['x']
                         y_coords = data['y']
-                        detected_stars = [[float(x), float(y)] for x, y in zip(x_coords, y_coords)]
+                        detected_stars = [[float(y), float(x)] for x, y in zip(x_coords, y_coords)]
                     else:
                         # Assume first two columns are X, Y coordinates
-                        detected_stars = [[row[0], row[1]] for row in data]
+                        detected_stars = [[row[1], row[0]] for row in data]
 
                     result['detected_stars'] = detected_stars
                     result['detected_stars_count'] = len(detected_stars)
@@ -842,8 +842,8 @@ class AstrometryNetParser:
                     if len(parts) >= 2:
                         try:
                             detected_stars.append([
-                                float(parts[0]),  # x coordinate
-                                float(parts[1])  # y coordinate
+                                float(parts[1]),  # x coordinate
+                                float(parts[0])  # y coordinate
                             ])
                         except ValueError:
                             continue

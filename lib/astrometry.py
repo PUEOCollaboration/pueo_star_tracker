@@ -826,7 +826,8 @@ class Astrometry:
 
             # Add execution time
             astrometry["precomputed_star_centroids"] = precomputed_star_centroids.shape[0]
-            astrometry['cedar_detect'] = self.cedar.cd_solutions.copy()
+            if self.solver == 'solver2':
+                astrometry['cedar_detect'] = self.cedar.cd_solutions.copy()
             astrometry["params"] = get_params()
             astrometry["solver_exec_time"] = solver_exec_time
             astrometry['solver'] = self.solver
@@ -887,6 +888,9 @@ class Astrometry:
         else:
             cprint('No centroids found, skipping astrometry solving.', color='red')
             astrometry = {}
+            # These are required for the overlay.
+            astrometry['solver'] = self.solver
+            astrometry['solver_name'] = self.solver_name
 
         total_exec_time = time.monotonic() - t0
         astrometry["total_exec_time"] = total_exec_time if astrometry else None

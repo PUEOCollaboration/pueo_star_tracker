@@ -1,7 +1,6 @@
 import os
 
 import cv2
-import matplotlib.pyplot as plt
 import numpy as np
 from astropy.convolution import convolve
 from astropy.stats import SigmaClip, sigma_clipped_stats
@@ -14,54 +13,119 @@ from numpy.lib.stride_tricks import sliding_window_view
 
 from lib.common import logit
 
+def _save_u16(path: str, img: np.ndarray) -> None:
+    """
+    Save an image as 16-bit (PNG/TIFF). If input is float32,
+    it's clipped to [0, 65535] then cast to uint16.
+    """
+    a = img
+    if a.dtype.kind == "f":
+        a = np.clip(a, 0, 65535).astype(np.uint16)
+    elif a.dtype == np.uint8:
+        a = (a.astype(np.uint16) * 257)  # 255->65535 scaling
+    elif a.dtype != np.uint16:
+        a = a.astype(np.uint16, copy=False)
+    cv2.imwrite(path, a)
+
+
+def robust_sigma_mad(a: np.ndarray) -> float:
+    """
+    Compute a robust estimate of background noise sigma using MAD.
+
+    Parameters
+    ----------
+    a : np.ndarray
+        2D array (float32 recommended), ideally a background-subtracted image.
+
+    Returns
+    -------
+    float
+        Robust sigma estimate: 1.4826 * median(|a - median(a)|).
+    """
+    a = a.astype(np.float32, copy=False)
+    med = np.median(a)
+    mad = np.median(np.abs(a - med))
+    return float(1.4826 * mad)
+
+
+def _core_vs_perimeter_stats(img: np.ndarray, contour: np.ndarray, pad: int = 2):
+    """
+    Measure mean core brightness and perimeter background for a blob.
+
+    Parameters
+    ----------
+    img : np.ndarray
+        2D background-subtracted array (float32).
+    contour : np.ndarray
+        OpenCV contour (Nx1x2 int array) for the blob at full resolution.
+    pad : int
+        Extra pixels to pad the bounding ROI around the contour.
+
+    Returns
+    -------
+    core_mean : float
+        Mean intensity inside the blob’s filled contour (ROI).
+    per_mean : float
+        Mean intensity on a 1-pixel ring around the ROI borders (no corners).
+    per_sigma : float
+        Robust perimeter sigma (MAD), or std as fallback if MAD=0.
+    """
+    x, y, w, h = cv2.boundingRect(contour)
+    x0 = max(0, x - pad);  y0 = max(0, y - pad)
+    x1 = min(img.shape[1], x + w + pad);  y1 = min(img.shape[0], y + h + pad)
+    roi = img[y0:y1, x0:x1]
+
+    core = np.zeros_like(roi, dtype=np.uint8)
+    shifted = contour - [x0, y0]
+    cv2.drawContours(core, [shifted], -1, 255, thickness=cv2.FILLED)
+
+    H, W = roi.shape
+    if H < 3 or W < 3:
+        return 0.0, 0.0, 0.0
+
+    perim = np.zeros_like(roi, dtype=bool)
+    perim[0, 1:-1]  = True; perim[-1, 1:-1] = True
+    perim[1:-1, 0]  = True; perim[1:-1, -1] = True
+
+    core_vals = roi[core > 0]
+    per_vals  = roi[perim]
+    if core_vals.size == 0 or per_vals.size == 0:
+        return 0.0, 0.0, 0.0
+
+    core_mean = float(core_vals.mean())
+    per_mean  = float(per_vals.mean())
+    per_sigma = robust_sigma_mad(per_vals.astype(np.float32))
+    if per_sigma <= 0.0:
+        per_sigma = float(per_vals.std(ddof=1)) if per_vals.size > 1 else 0.0
+    return core_mean, per_mean, per_sigma
 
 # TODO: Done local_sigma_cell_size = 36
-def estimate_local_sigma(img, cell_size=36):
-    """Estimate local noise levels in an image by dividing it into non- overlapping
-    cells and computing the noise in each cell using skimage's `estimate_sigma`
-    function.
-
-    The estimated noise values are stored in a grid that corresponds to the image dimensions
-    and are resized using nearest-neighbor interpolation to match the original image size.
-
-    Args:
-        img (numpy.ndarray): The input grayscale image (2D array) for which the local noise
-            levels need to be estimated.
-        cell_size (int, optional): The size of the non-overlapping square cells (in pixels)
-            used for noise estimation. The image is divided into cells of shape (cell_size x cell_size).
-            Defaults to 36.
-
-    Returns:
-        numpy.ndarray: A 2D array of the same shape as the input image, where each element
-        contains the estimated noise value for the corresponding pixel location in the image.
+def estimate_local_sigma(img: np.ndarray, cell_size: int = 36) -> np.ndarray:
     """
-    # Get the dimensions of the image
-    height, width = img.shape
+    Estimate a per-pixel sigma map using non-overlapping tiles with edge handling.
 
-    # Initialize an array to store the local noise estimates
-    local_sigma = np.zeros((height // cell_size, width // cell_size), dtype=np.float32)
+    Parameters
+    ----------
+    img : np.ndarray
+        2D array (float32 recommended), typically background-subtracted.
+    cell_size : int
+        Tile size in pixels for local sigma estimation.
 
-    # Loop over the image in non-overlapping (cell_size x cell_size) cells
-    for i in range(0, height, cell_size):
-        for j in range(0, width, cell_size):
-            # Ensure the cell fits within the image bounds
-            if i + cell_size <= height and j + cell_size <= width:
-                # Extract the (cell_size x cell_size) cell
-                cell = img[i: i + cell_size, j: j + cell_size]
-                # Estimate the noise in the cell
-                local_noise = estimate_sigma(cell)
-                # Store the estimated noise value
-                local_sigma[i // cell_size, j // cell_size] = local_noise
-
-    # Resize using nearest-neighbor interpolation
-    local_sigma = cv2.resize(local_sigma, (img.shape[1], img.shape[0]), interpolation=cv2.INTER_LINEAR)
-
-    # plot the estimated background noise
-    # plt.imshow(local_sigma, cmap='gray')
-    # plt.show(block=True)
-
-    return local_sigma
-
+    Returns
+    -------
+    np.ndarray
+        2D float32 sigma map resized back to image shape using INTER_NEAREST.
+    """
+    H, W = img.shape
+    ny = int(np.ceil(H / cell_size)); nx = int(np.ceil(W / cell_size))
+    sigma_tiles = np.zeros((ny, nx), dtype=np.float32)
+    for by in range(ny):
+        for bx in range(nx):
+            y0, y1 = by * cell_size, min((by + 1) * cell_size, H)
+            x0, x1 = bx * cell_size, min((bx + 1) * cell_size, W)
+            cell = img[y0:y1, x0:x1]
+            sigma_tiles[by, bx] = float(estimate_sigma(cell))
+    return cv2.resize(sigma_tiles, (W, H), interpolation=cv2.INTER_NEAREST)
 
 def global_background_estimation(
         img,
@@ -91,10 +155,8 @@ def global_background_estimation(
 
     # Save Background subtracted image
     if return_partial_images:
-        cv2.imwrite(
-            os.path.join(partial_results_path, "1.1 - Global Background subtracted image.png"),
-            cleaned_img,
-        )
+        _save_u16(os.path.join(partial_results_path, "1.1 - Global Background subtracted image.png"),
+              cleaned_img.astype(np.float32))
 
     return cleaned_img
 
@@ -206,9 +268,8 @@ def local_levels_background_estimation(
         local_levels = convolve2d(downsampled_img, level_filter_array, boundary="symm", mode="same")
 
     elif level_filter_type == 'median':
-        # TODO: Create the local_levels
-        # Code goes here:
-        local_levels = None
+        # Median version not implemented yet; avoid None -> resize crash.
+        raise NotImplementedError("level_filter_type='median' not implemented yet")
 
 
     # Resize using nearest-neighbor interpolation
@@ -216,23 +277,18 @@ def local_levels_background_estimation(
 
     cleaned_img = img - local_levels_resized
 
-    # write background info to log
-    with open(log_file_path, "a") as file:
-        file.write(f"overall background level mean : {np.mean(local_levels)}\n")
-        file.write(f"overall background level stdev : {np.std(local_levels)}\n")
+    if log_file_path:
+        with open(log_file_path, "a") as file:
+            file.write(f"overall background level mean : {np.mean(local_levels_resized)}\n")
+            file.write(f"overall background level stdev : {np.std(local_levels_resized)}\n")
 
-    # Save Background subtracted image
     if return_partial_images:
-        cv2.imwrite(
-            os.path.join(partial_results_path, "1.3 - Local Estimated Background.png"),
-            local_levels_resized,
-        )
-        cv2.imwrite(
-            os.path.join(partial_results_path, "1.4 - Local Background subtracted image.png"),
-            cleaned_img,
-        )
+        _save_u16(os.path.join(partial_results_path, "1.3 - Local Estimated Background.png"),
+              local_levels_resized.astype(np.float32))
+        _save_u16(os.path.join(partial_results_path, "1.4 - Local Background subtracted image.png"),
+              cleaned_img.astype(np.float32))
 
-    return cleaned_img, local_levels
+    return cleaned_img, local_levels_resized
 
 
 def median_background_estimation(
@@ -286,14 +342,10 @@ def median_background_estimation(
 
     # Display Background subtracted image
     if return_partial_images:
-        cv2.imwrite(
-            os.path.join(partial_results_path, "1.1 - Estimated Background.png"),
-            bkg.background,
-        )
-        cv2.imwrite(
-            os.path.join(partial_results_path, "1.2 - Background subtracted image.png"),
-            cleaned_img,
-        )
+        _save_u16(os.path.join(partial_results_path, "1.1 - Estimated Background.png"),
+              bkg.background.astype(np.float32))
+        _save_u16(os.path.join(partial_results_path, "1.2 - Background subtracted image.png"),
+              cleaned_img.astype(np.float32))
 
     return cleaned_img, bkg.background
 
@@ -351,14 +403,10 @@ def sextractor_background_estimation(
 
     # Display Background subtracted image
     if return_partial_images:
-        cv2.imwrite(
-            os.path.join(partial_results_path, "1.1 - Estimated Background.png"),
-            bkg.background,
-        )
-        cv2.imwrite(
-            os.path.join(partial_results_path, "1.2 - Background subtracted image.png"),
-            cleaned_img,
-        )
+        _save_u16(os.path.join(partial_results_path, "1.1 - Estimated Background.png"),
+              bkg.background.astype(np.float32))
+        _save_u16(os.path.join(partial_results_path, "1.2 - Background subtracted image.png"),
+              cleaned_img.astype(np.float32))
 
     return cleaned_img, bkg.background
 
@@ -419,17 +467,25 @@ def find_sources(
         estimated_noise = estimate_local_sigma(downsampled_img, 9 * downscale_factor)
 
     # create sources mask using threshold
+    # Ensure provided background matches the smoothed/downsampled scale
+    if background_img.shape != img_smoothed.shape:
+        background_img = cv2.resize(
+            background_img, (img_smoothed.shape[1], img_smoothed.shape[0]),
+            interpolation=cv2.INTER_LINEAR
+        )
     local_levels = background_img
+
     sources_mask = img_smoothed > local_levels + threshold * estimated_noise
 
     # Subtract background from image and mask sources
     cleaned_img = downsampled_img - local_levels
     masked_image = np.clip(cleaned_img, 0, np.inf) * sources_mask
     # Resize using nearest-neighbor interpolation
-    masked_image = cv2.resize(masked_image, (img.shape[1], img.shape[0]), interpolation=cv2.INTER_LINEAR)
+    masked_image = cv2.resize(masked_image, (img.shape[1], img.shape[0]), interpolation=cv2.INTER_NEAREST)
 
     if return_partial_images:
-        cv2.imwrite(os.path.join(partial_results_path, "1.5 - Masked image.png"), masked_image)
+        _save_u16(os.path.join(partial_results_path, "1.5 - Masked image.png"),
+              masked_image.astype(np.float32))
 
     return masked_image, estimated_noise
 
@@ -464,8 +520,8 @@ def find_sources_photutils(img, background_img, photutils_gaussian_kernal_fwhm=3
     threshold = np.std(background_img)
     segment_map = detect_sources(convolved_data, threshold, npixels=10)
 
-    # check if sources were detected
-    if segment_map:
+    # check if sources were detected robustly
+    if (segment_map is not None) and (getattr(segment_map, "nlabels", 0) > 0):
         # create sources mask
         sources_mask = np.where(segment_map.data > 0, 1, 0)
         # Mask image
@@ -523,7 +579,7 @@ def select_top_sources(
     # TODO Done dilate_mask_iterations = 1
     dilated_mask = cv2.dilate(sources_mask, kernel, iterations=dilate_mask_iterations)
     # Find contours on the dilated mask
-    contours, _ = cv2.findContours(dilated_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    contours, _ = cv2.findContours(dilated_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     # resize the estimated noise to the image scale
     if not fast:
@@ -586,7 +642,7 @@ def select_top_sources(
     cv2.drawContours(sources_mask, top_contours, -1, (255), thickness=cv2.FILLED)
 
     if return_partial_images:
-        cv2.imwrite(os.path.join(partial_results_path, "2 - Source Mask.png"), sources_mask)
+        _save_u16(os.path.join(partial_results_path, "2a - Source Mask (contours).png"), sources_mask)
 
     return masked_image, sources_mask, top_contours
 
@@ -652,7 +708,8 @@ def select_top_sources_photutils(
     top_contours, _ = cv2.findContours(sources_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     if return_partial_images:
-        cv2.imwrite(os.path.join(partial_results_path, "2 - Source Mask.png"), sources_mask)
+        _save_u16(os.path.join(partial_results_path, "2b - Source Mask (photutils).png"), sources_mask)
+
 
     return masked_image, sources_mask, top_contours
 
@@ -670,41 +727,28 @@ def ring_mask(d: int) -> np.ndarray:
     m[1:-1,-1]  = True
     return  m
 
-def _ring_mean_background_estimation(
-    downsampled_img,
-    d_small,
-):
-    """Estimate and subtract local background levels in an image by applying a leveling
-    filter.
-
-    This function applies a ring-based local leveling filter of size `d` to estimate
-    the local background level for each pixel in the image. The background is
-    downscaled for speed and resized back to the original shape.
-
-    Args:
-        img (numpy.ndarray): The input image (2D array).
-        d (int): Filter size (must be >= 3).
-        leveling_filter_downscale_factor (int, optional): Downscaling factor to apply
-            when creating the downsampled image used for local level estimation.
-            Defaults to 4.
-
-    Returns:
-        numpy.ndarray: The estimated local background for each pixel in the image.
+def _ring_mean_background_estimation(downsampled_img: np.ndarray, d_small: int) -> np.ndarray:
     """
-    # Ensure filter is odd after downscaling
+    Estimate local background via a 1-px square ring mean at downsampled scale.
+
+    Parameters
+    ----------
+    downsampled_img : np.ndarray
+        2D image at reduced resolution (float32 recommended).
+    d_small : int
+        Ring kernel size at downsampled scale (>=3, odd recommended).
+
+    Returns
+    -------
+    np.ndarray
+        2D float32 background at downsampled resolution.
+    """
     if d_small % 2 == 0:
         d_small += 1
-    print(f"Downscaled filter size: {d_small}")
-
-    # (d × d px) local leveling filter
-    mask = ring_mask(d_small)
-    ring_count = float(mask.sum())
-    level_filter = (1 / ring_count) * mask
-
-    # Calculate the local level of the downsampled image
-    local_levels = cv2.filter2D(downsampled_img, -1, level_filter, borderType=cv2.BORDER_REFLECT)
-
-    return local_levels
+    mask = ring_mask(d_small).astype(np.float32)
+    kernel = mask / float(mask.sum())
+    return cv2.filter2D(downsampled_img.astype(np.float32), -1, kernel,
+                        borderType=cv2.BORDER_REFLECT)
 
 def _ring_median_background_estimation(img_small: np.ndarray, d_small: int) -> np.ndarray:
     """
@@ -792,216 +836,177 @@ def estimate_noise_pairs(
 
 
 def source_finder(
-        img,
-        log_file_path="",
-        leveling_filter_downscale_factor: int = 4,
-        fast=False,
-        threshold: float = 3.1,
-        local_sigma_cell_size=36,
-        kernal_size_x=3,
-        kernal_size_y=3,
-        sigma_x=1,
-        dst=1,
-        number_sources: int = 40,
-        min_size=20,
-        max_size=600,
-        dilate_mask_iterations=1,
-        is_trail=False,
-        return_partial_images=False,
-        partial_results_path="./partial_results/",
-        level_filter: int = 9,
-        ring_filter_type: str = 'mean'
+    img: np.ndarray,
+    log_file_path: str = "",
+    leveling_filter_downscale_factor: int = 4,
+    fast: bool = False,
+    threshold: float = 3.0,
+    local_sigma_cell_size: int = 36,
+    kernal_size_x: int = 3,
+    kernal_size_y: int = 3,
+    sigma_x: float = 1.0,
+    dst: int = 1,
+    number_sources: int = 40,
+    min_size: int = 20,
+    max_size: int = 600,
+    dilate_mask_iterations: int = 1,
+    is_trail: bool = False,
+    return_partial_images: bool = False,
+    partial_results_path: str = "./partial_results/",
+    level_filter: int = 9,
+    ring_filter_type: str = 'mean'
 ):
-    """Function combining the source finding pipeline for faster execution time.
-
-    - **Local levels background estimation:** Estimate and subtract local background levels in an image by applying a leveling filter.
-    - **Find sources:** Identify and mask source regions in an image using a threshold-based method.
-    - **Select top sources:** Identify and select the top sources in an image based on their integrated flux and size constraints.
-
-
-    Args:
-        img (numpy.ndarray): The input image (2D array).
-        log_file_path (str, optional): Path to a log file where the overall background level statistics
-            will be written. Defaults to an empty string, which means no log will be created.
-        leveling_filter_downscale_factor (int, optional): The downscaling factor to apply when creating the
-            downsampled image used for local level estimation. Defaults to 4.
-        fast (bool, optional): If True, global noise estimation is used. Defaults to False.
-        threshold (float): The threshold value used to identify sources. Pixels whose values exceed
-            `local background + threshold * local noise` will be marked as source pixels.
-        local_sigma_cell_size (int, optional): The size of the cells (in pixels) used for estimating local noise
-            levels. Defaults to 36.
-        kernal_size_x (int, optional): The width of the Gaussian kernel used for smoothing the image. Defaults to 3.
-        kernal_size_y (int, optional): The height of the Gaussian kernel used for smoothing the image. Defaults to 3.
-        sigma_x (float, optional): The standard deviation in the X direction for the Gaussian kernel. Defaults to 1.
-        dst (int, optional): The depth of the output image. Defaults to 1.
-        number_sources (int): The number of top sources to select, based on their flux significance.
-        min_size (int): The minimum number of pixels required for a source to be considered valid.
-        max_size (int): The maximum number of pixels allowed for a source to be considered valid.
-        dilate_mask_iterations (int, optional): The number of iterations for dilating the mask to merge nearby
-            sources. A higher value merges more pixels. Defaults to 1.
-        is_trail (bool, optional): _description_. Defaults to False.
-        return_partial_images (bool, optional): If True, the function saves the intermediate images (local estimated
-            background and background-subtracted image). Defaults to False.
-        partial_results_path (str, optional): The directory path where intermediate results will be saved
-        if `return_partial_images` is True. Defaults to "./partial_results/".
-        level_filter (int): The size of the star level filter, shall be 5..199 and an odd number.
-
-    Returns:
-        tuple: A tuple containing three elements:
-            - masked_image (numpy.ndarray): The input masked image, with only the selected top sources retained.
-            - sources_mask (numpy.ndarray): A binary mask highlighting the top selected sources, if `is_trail` is True.
-            - top_contours (list): A list of contours for the top selected sources.
     """
-    ########
-    # Background Estimation
-    ########
-    print(f'  threshold: {threshold} level_filter: {level_filter} ring_filter_type: {ring_filter_type}')
+    Detect point sources (and optionally trails) using ring/local background,
+    k·sigma thresholding, and perimeter-vetted SNR ranking.
 
+    Parameters
+    ----------
+    img : np.ndarray
+        Input 2D image (uint16 or float); will be processed in float32.
+    log_file_path : str
+        File path for logging background stats (append mode).
+    leveling_filter_downscale_factor : int
+        Downscale factor for background estimation speed-up (>=1).
+    fast : bool
+        If True, use global noise estimate; else allow local sigma maps.
+    threshold : float
+        Sigma multiplier k for thresholding and acceptance (N·σ).
+    local_sigma_cell_size : int
+        Tile size for local sigma (if used).
+    kernal_size_x, kernal_size_y : int
+        Gaussian kernel size (typically 3x3).
+    sigma_x : float
+        Gaussian std dev (pixels) used for light smoothing.
+    dst : int
+        OpenCV Gaussian anchor param (kept for API parity).
+    number_sources : int
+        Maximum number of sources to return.
+    min_size, max_size : int
+        Area bounds (pixels) for valid components.
+    dilate_mask_iterations : int
+        Iterations for dilation to merge nearby islands (point mode).
+    is_trail : bool
+        If True, skip opening (trail-safe). Trail extras can be added later.
+    return_partial_images : bool
+        If True, write intermediate images to disk.
+    partial_results_path : str
+        Directory for partial result outputs.
+    level_filter : int
+        Ring kernel size (full-res reference) before downscaling.
+    ring_filter_type : str
+        'mean' or 'median' ring background (mean recommended for speed).
+
+    Returns
+    -------
+    masked_image : np.ndarray
+        Background-subtracted image masked to selected sources (float32).
+    sources_mask : Optional[np.ndarray]
+        Binary mask for winners if trails mode requires it; else None.
+    top_contours : List[np.ndarray]
+        List of OpenCV contours for the selected top sources.
+    """
+    # --- Background estimation at low-res ---
     d = level_filter
     if d < 3:
-        raise ValueError("d must be >= 3")
+        raise ValueError("level_filter must be >= 3")
+    s = max(1, int(leveling_filter_downscale_factor))
 
-    # Downscale image
-    downscale_factor = leveling_filter_downscale_factor
-    if downscale_factor > 1:
-        downsampled_img = cv2.resize(img, (img.shape[1]//downscale_factor, img.shape[0]//downscale_factor), interpolation=cv2.INTER_AREA)
-        d_small = max(3, d // downscale_factor)  # shrink kernel accordingly
+    if s > 1:
+        small = cv2.resize(img.astype(np.float32, copy=False),
+                           (img.shape[1]//s, img.shape[0]//s),
+                           interpolation=cv2.INTER_AREA)
+        d_small = max(3, d // s)
+        if d_small % 2 == 0:
+            d_small += 1
     else:
-        downsampled_img = img
-        d_small = d
+        small = img.astype(np.float32, copy=False)
+        d_small = d if (d % 2 == 1) else d + 1
 
-    # Run local leveling
-    if ring_filter_type=="median":
-        print("Using Median Ring Background Estimation")
-        local_levels = _ring_median_background_estimation(downsampled_img, d_small)
-    elif ring_filter_type=="mean":
-        print("Using Mean Ring Background Estimation")
-        local_levels = _ring_mean_background_estimation(downsampled_img, d_small)
+    if ring_filter_type == 'mean':
+        local_levels_small = _ring_mean_background_estimation(small, d_small)
+    elif ring_filter_type == 'median':
+        local_levels_small = _ring_median_background_estimation(small, d_small)
     else:
-        raise ValueError(f'Invalid ring_filter_type: {ring_filter_type} expected: median|mean')
+        raise ValueError("ring_filter_type must be 'mean' or 'median'")
 
-    # Upscale back with cubic spline
-    if downscale_factor > 1:
-        local_levels = cv2.resize(local_levels, (img.shape[1], img.shape[0]), interpolation=cv2.INTER_CUBIC)
+    # Upscale background to full-res
+    local_levels = cv2.resize(local_levels_small, (img.shape[1], img.shape[0]),
+                              interpolation=cv2.INTER_CUBIC)
 
-    # write background info to log
-    with open(log_file_path, "a") as file:
-        file.write(f"overall background level mean : {np.mean(local_levels)}\n")
-        file.write(f"overall background level stdev : {np.std(local_levels)}\n")
+    # --- Light smoothing and subtraction at full-res (float32) ---
+    ksize = (kernal_size_x, kernal_size_y)
+    img_smoothed = cv2.GaussianBlur(img.astype(np.float32, copy=False), ksize, sigma_x, dst)
+    cleaned_img  = img_smoothed - local_levels.astype(np.float32)
 
-    # Save Background subtracted image
+    if log_file_path:
+        with open(log_file_path, "a") as f:
+            f.write(f"overall background level mean : {np.mean(local_levels):.6f}\n")
+            f.write(f"overall background level stdev : {np.std(local_levels):.6f}\n")
+
     if return_partial_images:
-        cleaned_img = subtract_background(img, local_levels)
-        cv2.imwrite(
-            os.path.join(partial_results_path, "1.3 - Local Estimated Background.png"),
-            local_levels,
-        )
-        cv2.imwrite(
-            os.path.join(partial_results_path, "1.4 - Local Background subtracted image.png"),
-            cleaned_img,
-        )
+        _save_u16(os.path.join(partial_results_path, "1.3 - Local Estimated Background.png"),
+              local_levels.astype(np.float32))
+        _save_u16(os.path.join(partial_results_path, "1.4 - Local Background subtracted image.png"),
+              cleaned_img.astype(np.float32))
+
 
     ########
     # Thresholding : find_sources
     ########
-
-    # Apply a (3 × 3 px) Gaussian kernel with std = 1 px
-    # TODO: Done find_sources gaussian blue kernal=(3,3), stdev = (1,1)
-    ksize = (kernal_size_x, kernal_size_y)
-    img_smoothed = cv2.GaussianBlur(img, ksize, sigma_x, dst)
-
-    # Subtract background from image
-    cleaned_img = subtract_background(img_smoothed, local_levels)
+    
 
     # Estimate the per pair noise
-    estimated_noise = estimate_noise_pairs(img)
-    print("estimate_noise_pairs(img)", estimated_noise)
+    cleaned_img = np.nan_to_num(cleaned_img, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
+    # --- Global noise via MAD, then k·sigma threshold ---
+    sigma_global = robust_sigma_mad(cleaned_img)
+    print("robust_sigma_mad(cleaned_img)", sigma_global)
 
-    # Get local levels from cleaned image
-    if ring_filter_type == 'median':
-        local_levels_from_cleaned_img = _ring_median_background_estimation(cleaned_img, d)
-    elif ring_filter_type == 'mean':
-        local_levels_from_cleaned_img = _ring_mean_background_estimation(cleaned_img, d)
-    else:
-        raise ValueError(f'Invalid ring_filter_type: {ring_filter_type} expected: median|mean')
+    thr = threshold * float(sigma_global)
+    sources_mask = (cleaned_img > thr).astype(np.uint8) * 255
 
-    # create sources mask using threshold
-    sources_mask = cleaned_img > local_levels_from_cleaned_img + threshold * estimated_noise
-
-    # mask sources
-    masked_image = cleaned_img * sources_mask
-
-    if return_partial_images:
-        cv2.imwrite(os.path.join(partial_results_path, "1.5 - Masked image.png"), masked_image)
-
-    ########
-    # Filter sources : select_top_sources
-    ########
-
-    # Locate sources in the masked image
-    sources_mask = sources_mask.astype(np.uint8) * 255
-
+    # --- Morphology (point-star only) ---
     if not is_trail:
-        # Dilate the sources_mask to merge nearby sources
-        # TODO: Parameterise: Parameterise
-        #
-        dilation_radius = 5
-        kernel = np.ones((dilation_radius, dilation_radius), np.uint8)
-        # TODO Done dilate_mask_iterations = 1
+        cross = np.array([[0,1,0],[1,1,1],[0,1,0]], np.uint8)
+        sources_mask = cv2.morphologyEx(sources_mask, cv2.MORPH_OPEN, cross, iterations=1)
+    if not is_trail and dilate_mask_iterations > 0:
+        kernel = np.ones((5, 5), np.uint8)
         sources_mask = cv2.dilate(sources_mask, kernel, iterations=dilate_mask_iterations)
 
-    # Find contours on the mask
-    contours, _ = cv2.findContours(sources_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    # --- Label ---
+    contours, _ = cv2.findContours(sources_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    # Calculate significance (integrated flux / noise) for each source
+    # --- Rank/accept by sigma-SNR with perimeter vetting ---
     flux_noise = {}
     for label, contour in enumerate(contours):
-        if cv2.contourArea(contour) <= min_size:
+        area = cv2.contourArea(contour)
+        if area < min_size or area > max_size:
             flux_noise[label] = -1
             continue
-        # Calculate enclosing Rectangle
-        x, y, w, h = cv2.boundingRect(contour)
-        x1, y1, x2, y2 = (x, y, x + w, y + h)
-        roi = masked_image[y1:y2, x1:x2]
-        shifted_contour = contour - [x, y]
-        # Extract a masked ROI from the cleaned image containing each segement
-        mask = np.zeros((h, w), dtype=np.uint8)
-        cv2.drawContours(mask, [shifted_contour], -1, (255), thickness=cv2.FILLED)
-        filtered_roi = cv2.bitwise_and(roi, roi, mask=mask)
-        # filter out sources based on number of pixels
-        pixel_count = np.sum(filtered_roi > 0)
-        if pixel_count < min_size or pixel_count > max_size:
+
+        core_mean, per_mean, per_sigma = _core_vs_perimeter_stats(cleaned_img, contour, pad=2)
+        sigma_bg = max(float(sigma_global), float(per_sigma))
+        if sigma_bg <= 0.0:
             flux_noise[label] = -1
         else:
-            flux_noise[label] = np.sum(filtered_roi)
+            snr_sigma = (core_mean - per_mean) / sigma_bg
+            flux_noise[label] = float(snr_sigma) if snr_sigma >= threshold else -1
 
-    # Sort sources based on significance (integrated flux / noise)
-    flux_noise_sorted = list(sorted(flux_noise.items(), key=lambda item: item[1], reverse=True))
+    # --- Select top N ---
+    flux_noise_sorted = sorted(flux_noise.items(), key=lambda kv: kv[1], reverse=True)
+    number_sources = min(number_sources, len(flux_noise_sorted))
+    top_sources = [i for i, (lbl, score) in enumerate(flux_noise_sorted[:number_sources]) if score != -1]
+    top_contours = [contours[flux_noise_sorted[i][0]] for i in top_sources]
 
-    # define number of sources to return
-    if len(flux_noise_sorted) < number_sources:
-        number_sources = len(flux_noise_sorted)
+    # --- Winners mask + masked image ---
+    winners_mask = np.zeros_like(sources_mask, dtype=np.uint8)
+    if top_contours:
+        cv2.drawContours(winners_mask, top_contours, -1, 255, thickness=cv2.FILLED)
 
-    # keep only top sources
-    top_sources = []
-    for i in range(number_sources):
-        if flux_noise_sorted[i][1] != -1:
-            top_sources.append(flux_noise_sorted[i][0])
-    top_contours = [contours[i] for i in top_sources]
+    masked_image = np.clip(cleaned_img, 0, np.inf) * (winners_mask > 0)
 
-    if not is_trail:
-        if return_partial_images:
-            # mask sources based on significance (integrated flux / noise)
-            sources_mask = np.zeros_like(masked_image, dtype=np.uint8)
-            cv2.drawContours(sources_mask, top_contours, -1, (255), thickness=cv2.FILLED)
-            cv2.imwrite(os.path.join(partial_results_path, "2 - Source Mask.png"), sources_mask)
+    if return_partial_images:
+        _save_u16(os.path.join(partial_results_path, "2 - Source Mask (winners).png"), winners_mask)
+        _save_u16(os.path.join(partial_results_path, "3 - Masked image.png"), masked_image)
 
-        return masked_image, None, top_contours
-    else:
-        # mask sources based on significance (integrated flux / noise)
-        sources_mask = np.zeros_like(masked_image, dtype=np.uint8)
-        cv2.drawContours(sources_mask, top_contours, -1, (255), thickness=cv2.FILLED)
-        if return_partial_images:
-            cv2.imwrite(os.path.join(partial_results_path, "2 - Source Mask.png"), sources_mask)
-
-        return masked_image, sources_mask, top_contours
+    return masked_image, (None if not is_trail else winners_mask), top_contours

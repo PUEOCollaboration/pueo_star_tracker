@@ -270,6 +270,8 @@ class Telemetry:
     A class to handle serial port communication and logging telemetry data.
     """
     last_error = None
+    backup_count: int = 64              # Number of telemetry files before overwrite
+    header_log_interval: int = 3600     # Like once per hour, assuming log cadence is 1s
 
     def __init__(self, cfg, telemetry_queue=None, t_lock=None):
         """
@@ -291,13 +293,16 @@ class Telemetry:
             name='pueo-telemetry',
             config_file=self.config_file,
             log_file_name_token="telemetry_log",
-            is_global=False
+            is_global=False,
+            backup_count=64
         )  # Initialise logging, config.ini, ...
 
         self.log.info(f'Telemetry enabled: {self.is_enabled}')
         logpair('telemetry', self.is_enabled, color='green')
         if not self.is_enabled:
             return
+        self.log.info(f'       backup_count: {self.backup_count}')
+        self.log.info(f'header_log_interval: {self.header_log_interval}')
 
         self.os_type = platform.system()
         self.arduino_serial = None
@@ -476,7 +481,7 @@ class Telemetry:
         # print(f'Logged data at {data[0]}')
         is_print = False
 
-        if self.cnt % 25 == 0:
+        if self.cnt % self.header_log_interval == 0:
             if is_print:
                 cprint(f'  Header: {header_line}', color='cyan')
 

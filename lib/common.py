@@ -434,8 +434,10 @@ def logging_add_second_file(filename):
     log_debug('--------------LOGGING TO SECOND FILE--------------')
     log_debug(f'log_file: {filename}')
 
-def init_logging(name=None, log_file='logs/debug.log', log_level='DEBUG', is_global=True):
+def init_logging(name=None, log_file='logs/debug.log', log_level='DEBUG', is_global=True, backup_count: int = 10):
     """ Initialise logging
+
+
 
     :param name:
     :param log_file:
@@ -443,6 +445,8 @@ def init_logging(name=None, log_file='logs/debug.log', log_level='DEBUG', is_glo
     :return: None
     :param is_global:
     :type is_global:
+    :param backup_count:
+    :type backup_count:
     """
     # Logging is_init and configuration
     name = __name__ if name is None else name
@@ -538,7 +542,7 @@ def init_logging(name=None, log_file='logs/debug.log', log_level='DEBUG', is_glo
     # 16 x 1024 x 1024 (16 Mb)
     file_size = 16 * 1024 * 1024  # 16Mb
 
-    fh = logging.handlers.RotatingFileHandler(log_file, 'a', maxBytes=file_size, backupCount=10, encoding='utf-8', delay=False)
+    fh = logging.handlers.RotatingFileHandler(log_file, 'a', maxBytes=file_size, backupCount=backup_count, encoding='utf-8', delay=False)
     fh.setLevel(log_level)
     # formatter = logging.Formatter('%(asctime)s ' + mode + ' %(levelname)s %(message)s')
     pid = os.getpid()
@@ -633,7 +637,7 @@ def config_parse_value(data_type, config, section, token, default, allowed_value
     return value
 
 
-def load_config(name=None, config_file='config.ini', log_file_name_token='log_file_name', is_global=True):
+def load_config(name=None, config_file='config.ini', log_file_name_token='log_file_name', is_global=True, backup_count=10):
     """Load CONFIG file and populate SETTINGS dict
 
     :return: None
@@ -672,7 +676,7 @@ def load_config(name=None, config_file='config.ini', log_file_name_token='log_fi
         log_filename = os.path.abspath(f'{Path(cwd)}/{log_path}/{log_file}')
 
         # Initiate logging
-        log = init_logging(name, log_filename, log_level, is_global)
+        log = init_logging(name, log_filename, log_level, is_global, backup_count)
         # logpair('log file', log_filename)
         # logline()
     else:

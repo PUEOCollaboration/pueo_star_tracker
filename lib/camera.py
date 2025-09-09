@@ -1,5 +1,6 @@
 # Standard imports
 from contextlib import suppress
+import contextlib
 import datetime
 import usb.core
 import time
@@ -10,6 +11,8 @@ import os
 import logging
 import subprocess
 import re
+import traceback
+from typing import Optional
 
 # External imports
 from zwoasi import Camera
@@ -70,14 +73,20 @@ class DummyCamera:
         self.cfg = cfg
         self.camera = camera
         if camera:
+            camera.id = 0
             camera.capture = self.capture
             camera.get_camera_property = self.get_camera_property
             camera.set_camera_defaults = self.set_camera_defaults
             camera.get_controls = self.get_controls
+            camera.get_control_value = self.get_control_value
             camera.get_control_values = self.get_control_values
             camera.set_image_type = self.set_image_type
             camera.set_roi = self.set_roi
             camera.set_control_value = self.set_control_value
+
+            camera.start_video_capture = self.start_video_capture
+            camera.stop_video_capture = self.stop_video_capture
+
         self.filename = None
         self.files = len(self.get_images())
         self.simulated = True
@@ -105,6 +114,8 @@ class DummyCamera:
         """
         self.log.debug(f'Dummy set_control_value: control_type: {control_type} value: {value} auto: {auto}')
 
+
+
     def set_roi(self, bins: int):
         """Dummy implementation of setting the region of interest.
 
@@ -120,6 +131,17 @@ class DummyCamera:
             image_type: Type of image to set.
         """
         self.log.debug(f'Dummy set_image_type: {image_type}')
+
+    def get_control_value(self, control_type):
+        """Get dummy control value for camera settings.
+
+        Returns:
+            dict: Dictionary of current control values with their settings.
+        """
+        controls = {'Gain': 120, 'Exposure': 30000, 'Offset': 0, 'BandWidth': 100, 'Flip': 0, 'AutoExpMaxGain': 285,
+                    'AutoExpMaxExpMS': 30000, 'AutoExpTargetBrightness': 100, 'HighSpeedMode': 1, 'Temperature': 228,
+                    'GPS': 0}
+        return [controls[control_type],]
 
     def get_control_values(self):
         """Get dummy control values for camera settings.
@@ -185,6 +207,17 @@ class DummyCamera:
             dict: Empty dictionary as this is a dummy implementation.
         """
         return {}
+
+    def start_video_capture(self):
+        """Enable video capture mode.
+
+        Retrieve video frames with :func:`capture_video_frame()`."""
+        self.log.debug(f'Dummy start_video_capture.')
+
+    def stop_video_capture(self):
+        """Leave video capture mode."""
+        self.log.debug(f'Dummy stop_video_capture.')
+
 
     def capture(self, initial_sleep=0.01, poll=0.01, buffer_=None, filename=None):
         """Simulate capturing an image from the dummy camera.
@@ -266,11 +299,25 @@ class DummyCamera:
 
 class PueoStarCamera(Camera):
     """
-    Rotation?
-        Is it possible to put in a feature that rotates the image by 90°, 270, 180°, and zero?
-        There is a camera setting to do this.
-        I realize that this might make image solving faster because the images are all right side down right now.
+    Extended ZWO ASI camera wrapper with support for hardware autogain.
+
+    This class adds utility methods for temporarily enabling and disabling
+    the camera's hardware autogain functionality in video mode, while
+    ensuring safe transition back to still-image capture for science imaging.
+
+    Attributes
+    ----------
+    _autogain_active : bool
+        Indicates whether autogain is currently active.
+    _last_gain : int or None
+        Gain value before enabling autogain (used for logging and delta calc).
+    _video_mode : bool
+        Tracks whether the camera is currently in video mode.
     """
+    # Auto Gain Control Constants
+    # ---------------------------
+    HW_AUTOGAIN_DISABLED = 0
+
     def __init__(self, cfg):
         self.cfg = cfg
         self.log = logging.getLogger('pueo')
@@ -282,6 +329,16 @@ class PueoStarCamera(Camera):
         self.simulated = True
         self.name = 'DummyCamera'
         self.usb_info = None
+
+        # State tracking
+        self._autogain_active: bool = False
+        self._last_gain: Optional[int] = None
+        self._video_mode: bool = False
+        self._autogain_start_time = None
+
+        # Control flags
+        self._hw_autogain_enabled: bool = self.cfg.hw_autogain_enabled  # Master enable flag
+        self._hw_autogain_requested: bool = False                       # Per-cycle request flag
 
         # TODO: Implement Camera Retry in case of error.
 
@@ -306,7 +363,7 @@ class PueoStarCamera(Camera):
         # self.camera = asi.Camera(self.camera_id)
         self.camera_info = self.get_camera_property()
         self.set_camera_defaults()
-        self.print_camera_control_parameters()
+        self.log_camera_controls()
         self.log.info('Camera Initialized')
 
     def __del__(self):
@@ -317,6 +374,7 @@ class PueoStarCamera(Camera):
             self.log.debug("Camera closed successfully.")
 
     def initialize_camera(self):
+        """Initialize camera."""
         self.num_cameras = 0
         with suppress(FileNotFoundError, Exception):
             self.log.info(f'ASI SDK Lib: {self.cfg.env_filename}')
@@ -580,7 +638,8 @@ class PueoStarCamera(Camera):
         # Set to binning by 4.
         self.set_roi(bins=self.cfg.roi_bins)
 
-    def print_camera_control_parameters(self):
+    def log_camera_controls(self):
+        """Log all camera control parameters."""
         # Get all the camera controls and print them to the screen. This will confirm that the camera is getting set to the right values.
         self.log.info('Camera controls:')
         controls = self.get_controls()
@@ -589,7 +648,181 @@ class PueoStarCamera(Camera):
             for k in sorted(controls[cn].keys()):
                 self.log.debug('        %s: %s' % (k, repr(controls[cn][k])))
 
+    def enable_hw_autogain(self) -> None:
+        """
+        Enable hardware autogain in video mode.
+
+        This method stores the current gain, switches the camera into video mode,
+        and enables autogain. A timer is started to measure how long autogain is
+        active.
+
+        Notes
+        -----
+        Must be paired with `disable_hw_autogain()` to restore still-image mode.
+        """
+        if not self._hw_autogain_enabled:
+            self.log.debug("enable_hw_autogain() called but master switch is OFF. No action.")
+            return
+
+        if self._autogain_active:
+            self.log.debug("enable_hw_autogain(): autogain already running; no-op.")
+            return
+
+        try:
+            self._last_gain = self.get_control_value("Gain")[0]
+            self.log.info(f"HW AutoGain: starting, current gain = {self._last_gain}")
+
+            # Switch into continuous video mode
+            self.start_video_capture()
+            self._video_mode = True
+
+            # Tell camera to run gain in auto mode
+            self.set_control_value("Gain", self._last_gain, auto=True)
+
+            # Mark runtime state
+            self._autogain_start_time = time.monotonic()
+            self._autogain_active = True
+
+        except Exception as exc:
+            self.log.error(f"Failed to enable HW autogain: {exc}")
+            # Get the full stack trace as a string
+            exc_type, exc_value, exc_traceback = sys.exc_info()
+            stack_trace = traceback.format_exception(exc_type, exc_value, exc_traceback)
+            stack_trace_str = ''.join(stack_trace)
+
+            self.log.debug(f"Autogain failure stack trace:\n{stack_trace_str}")
+            self._autogain_active = False
+            self._autogain_start_time = None
+
+    def disable_hw_autogain(self) -> None:
+        """
+        Stop hardware autogain and return camera to still-image (manual) mode.
+
+        If no autogain was running, ensures still-mode and returns.
+        """
+        # If autogain is not running, still enforce still-mode and return
+        if not self._autogain_active:
+            if self._video_mode:
+                try:
+                    self.stop_video_capture()
+                except Exception as exc:
+                    self.log.error(f"Error stopping video capture while enforcing still mode: {exc}")
+                finally:
+                    self._video_mode = False
+            self.log.debug("disable_hw_autogain(): no autogain cycle was running; ensured still mode.")
+            return
+
+        # Stop a running autogain cycle and record diagnostics
+        try:
+            final_gain = int(self.get_control_value("Gain")[0])
+            delta = final_gain - (self._last_gain or final_gain)
+
+            elapsed = (
+                time.monotonic() - self._autogain_start_time
+                if self._autogain_start_time is not None
+                else 0.0
+            )
+
+            # Stop continuous/video capture first
+            if self._video_mode:
+                self.stop_video_capture()
+                self._video_mode = False
+
+            # Lock the final gain into manual mode for subsequent still captures
+            self.set_control_value("Gain", final_gain, auto=False)
+
+            # Update last_gain to the autogain result
+            self._last_gain = final_gain
+
+            self.log.info(
+                f"HW AutoGain: stopped cycle, final_gain={final_gain} "
+                f"(delta={delta:+d}, active={elapsed:.2f}s)"
+            )
+
+        except Exception as exc:
+            self.log.error(f"Failed to stop HW autogain cleanly: {exc}")
+
+        finally:
+            # Clear running state even if exceptions occurred
+            self._autogain_active = False
+            self._autogain_start_time = None
+
+    @contextlib.contextmanager
+    def hw_autogain_cycle(self):
+        """
+        Context manager implementing the requested single-cycle semantics.
+
+        Semantics:
+        - BEFORE capture:
+            * If a previous autogain cycle is running -> STOP it (disable_hw_autogain),
+            * Else ensure video mode is stopped so capture is in still/manual mode.
+        - DURING the context (yield): camera is guaranteed to be in still/manual mode.
+        - AFTER capture:
+            * If both _hw_autogain_enabled and _hw_autogain_requested are True:
+                start exactly ONE autogain cycle (enable_hw_autogain).
+            * Else:
+                ensure no autogain cycle is running (disable_hw_autogain if needed).
+
+        This guarantees:
+          - capture() inside `with` is always a still/manual capture,
+          - each request starts at most one autogain cycle that runs until the next
+            invocation of this context manager (which will stop it before the next capture).
+        """
+        # Decide whether a new autogain cycle should be started AFTER capture.
+        start_cycle_after_capture = bool(self._hw_autogain_enabled and self._hw_autogain_requested)
+
+        # ----------------- BEFORE capture: Ensure STILL mode -----------------
+        # If autogain is currently running from a previous request, we MUST stop it
+        # before capture to avoid capturing during autogain.
+        if self._autogain_active:
+            self.log.debug("hw_autogain_cycle: stopping existing autogain cycle before capture.")
+            try:
+                self.disable_hw_autogain()
+            except Exception as exc:
+                # disable_hw_autogain already logs errors; ensure still mode anyway
+                self.log.error(f"hw_autogain_cycle: exception stopping existing autogain: {exc}")
+        else:
+            # If we're in video mode for any other reason, stop it to be safe.
+            if self._video_mode:
+                try:
+                    self.stop_video_capture()
+                except Exception as exc:
+                    self.log.error(f"hw_autogain_cycle: failed to stop_video_capture before capture: {exc}")
+                finally:
+                    self._video_mode = False
+
+        # Now camera is guaranteed to be in still/manual mode for capture.
+        try:
+            yield
+        finally:
+            # ----------------- AFTER capture -----------------
+            if start_cycle_after_capture:
+                # Start exactly one autogain cycle that will run until the next
+                # hw_autogain_cycle() invocation (which will then stop it before capture).
+                self.log.debug(
+                    f"hw_autogain_cycle: starting a single autogain cycle after capture "
+                    f"(enabled={self._hw_autogain_enabled}, requested={self._hw_autogain_requested})"
+                )
+                try:
+                    self.enable_hw_autogain()
+                except Exception as exc:
+                    self.log.error(f"hw_autogain_cycle: failed to start autogain after capture: {exc}")
+            else:
+                # No new cycle requested -> ensure nothing is running.
+                if self._autogain_active:
+                    self.log.debug("hw_autogain_cycle: no cycle requested; stopping running autogain after capture.")
+                    try:
+                        self.disable_hw_autogain()
+                    except Exception as exc:
+                        self.log.error(f"hw_autogain_cycle: failed to stop autogain after capture: {exc}")
+                else:
+                    # Nothing to do; remain in still/manual mode.
+                    # Let's not print anything to polute the logs
+                    # self.log.debug("hw_autogain_cycle: no cycle requested; already in still mode.")
+                    pass
+
     def is_available(self):
+        """Prototype code to find camera. Not used."""
         dev = usb.core.find(idVendor=self.cfg.camera_id_vendor, idProduct=self.cfg.camera_id_product)
         if dev is None:
             curr_utc_timestamp = None

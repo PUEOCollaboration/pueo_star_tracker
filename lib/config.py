@@ -116,6 +116,9 @@ class Config(Dynamic):
     # Time to reinitialise after power cycle# Ranging from 2.0 - 5.1 step 0.1
     power_cycle_wait = 3000
 
+    hw_autogain_enabled = True
+    hw_autogain_recalibration_interval = 2
+
     # [SOURCES]
     # img_bkg_threshold = 3.1
     img_bkg_threshold = 8.0
@@ -505,6 +508,9 @@ class Config(Dynamic):
 
         self.power_cycle_wait = self._config.getint('CAMERA', 'power_cycle_wait', fallback=self.power_cycle_wait)
 
+        self.hw_autogain_enabled = self._config.getboolean('CAMERA', 'hw_autogain_enabled', fallback=self.hw_autogain_enabled)
+        self.hw_autogain_recalibration_interval = self._config.getint('CAMERA', 'hw_autogain_recalibration_interval', fallback=self.hw_autogain_recalibration_interval)
+
         # [SOURCES]
         self.img_bkg_threshold = self._config.getfloat('SOURCES', 'img_bkg_threshold', fallback=self.img_bkg_threshold)
         self.img_number_sources = self._config.getint('SOURCES', 'img_number_sources', fallback=self.img_number_sources)
@@ -790,7 +796,9 @@ class Config(Dynamic):
             'sbc_dio_focuser_pin': self.sbc_dio_focuser_pin,
             'sbc_dio_default': self.sbc_dio_default,
             'sbc_dio_cycle_delay': self.sbc_dio_cycle_delay,
-            'power_cycle_wait': self.power_cycle_wait
+            'power_cycle_wait': self.power_cycle_wait,
+            'hw_autogain_enabled': self.hw_autogain_enabled,
+            'hw_autogain_recalibration_interval': self.hw_autogain_recalibration_interval
         }
 
         config['SOURCES'] = {

@@ -111,7 +111,7 @@ class PueoStarCameraOperation:
         self.start_t0 = time.monotonic()
         self.status = 'Initializing'
         self.operation_enabled = self.cfg.run_autonomous
-        self.img_cnt = 0
+        self.img_cnt = 0 # Capture image counter!
         self.solver = self.cfg.solver
         self._flight_mode = self.cfg.flight_mode
         self._chamber_mode = self.cfg.run_chamber
@@ -1895,7 +1895,16 @@ class PueoStarCameraOperation:
             t1 = time.monotonic()
             try:
                 self.logit(f'Capturing image @{get_dt(t0)}.', color='green')
-                self.curr_img = self.camera.capture()
+                # HW Autogain Request:
+                #   In autonomous mode, every n-th image if hw_autogain_recalibration_interval > 0
+                self.camera._hw_autogain_requested = (
+                        self.operation_enabled and
+                        self.cfg.hw_autogain_recalibration_interval != self.camera.HW_AUTOGAIN_DISABLED and
+                        (self.img_cnt % self.cfg.hw_autogain_recalibration_interval == 0)
+                )
+                # Context manager for a hardware autogain cycle.
+                with self.camera.hw_autogain_cycle():
+                    self.curr_img = self.camera.capture()
                 self.img_cnt += 1
                 self.logit(f'Camera image captured in {get_dt(t1)} @{get_dt(t0)} shape: {self.curr_img.shape}.', color='green')
             except Exception as e:
@@ -2047,7 +2056,8 @@ class PueoStarCameraOperation:
                 self.is_flight)
             # Create/update symlink to last info file
             if self.is_flight:
-                create_symlink(self.cfg.web_path, self.foi_name, 'last_final_overlay_image.png')
+                # TODO: Fix This!!!
+                # create_symlink(self.cfg.web_path, self.foi_name, 'last_final_overlay_image.png')
                 create_symlink(self.cfg.web_path, self.foi_scaled_name, 'last_final_overlay_image_downscaled.png')
             if self.cfg.enable_gui_data_exchange and self.foi_scaled_name is not None:
                 self.server.write(self.foi_scaled_name, data_type='image_file', dst_filename=self.curr_scaled_name)
@@ -2144,6 +2154,7 @@ class PueoStarCameraOperation:
         self.logit("Command to pause PUEO Star Tracker operation")
         self.operation_enabled = False
         time.sleep(1)
+        self.camera.disable_hw_autogain() # Disable autogain
         if self.focuser.aperture_position == 'opened':
             self.focuser.close_aperture()
         self.cfg.set_dynamic(run_autonomous=self.operation_enabled)

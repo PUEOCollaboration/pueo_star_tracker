@@ -114,8 +114,6 @@ class DummyCamera:
         """
         self.log.debug(f'Dummy set_control_value: control_type: {control_type} value: {value} auto: {auto}')
 
-
-
     def set_roi(self, bins: int):
         """Dummy implementation of setting the region of interest.
 
@@ -141,7 +139,32 @@ class DummyCamera:
         controls = {'Gain': 120, 'Exposure': 30000, 'Offset': 0, 'BandWidth': 100, 'Flip': 0, 'AutoExpMaxGain': 285,
                     'AutoExpMaxExpMS': 30000, 'AutoExpTargetBrightness': 100, 'HighSpeedMode': 1, 'Temperature': 228,
                     'GPS': 0}
-        return [controls[control_type],]
+        control_type_dict = {
+            asi.ASI_GAIN: 'Gain',
+            asi.ASI_EXPOSURE: 'Exposure',
+            asi.ASI_GAMMA: 2,
+            asi.ASI_WB_R:3,
+            asi.ASI_WB_B: 4,
+            asi.ASI_BRIGHTNESS: 5,
+            asi.ASI_OFFSET: 'Offset',
+            asi.ASI_BANDWIDTHOVERLOAD: 6,
+            asi.ASI_OVERCLOCK: 7,
+            asi.ASI_TEMPERATURE: 'Temperature',  # return 10*temperature
+            asi.ASI_FLIP: 9,
+            asi.ASI_AUTO_MAX_GAIN: 10,
+            asi.ASI_AUTO_MAX_EXP: 11,
+            asi.ASI_AUTO_MAX_BRIGHTNESS: 12,
+            asi.ASI_HARDWARE_BIN: 13,
+            asi.ASI_HIGH_SPEED_MODE: 14,
+            asi.ASI_COOLER_POWER_PERC: 15,
+            asi.ASI_TARGET_TEMP: 16,  # not need *10
+            asi.ASI_COOLER_ON: 17,
+            asi.ASI_MONO_BIN: 18,  # lead to less grid at software bin mode for color camera
+            asi.ASI_FAN_ON: 19,
+            asi.ASI_PATTERN_ADJUST: 20
+        }
+        control_name = control_type_dict[control_type]
+        return [controls[control_name],]
 
     def get_control_values(self):
         """Get dummy control values for camera settings.
@@ -669,7 +692,7 @@ class PueoStarCamera(Camera):
             return
 
         try:
-            self._last_gain = self.get_control_value("Gain")[0]
+            self._last_gain = self.get_control_value(asi.ASI_GAIN)[0]
             self.log.info(f"HW AutoGain: starting, current gain = {self._last_gain}")
 
             # Switch into continuous video mode
@@ -677,7 +700,7 @@ class PueoStarCamera(Camera):
             self._video_mode = True
 
             # Tell camera to run gain in auto mode
-            self.set_control_value("Gain", self._last_gain, auto=True)
+            self.set_control_value(asi.ASI_GAIN, self._last_gain, auto=True)
 
             # Mark runtime state
             self._autogain_start_time = time.monotonic()
@@ -714,7 +737,7 @@ class PueoStarCamera(Camera):
 
         # Stop a running autogain cycle and record diagnostics
         try:
-            final_gain = int(self.get_control_value("Gain")[0])
+            final_gain = int(self.get_control_value(asi.ASI_GAIN)[0])
             delta = final_gain - (self._last_gain or final_gain)
 
             elapsed = (
@@ -729,7 +752,7 @@ class PueoStarCamera(Camera):
                 self._video_mode = False
 
             # Lock the final gain into manual mode for subsequent still captures
-            self.set_control_value("Gain", final_gain, auto=False)
+            self.set_control_value(asi.ASI_GAIN, final_gain, auto=False)
 
             # Update last_gain to the autogain result
             self._last_gain = final_gain

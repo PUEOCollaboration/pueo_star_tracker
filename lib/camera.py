@@ -683,7 +683,7 @@ class PueoStarCamera(Camera):
         logit(f'{"ASI_EXPOSURE:":>23s} {self.cfg.exposure_time}', color='yellow')
         self.set_image_type(asi.ASI_IMG_RAW8)
         logit(f'{"ASI_IMG_RAW8:":>23s} ASI_IMG_RAW8', color='yellow')
-        # Set to binning by 4.
+        # Set to binning by 2.
         self.set_roi(bins=self.cfg.roi_bins)
 
     def log_camera_controls(self):
@@ -885,62 +885,41 @@ class PueoStarCamera(Camera):
             current_type = self.get_image_type()
             if current_type != expected_type:
                 self.set_image_type(expected_type)
-                self.log.debug(
-                    f"Image type changed to {expected_type} (was {current_type})."
-                )
+                self.log.debug(f"Image type changed to {expected_type} (was {current_type}).")
             else:
                 pass
                 # self.log.debug(f"Image type already {expected_type}; no change made.")
         except Exception as exc:
             self.log.error(f"Failed to ensure image type {expected_type}: {exc}")
 
-    def ensure_image_roi(self, bins: int = None, **roi_kwargs) -> None:
+    def ensure_image_roi(self, bins):
         """
-        Ensure the camera ROI (region of interest) matches the requested values.
+        Set the binning mode only if the current bin value is different from the requested one.
 
-        Only updates the hardware if the current ROI differs.
+        Parameters:
+        bins (int): The desired binning value (1, 2, 4, etc.)
 
-        Parameters
-        ----------
-        bins : int, optional
-            Desired binning factor.
-        **roi_kwargs :
-            Other ROI parameters supported by set_roi(), e.g.:
-              - start_x, start_y
-              - width, height
+        Returns:
+        bool: True if ROI was changed, False if already at desired binning
         """
         try:
-            current_roi = self.get_roi()
-            # Typically returns tuple (x, y, w, h, bins)
-            curr_bins = current_roi[-1] if isinstance(current_roi, tuple) else None
+            # Get current ROI format - returns [width, height, bins, image_type]
+            current_format = self.get_roi_format()
+            current_bins = current_format[2]  # Single binning value
 
-            needs_update = False
-
-            if bins is not None and curr_bins != bins:
-                needs_update = True
-
-            # Compare additional ROI parameters if provided
-            if isinstance(current_roi, tuple) and roi_kwargs:
-                roi_map = {
-                    "start_x": current_roi[0],
-                    "start_y": current_roi[1],
-                    "width": current_roi[2],
-                    "height": current_roi[3],
-                }
-                for k, v in roi_kwargs.items():
-                    if roi_map.get(k) != v:
-                        needs_update = True
-                        break
-
-            if needs_update:
-                self.set_roi(bins=bins, **roi_kwargs)
-                self.log.debug(f"ROI updated to bins={bins}, {roi_kwargs} (was {current_roi}).")
+            # Check if binning needs to be changed
+            if current_bins == bins:
+                # self.log.debug(f"Binning already at desired value ({bins})")
+                return False
             else:
-                pass
-                # self.log.debug(f"ROI already matches bins={bins}, {roi_kwargs}; no change made.")
+                self.log.debug(f"Changing binning from {current_bins} to {bins}")
+                self.set_roi(bins=bins)
+                return True
 
-        except Exception as exc:
-            self.log.error(f"Failed to ensure ROI bins={bins}, params={roi_kwargs}: {exc}")
+        except Exception as e:
+            self.log.error(f"Failed to ensure image ROI with bins={bins}: {e}")
+            # Re-raise or handle as appropriate for your application
+            raise
 
     def is_available(self):
         """Prototype code to find camera. Not used."""

@@ -64,13 +64,23 @@ done
 echo -e "${RED}Cleaning log files...${NC}"
 echo "Change to app logs directory: $APP_ROOT"
 cd "$APP_ROOT/logs/" || exit
+echo "Current directory: $PWD"
+
 rm -f *.pid
+
+rm -f *console.log
+rm -f *console.log.*
+
 rm -f telemetry.log
 rm -f telemetry.log.*
+rm -f debug-client.log
+rm -f debug-client.log.*
 rm -f debug-server.log
 rm -f debug-server.log.*
-rm -f pueo_console.log
-rm -f pueo_console.log.*
+rm -f debug-test.log
+rm -f pcc_folder_stats.log
+
+rm -rf test_logs
 
 echo -e "${YELLOW}Cleanup complete. All specified data has been deleted.${NC}"
 echo -e "${YELLOW}Remaining space ssd: $(df -h /mnt/raid1/ | tail -1 | awk '{print $4}') free${NC}"

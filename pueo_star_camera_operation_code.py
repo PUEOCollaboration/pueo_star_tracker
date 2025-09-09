@@ -1887,8 +1887,12 @@ class PueoStarCameraOperation:
             self.focuser.open_aperture()
 
         # Set the ASI_IMG_RAW16
-        self.camera.set_image_type(asi.ASI_IMG_RAW16)
-        self.camera.set_roi(bins=self.cfg.roi_bins)
+        # self.log.debug(f'Setting image type/roi @{get_dt(t0)}.')
+        # self.camera.set_image_type(asi.ASI_IMG_RAW16)
+        # self.camera.set_roi(bins=self.cfg.roi_bins)
+        self.camera.ensure_image_type(asi.ASI_IMG_RAW16)
+        self.camera.ensure_image_roi(bins=self.cfg.roi_bins)
+        self.log.debug(f'Ensured image type/roi @{get_dt(t0)}.')
 
         # Capture/Take image
         if not is_test:

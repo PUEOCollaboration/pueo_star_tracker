@@ -23,7 +23,7 @@ import numpy as np
 
 # Custom imports
 from lib.utils import read_image_grayscale
-from lib.common import logit
+from lib.common import logit, get_dt
 
 # '/usr/lib/x86_64-linux-gnu/libASICamera2.so'
 lib_asi_file = '~/ASIStudio/libASICamera2.so'
@@ -80,7 +80,9 @@ class DummyCamera:
             camera.get_controls = self.get_controls
             camera.get_control_value = self.get_control_value
             camera.get_control_values = self.get_control_values
+            camera.get_image_type = self.get_image_type
             camera.set_image_type = self.set_image_type
+            camera.get_roi = self.get_roi
             camera.set_roi = self.set_roi
             camera.set_control_value = self.set_control_value
 
@@ -114,6 +116,16 @@ class DummyCamera:
         """
         self.log.debug(f'Dummy set_control_value: control_type: {control_type} value: {value} auto: {auto}')
 
+    def get_roi(self):
+        """Retrieves the region of interest (ROI).
+
+        Returns a :class:`tuple` containing ``(start_x, start_y, width, height)``."""
+        # xywh = self.get_roi_start_position()
+        # whbi = self.get_roi_format()
+        # xywh.extend(whbi[0:2])
+        roi_values = [0, 0, 4144, 2882, 2]  # could be from other internal calculations
+        return tuple(roi_values)
+
     def set_roi(self, bins: int):
         """Dummy implementation of setting the region of interest.
 
@@ -121,6 +133,19 @@ class DummyCamera:
             bins (int): Binning value to set.
         """
         self.log.debug(f'Dummy set_roi: {bins}')
+
+    # Helper functions
+    def get_image_type(self):
+        """
+        ASI_IMG_RAW8	0	8-bit raw Bayer (or mono) data
+        ASI_IMG_RGB24	1	24-bit RGB color (8 bits per channel)
+        ASI_IMG_RAW16	2	16-bit raw Bayer (or mono) data
+        ASI_IMG_Y8	3	8-bit grayscale/Y (usually mono cameras)
+        ASI_IMG_Y16	4	16-bit grayscale/Y (mono cameras)
+        """
+        # roi_format = [roi_width.value, roi_height.value, bins.value, image_type.value]
+        roi_format = [4144, 2822, 2, asi.ASI_IMG_RAW16]
+        return roi_format[3]
 
     def set_image_type(self, image_type):
         """Dummy implementation of setting the image type.
@@ -683,6 +708,7 @@ class PueoStarCamera(Camera):
         -----
         Must be paired with `disable_hw_autogain()` to restore still-image mode.
         """
+        t0 = time.monotonic()
         if not self._hw_autogain_enabled:
             self.log.debug("enable_hw_autogain() called but master switch is OFF. No action.")
             return
@@ -693,7 +719,6 @@ class PueoStarCamera(Camera):
 
         try:
             self._last_gain = self.get_control_value(asi.ASI_GAIN)[0]
-            self.log.info(f"HW AutoGain: starting, current gain = {self._last_gain}")
 
             # Switch into continuous video mode
             self.start_video_capture()
@@ -705,7 +730,7 @@ class PueoStarCamera(Camera):
             # Mark runtime state
             self._autogain_start_time = time.monotonic()
             self._autogain_active = True
-
+            self.log.info(f"HW AutoGain: started, current_gain: {self._last_gain} exec:{get_dt(t0)}")
         except Exception as exc:
             self.log.error(f"Failed to enable HW autogain: {exc}")
             # Get the full stack trace as a string
@@ -723,6 +748,7 @@ class PueoStarCamera(Camera):
 
         If no autogain was running, ensures still-mode and returns.
         """
+        t0 = time.monotonic()
         # If autogain is not running, still enforce still-mode and return
         if not self._autogain_active:
             if self._video_mode:
@@ -758,8 +784,8 @@ class PueoStarCamera(Camera):
             self._last_gain = final_gain
 
             self.log.info(
-                f"HW AutoGain: stopped cycle, final_gain={final_gain} "
-                f"(delta={delta:+d}, active={elapsed:.2f}s)"
+                f"HW AutoGain: stopped cycle, final_gain: {final_gain} "
+                f"(delta: {delta:+d} active: {elapsed:.2f}s) exec: {get_dt(t0)}"
             )
 
         except Exception as exc:
@@ -824,7 +850,7 @@ class PueoStarCamera(Camera):
                 # hw_autogain_cycle() invocation (which will then stop it before capture).
                 self.log.debug(
                     f"hw_autogain_cycle: starting a single autogain cycle after capture "
-                    f"(enabled={self._hw_autogain_enabled}, requested={self._hw_autogain_requested})"
+                    f"(enabled: {self._hw_autogain_enabled} requested: {self._hw_autogain_requested})"
                 )
                 try:
                     self.enable_hw_autogain()
@@ -843,6 +869,78 @@ class PueoStarCamera(Camera):
                     # Let's not print anything to polute the logs
                     # self.log.debug("hw_autogain_cycle: no cycle requested; already in still mode.")
                     pass
+
+    def ensure_image_type(self, expected_type: int) -> None:
+        """
+        Ensure the camera image type is set to the expected value.
+
+        Only updates the hardware if the current image type differs.
+
+        Parameters
+        ----------
+        expected_type : int
+            Desired image type constant (e.g., asi.ASI_IMG_RAW16).
+        """
+        try:
+            current_type = self.get_image_type()
+            if current_type != expected_type:
+                self.set_image_type(expected_type)
+                self.log.debug(
+                    f"Image type changed to {expected_type} (was {current_type})."
+                )
+            else:
+                pass
+                # self.log.debug(f"Image type already {expected_type}; no change made.")
+        except Exception as exc:
+            self.log.error(f"Failed to ensure image type {expected_type}: {exc}")
+
+    def ensure_image_roi(self, bins: int = None, **roi_kwargs) -> None:
+        """
+        Ensure the camera ROI (region of interest) matches the requested values.
+
+        Only updates the hardware if the current ROI differs.
+
+        Parameters
+        ----------
+        bins : int, optional
+            Desired binning factor.
+        **roi_kwargs :
+            Other ROI parameters supported by set_roi(), e.g.:
+              - start_x, start_y
+              - width, height
+        """
+        try:
+            current_roi = self.get_roi()
+            # Typically returns tuple (x, y, w, h, bins)
+            curr_bins = current_roi[-1] if isinstance(current_roi, tuple) else None
+
+            needs_update = False
+
+            if bins is not None and curr_bins != bins:
+                needs_update = True
+
+            # Compare additional ROI parameters if provided
+            if isinstance(current_roi, tuple) and roi_kwargs:
+                roi_map = {
+                    "start_x": current_roi[0],
+                    "start_y": current_roi[1],
+                    "width": current_roi[2],
+                    "height": current_roi[3],
+                }
+                for k, v in roi_kwargs.items():
+                    if roi_map.get(k) != v:
+                        needs_update = True
+                        break
+
+            if needs_update:
+                self.set_roi(bins=bins, **roi_kwargs)
+                self.log.debug(f"ROI updated to bins={bins}, {roi_kwargs} (was {current_roi}).")
+            else:
+                pass
+                # self.log.debug(f"ROI already matches bins={bins}, {roi_kwargs}; no change made.")
+
+        except Exception as exc:
+            self.log.error(f"Failed to ensure ROI bins={bins}, params={roi_kwargs}: {exc}")
 
     def is_available(self):
         """Prototype code to find camera. Not used."""

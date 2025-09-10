@@ -294,7 +294,8 @@ class Telemetry:
             config_file=self.config_file,
             log_file_name_token="telemetry_log",
             is_global=False,
-            backup_count=64
+            max_file_size_mb=16,
+            backup_count=96
         )  # Initialise logging, config.ini, ...
 
         self.log.info(f'Telemetry enabled: {self.is_enabled}')

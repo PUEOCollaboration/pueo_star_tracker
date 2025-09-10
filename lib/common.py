@@ -1029,7 +1029,7 @@ def config_parse_value(data_type, config, section, token, default, allowed_value
     return value
 
 
-def load_config(name=None, config_file='config.ini', log_file_name_token='log_file_name', is_global=True, backup_count=10):
+def load_config(name=None, config_file='config.ini', log_file_name_token='log_file_name', is_global=True, max_file_size_mb=16, backup_count=10):
     """Load CONFIG file and populate SETTINGS dict
 
     :return: None
@@ -1068,7 +1068,7 @@ def load_config(name=None, config_file='config.ini', log_file_name_token='log_fi
         log_filename = os.path.abspath(f'{Path(cwd)}/{log_path}/{log_file}')
 
         # Initiate logging
-        log = init_logging(name, log_filename, log_level, is_global, backup_count)
+        log = init_logging(name, log_filename, log_level, is_global, max_file_size_mb, backup_count)
         # logpair('log file', log_filename)
         # logline()
     else:

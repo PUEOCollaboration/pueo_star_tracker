@@ -84,13 +84,19 @@ class DummyCamera:
             camera.set_image_type = self.set_image_type
             camera.get_roi = self.get_roi
             camera.set_roi = self.set_roi
+            camera.get_roi_format = self.get_roi_format
             camera.set_control_value = self.set_control_value
 
             camera.start_video_capture = self.start_video_capture
             camera.stop_video_capture = self.stop_video_capture
 
         self.filename = None
-        self.files = len(self.get_images())
+        try:
+            self.files = len(self.get_images())
+        except ValueError as e:
+            self.log.critical(e)
+            raise ValueError(e)
+
         self.simulated = True
         self.name = 'DummyCamera'
 
@@ -115,6 +121,14 @@ class DummyCamera:
             auto (bool): Whether to use auto mode for this control. Defaults to False.
         """
         self.log.debug(f'Dummy set_control_value: control_type: {control_type} value: {value} auto: {auto}')
+
+    def get_roi_format(self):
+        """
+        # Get current ROI format - returns [width, height, bins, image_type]
+
+        """
+        roi_format = [4144, 2882, 2, 2]
+        return tuple(roi_format)
 
     def get_roi(self):
         """Retrieves the region of interest (ROI).
@@ -325,6 +339,12 @@ class DummyCamera:
 
         # Sort the list to ensure consistent ordering across all platforms (Windows/Ubuntu)
         images.sort()
+
+        self.log.info(f'Dummy images: folder: {self.images_dir} count: {len(images)}')
+
+        if not images:
+            raise ValueError(f'No images found in {self.images_dir} folder. At least one image required for PUEO chamber_mode.')
+
         return images
 
     def get_next_image(self):

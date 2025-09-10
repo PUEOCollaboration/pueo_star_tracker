@@ -3,17 +3,17 @@ _Compiled by **Milan Štubljar** of [stubljar.com](https://stubljar.com) on 2025
 
 # Configuration
 
-| Hostname | enp1s0 MAC Address   | enp1s0 IP Address  | enp2s0 MAC Address   | enp3s0 MAC Address   | Status       |
-|----------|----------------------|--------------------|----------------------|----------------------|--------------|
-| erin-01  | `00:04:bf:c0:17:7a`  | 192.168.100.121    | `00:04:bf:c0:9b:8a`  | `00:04:bf:cc:01:5a`  | DHCP/Static  |
-| erin-02  | `00:04:bf:c0:ab:b9`  | 192.168.100.55     | `00:04:bf:c0:9b:bc`  | `00:04:bf:cc:8c:f7`  | DHCP/Static  |
-| erin-03  | `00:04:bf:c0:a0:d4`  | 192.168.100.61     | `00:04:bf:c0:9b:84`  | `00:04:bf:93:37:84`  | DHCP/Static  |
+| Hostname  | enp1s0 MAC Address   | enp1s0 IP Address  | enp2s0 MAC Address   | enp3s0 MAC Address   | Status       |
+|-----------|----------------------|--------------------|----------------------|----------------------|--------------|
+| erin-01   | `00:04:bf:c0:17:7a`  | 192.168.100.121    | `00:04:bf:c0:9b:8a`  | `00:04:bf:cc:01:5a`  | DHCP/Static  |
+| erin-02   | `00:04:bf:c0:ab:b9`  | 192.168.100.55     | `00:04:bf:c0:9b:bc`  | `00:04:bf:cc:8c:f7`  | DHCP/Static  |
+| erin-03   | `00:04:bf:c0:a0:d4`  | 192.168.100.61     | `00:04:bf:c0:9b:84`  | `00:04:bf:93:37:84`  | DHCP/Static  |
+| erin-test | `00:04:bf:c0:a0:d4`  | 192.168.100.61     | `00:04:bf:c0:9b:84`  | `00:04:bf:93:37:84`  | DHCP/Static  |
 
 # Installation Procedure
 
-```
-## Install Essentials (Optional)
 ```bash
+## Install Essentials (Optional)
 
 # Update/Upgrade All 
 sudo apt update
@@ -23,7 +23,7 @@ sudo apt upgrade
 sudo apt update
 sudo apt install snapd 
 
-# Install PyCharm Community
+# [Optional for Test/Dev] Install PyCharm Community
 sudo snap install pycharm-community --classic 
 
 # Note: p7zip-full: Installs the main 7zip package.
@@ -59,12 +59,33 @@ This change is required for both configs on Server and GUI.
 # server_ip = 127.0.0.1
 server_ip = 172.20.10.3
 ```
+## Create folders - pcc
+```bash
+# For TEST/DEV ENVIRONMENTS
+mkdir autogain
+mkdir conf
+mkdir data
+mkdir docs
+mkdir inspection_images
+mkdir lib
+mkdir logs
+mkdir output
+mkdir partial_results
+mkdir sd_card_path
+mkdir ssd_path
+mkdir test_images
+mkdir web
+cd lib
+mkdir cedar_detect
+mkdir cedar_solve
+
+```
 
 
 ## Download and Extract PCC and PCC-GUI Archives (Optional)
 ```bash
 # Navigate to Projects folder
-cd /home/pueo-star-tracker2/Projects
+cd /home/pst/Projects
 
 # Download archives
 wget https://demo.stubljar.com/tmp/Windell/pcc.7z --no-check-certificate
@@ -224,7 +245,9 @@ python3 -m pip install -r requirements.txt
 ```bash
 sudo apt install python3-tk 
 ```
+
 2. Install within virtual environment:
+
 ```bash
 pip install --upgrade pip
 pip install -r requirements.txt
@@ -353,7 +376,7 @@ ls /usr/local/lib | grep libASICamera2.so
 # After installation, update the library cache to recognize the new library:
 sudo ldconfig
 
-# 
+# Note: Files are in pcc/docs/camera/ASI_Camera_SDK and shall be copied to ~/Projects/camera
 cd ~/Projects/camera
 bunzip2 ASI_linux_mac_SDK_V1.37.tar.bz2 
 tar -xvf ASI_linux_mac_SDK_V1.37.tar
@@ -858,7 +881,7 @@ sudo usermod -a -G dialout $USER
 sudo chmod 660 /dev/ttyS0
 
 # Check dmesg for serial port detection:
-dmesg | grep ttyS
+sudo dmesg | grep ttyS
 ```
 
 ## Setting up Chamber Test Mode

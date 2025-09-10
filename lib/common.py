@@ -54,7 +54,7 @@
 from collections import OrderedDict
 import queue
 from queue import Queue
-from typing import Any, Optional
+from typing import Any, Optional, Union, List, cast
 import logging
 import logging.handlers
 import traceback
@@ -75,8 +75,10 @@ import threading
 import ctypes
 import json
 import zipfile
+import gzip
 import fnmatch
 import shutil
+
 
 # External modules
 from termcolor import cprint, colored
@@ -96,15 +98,24 @@ SETTINGS = OrderedDict()
 
 ## Logging Wrapper
 LOG_LEVEL_NOTSET   = 6
-LOG_LEVEL_CRITICAL = 1
-LOG_LEVEL_ERROR    = 2
-LOG_LEVEL_WARNING  = 3
-LOG_LEVEL_INFO     = 4
-LOG_LEVEL_DEBUG    = 5
-LOG_LEVEL_TRACE    = 6
+LOG_LEVEL_CRITICAL = 50
+LOG_LEVEL_FATAL    = 50
+LOG_LEVEL_ERROR    = 40
+LOG_LEVEL_WARNING  = 30
+LOG_LEVEL_INFO     = 20
+LOG_LEVEL_DEBUG    = 10
+LOG_LEVEL_TRACE    = 5
 
-LOG_WRAPPER_NAME_DICT = dict.fromkeys(['log_msg', 'logit', 'wprint', 'eprint', 'sprint', 'logpair',
-                         'log_debug', 'log_info', 'log_error', 'log_warning', 'log_trace', 'log_critical'], 1)
+logging.addLevelName(LOG_LEVEL_TRACE, "TRACE")
+
+LOG_WRAPPER_NAME_DICT = dict.fromkeys([
+    'log_msg', 'logit', 'wprint', 'eprint', 'sprint', 'logpair',
+    'log_debug', 'log_info', 'log_error', 'log_warning', 'log_trace',
+    'log_critical'], 1)
+
+# Global logger reference
+log = None
+
 # Removed init from the end: , '__init__'
 
 
@@ -124,52 +135,6 @@ class Unbuffered(object):
 
     def __getattr__(self, attr):
         return getattr(self.stream, attr)
-
-
-def log_msg(log_level=LOG_LEVEL_DEBUG, *msg_list, **kwargs):
-    with suppress(PermissionError):
-        if log is None:
-            return
-        for msg in msg_list:
-            try:
-                if log_level == LOG_LEVEL_CRITICAL:
-                    log.critical(msg)
-                elif log_level == LOG_LEVEL_ERROR:
-                    log.error(msg)
-                elif log_level == LOG_LEVEL_WARNING:
-                    log.warning(msg)
-                elif log_level == LOG_LEVEL_INFO:
-                    log.info(msg)
-                elif log_level == LOG_LEVEL_DEBUG:
-                    log.debug(msg)
-                elif log_level == LOG_LEVEL_TRACE:
-                    log.trace(msg)
-            except AttributeError:
-                pass
-
-
-def log_debug(msg):
-    log_msg(LOG_LEVEL_DEBUG, msg)
-
-
-def log_info(msg):
-    log_msg(LOG_LEVEL_INFO, msg)
-
-
-def log_error(msg):
-    log_msg(LOG_LEVEL_ERROR, msg)
-
-
-def log_warning(msg):
-    log_msg(LOG_LEVEL_WARNING, msg)
-
-
-def log_critical(msg):
-    log_msg(LOG_LEVEL_CRITICAL, msg)
-
-
-def log_trace(msg):
-    log_msg(LOG_LEVEL_TRACE, msg)
 
 
 def init_common(logger):
@@ -434,11 +399,8 @@ def logging_add_second_file(filename):
     log_debug('--------------LOGGING TO SECOND FILE--------------')
     log_debug(f'log_file: {filename}')
 
-def init_logging(name=None, log_file='logs/debug.log', log_level='DEBUG', is_global=True, backup_count: int = 10):
+def init_logging_old(name=None, log_file='logs/debug.log', log_level='DEBUG', is_global=True, backup_count: int = 10):
     """ Initialise logging
-
-
-
     :param name:
     :param log_file:
     :param log_level:
@@ -565,6 +527,436 @@ def init_logging(name=None, log_file='logs/debug.log', log_level='DEBUG', is_glo
     else:
         _log.info(f'{"-" * 10}  LOGGING STARTED  {"-" * 10}')
     return _log
+
+#
+# New Enhanced Logging
+#
+
+# Create a custom logger class that properly supports trace level
+class TraceLogger(logging.Logger):
+    """Custom logger that supports TRACE level logging."""
+
+    def trace(self, msg: str, *args, **kwargs) -> None:
+        """
+        Log 'msg % args' with severity 'TRACE'.
+
+        To pass exception information, use the keyword argument exc_info=True
+        """
+        if self.isEnabledFor(LOG_LEVEL_TRACE):
+            self._log(LOG_LEVEL_TRACE, msg, args, **kwargs)
+
+
+# Register the custom logger class
+logging.setLoggerClass(TraceLogger)
+
+
+class CompressedRotatingFileHandler(logging.handlers.RotatingFileHandler):
+    """Custom handler with compression support and robust error handling."""
+
+    def __init__(self, filename: str, mode: str = 'a', maxBytes: int = 0,
+                 backupCount: int = 0, encoding: Optional[str] = None,
+                 delay: bool = False, compress: bool = False,
+                 compression_threads: int = 1, max_retries: int = 3):
+        super().__init__(filename, mode, maxBytes, backupCount, encoding, delay)
+        self.compress = compress
+        self.compression_threads = compression_threads
+        self.max_retries = max_retries
+        self._compression_threads = []
+
+    def doRollover(self) -> None:
+        """Override rollover to add compression with error handling."""
+        try:
+            # Perform the standard rollover first with retry logic
+            self._safe_rollover()
+
+            # Compress the rotated file if compression is enabled
+            if self.compress and self.backupCount > 0:
+                self._compress_rotated_files()
+        except Exception as e:
+            print(f"Rollover failed: {e}. Continuing without rollover.")
+            # Don't re-raise to avoid killing the main application
+
+    def _safe_rollover(self) -> None:
+        """Perform rollover with retry logic for file access issues."""
+        for attempt in range(self.max_retries):
+            try:
+                super().doRollover()
+                return  # Success
+            except (PermissionError, OSError) as e:
+                if attempt == self.max_retries - 1:
+                    raise  # Final attempt failed
+                print(f"Rollover attempt {attempt + 1} failed: {e}. Retrying...")
+                time.sleep(0.1 * (attempt + 1))  # Exponential backoff
+
+    def _compress_rotated_files(self) -> None:
+        """Compress rotated files with proper cleanup."""
+
+        def compress_file(source_path: Path, target_path: Path) -> None:
+            max_attempts = 3
+            for attempt in range(max_attempts):
+                try:
+                    # Ensure source file exists and is accessible
+                    if not source_path.exists():
+                        return
+
+                    # Compress the file
+                    with source_path.open('rb') as f_in:
+                        with gzip.open(target_path, 'wb') as f_out:
+                            shutil.copyfileobj(f_in, f_out)
+
+                    # Verify compression was successful
+                    if target_path.exists() and target_path.stat().st_size > 0:
+                        # Remove original file only after successful compression
+                        try:
+                            source_path.unlink()
+                            print(f"Successfully compressed and removed: {source_path} -> {target_path}")
+                        except OSError as e:
+                            print(f"Warning: Could not remove original file {source_path}: {e}")
+                    else:
+                        print(f"Warning: Compression may have failed for {source_path}")
+
+                    return  # Success
+
+                except (OSError, IOError, Exception) as e:
+                    if attempt == max_attempts - 1:
+                        print(f"Failed to compress {source_path} after {max_attempts} attempts: {e}")
+                    else:
+                        print(f"Compression attempt {attempt + 1} failed for {source_path}: {e}. Retrying...")
+                        time.sleep(0.1 * (attempt + 1))
+
+        base_dir = Path(self.baseFilename).parent
+        base_name = Path(self.baseFilename).name
+
+        # Find all rotated files that need compression
+        files_to_compress = []
+        for i in range(1, self.backupCount + 1):
+            uncompressed_path = base_dir / f"{base_name}.{i}"
+            compressed_path = base_dir / f"{base_name}.{i}.gz"
+
+            # Only compress if uncompressed file exists and compressed doesn't
+            if uncompressed_path.exists() and not compressed_path.exists():
+                files_to_compress.append((uncompressed_path, compressed_path))
+
+        # Compress files using threads with proper management
+        active_threads = []
+        for source_path, target_path in files_to_compress:
+            thread = threading.Thread(
+                target=compress_file,
+                args=(source_path, target_path),
+                daemon=True,
+                name=f"Compress-{source_path.name}"
+            )
+            thread.start()
+            active_threads.append(thread)
+
+            # Limit concurrent threads
+            if len(active_threads) >= self.compression_threads:
+                # Wait for the oldest thread to complete
+                oldest_thread = active_threads.pop(0)
+                oldest_thread.join(timeout=5.0)
+
+        # Wait for remaining threads with timeout
+        for thread in active_threads:
+            thread.join(timeout=2.0)
+
+
+def log_msg(log_level: int = LOG_LEVEL_DEBUG, *msg_list: Any, **kwargs: Any) -> None:
+    """
+    Generic logging function that handles messages of different log levels.
+    """
+    with suppress(PermissionError):
+        if log is None:
+            return
+
+        # Join all messages with spaces if multiple arguments are provided
+        if msg_list:
+            if len(msg_list) == 1:
+                message = str(msg_list[0])
+            else:
+                message = ' '.join(str(msg) for msg in msg_list)
+
+            try:
+                if log_level == LOG_LEVEL_CRITICAL:
+                    log.critical(message, **kwargs)
+                elif log_level == LOG_LEVEL_ERROR:
+                    log.error(message, **kwargs)
+                elif log_level == LOG_LEVEL_WARNING:
+                    log.warning(message, **kwargs)
+                elif log_level == LOG_LEVEL_INFO:
+                    log.info(message, **kwargs)
+                elif log_level == LOG_LEVEL_DEBUG:
+                    log.debug(message, **kwargs)
+                elif log_level == LOG_LEVEL_TRACE:
+                    # Use the trace method from our custom logger
+                    if hasattr(log, 'trace'):
+                        log.trace(message, **kwargs)
+                    else:
+                        # Fallback for loggers that don't have trace method
+                        log.log(LOG_LEVEL_TRACE, message, **kwargs)
+            except AttributeError:
+                pass
+
+
+def log_debug(*msg_list: Any, **kwargs: Any) -> None:
+    """Log a message at DEBUG level."""
+    log_msg(LOG_LEVEL_DEBUG, *msg_list, **kwargs)
+
+
+def log_info(*msg_list: Any, **kwargs: Any) -> None:
+    """Log a message at INFO level."""
+    log_msg(LOG_LEVEL_INFO, *msg_list, **kwargs)
+
+
+def log_error(*msg_list: Any, **kwargs: Any) -> None:
+    """Log a message at ERROR level."""
+    log_msg(LOG_LEVEL_ERROR, *msg_list, **kwargs)
+
+
+def log_warning(*msg_list: Any, **kwargs: Any) -> None:
+    """Log a message at WARNING level."""
+    log_msg(LOG_LEVEL_WARNING, *msg_list, **kwargs)
+
+
+def log_critical(*msg_list: Any, **kwargs: Any) -> None:
+    """Log a message at CRITICAL level."""
+    log_msg(LOG_LEVEL_CRITICAL, *msg_list, **kwargs)
+
+
+def log_trace(*msg_list: Any, **kwargs: Any) -> None:
+    """Log a message at TRACE level."""
+    log_msg(LOG_LEVEL_TRACE, *msg_list, **kwargs)
+
+
+def init_logging(name: Optional[str] = None,
+                 log_file: str = 'logs/debug.log',
+                 log_level: Union[str, int] = 'DEBUG',
+                 is_global: bool = True,
+                 max_file_size_mb: int = 16,
+                 backup_count: int = 10,
+                 compress: bool = False,
+                 compression_threads: int = 1) -> TraceLogger:
+    """
+    Initialize logging with TRACE support and compression.
+    """
+    global log
+
+    # Ensure directory exists
+    log_path = Path(log_file)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Get or create logger
+    name = __name__ if name is None else name
+
+    # Force creation of new logger with our custom class
+    if name in logging.Logger.manager.loggerDict:
+        # Remove existing logger to ensure we get our custom class
+        del logging.Logger.manager.loggerDict[name]
+
+    _log = logging.getLogger(name)
+
+    # Ensure it's our custom logger type
+    if not isinstance(_log, TraceLogger):
+        # Create a new instance manually
+        _log = TraceLogger(name)
+        logging.Logger.manager.loggerDict[name] = _log
+
+    _log.propagate = False
+
+    # Set log level
+    if isinstance(log_level, str):
+        level_name = log_level.upper()
+        if level_name == 'TRACE':
+            log_level_num = LOG_LEVEL_TRACE
+        else:
+            log_level_num = getattr(logging, level_name, logging.DEBUG)
+    else:
+        log_level_num = log_level
+
+    _log.setLevel(log_level_num)
+
+    # Custom formatter
+    class MyFormatter(logging.Formatter):
+        converter = datetime.datetime.fromtimestamp
+
+        def formatTime(self, record, datefmt=None):
+            ct = self.converter(record.created)
+            if datefmt:
+                return ct.strftime(datefmt)
+            t = ct.strftime("%Y-%m-%d %H:%M:%S")
+            return f"{t}.{record.msecs:03.0f}"
+
+    # Enhanced caller detection
+    if hasattr(sys, '_getframe'):
+        currentframe = lambda: sys._getframe(3)
+    else:
+        currentframe = lambda: None
+
+    def find_caller_patch(self, stack_info=False, stacklevel=1):
+        f = currentframe()
+        if f is not None:
+            f = f.f_back
+
+        def clean_function_name(s):
+            if not isinstance(s, str):
+                return s
+            return s[7:] if s.startswith('frame: ') else s
+
+        while f is not None and clean_function_name(f.f_code.co_name) in LOG_WRAPPER_NAME_DICT:
+            f = f.f_back
+
+        if f is not None and hasattr(f, "f_code"):
+            co = f.f_code
+            return (co.co_filename, f.f_lineno, co.co_name, None)
+        return ("(unknown file)", 0, "(unknown function)", None)
+
+    # Create handler with robust error handling
+    file_size_bytes = max_file_size_mb * 1024 * 1024
+
+    fh = CompressedRotatingFileHandler(
+        filename=log_file,
+        mode='a',
+        maxBytes=file_size_bytes,
+        backupCount=backup_count,
+        encoding='utf-8',
+        delay=False,
+        compress=compress,
+        compression_threads=compression_threads,
+        max_retries=3  # Retry failed rollovers
+    )
+
+    fh.setLevel(log_level_num)
+
+    # Format
+    pid = os.getpid()
+    formatter = MyFormatter(
+        f'%(asctime)s {pid} %(lineno)5s:%(funcName)25s %(levelname)7s %(message)s'
+    )
+    fh.setFormatter(formatter)
+
+    # Apply caller detection
+    _log.findCaller = find_caller_patch.__get__(_log, TraceLogger)
+
+    # Clear existing handlers and add new one
+    for handler in _log.handlers[:]:
+        _log.removeHandler(handler)
+    _log.addHandler(fh)
+
+    # Set global reference
+    log = _log
+
+    # Test trace logging immediately
+    try:
+        _log.trace("TRACE level test - this should work now!")
+        print("✓ Trace logging test passed")
+    except Exception as e:
+        print(f"✗ Trace test failed: {e}")
+
+        # Add trace method dynamically as fallback
+        def trace_fallback(self, msg, *args, **kwargs):
+            if self.isEnabledFor(LOG_LEVEL_TRACE):
+                self._log(LOG_LEVEL_TRACE, msg, args, **kwargs)
+
+        TraceLogger.trace = trace_fallback
+        _log.trace("Trace fallback test")
+
+    # Log initialization
+    if is_global:
+        log_info(f'{"-" * 10}  LOGGING STARTED  {"-" * 10}')
+        log_info(f'Log file: {log_file}')
+        log_info(f'Max file size: {max_file_size_mb} MB')
+        log_info(f'Backup count: {backup_count}')
+        log_info(f'Compression: {"Enabled" if compress else "Disabled"}')
+        log_info(f'Log level: {logging.getLevelName(log_level_num)}')
+        log_trace('TRACE level is working!')
+        log_trace(f'Logger type: {type(_log).__name__}')
+
+    return cast(TraceLogger, _log)
+
+
+# Type cast for PyCharm intelligence
+def get_logger(name: Optional[str] = None) -> TraceLogger:
+    """Get a logger with trace support for type hinting."""
+    if name is None:
+        name = __name__
+    logger = logging.getLogger(name)
+    return cast(TraceLogger, logger)
+
+
+# Test function
+def test_trace_logging():
+    """Test that trace logging works properly."""
+
+    # Initialize with trace level enabled
+    logger = init_logging(
+        name="trace_test",
+        log_file="logs/trace_test.log",
+        log_level="DEBUG",  # DEBUG includes TRACE (level 5)
+        max_file_size_mb=1,
+        backup_count=2,
+        compress=False
+    )
+
+    # Test all levels
+    log_trace("TRACE message - should appear")
+    log_debug("DEBUG message")
+    log_info("INFO message")
+    log_warning("WARNING message")
+
+    # Test direct access to trace method
+    try:
+        logger.trace("Direct trace method call")
+        print("Direct trace method works!")
+    except AttributeError as e:
+        print(f"Direct trace method failed: {e}")
+
+    # Generate content to test rotation and compression
+    for i in range(500):
+        log_info(f"Filling log {i}")
+
+    print("Test completed. Check logs/trace_test.log")
+
+
+# Example usage
+def test_new_logging():
+    # Initialize logging with compression
+    logger = init_logging(
+        name="example_app",
+        log_file="../logs/example.log",
+        log_level="TRACE",
+        max_file_size_mb=2,  # 50MB file size limit
+        backup_count=5,
+        compress=True,
+        compression_threads=2
+    )
+
+    # Test all logging functions
+    log_debug("Debug message using wrapper")
+    log_info("Info message using wrapper")
+    log_warning("Warning message using wrapper")
+    log_error("Error message using wrapper")
+    log_critical("Critical message using wrapper")
+    log_trace("Trace message using wrapper")
+
+    # Test direct logger access
+    logger.debug("Direct debug message")
+    logger.info("Direct info message")
+
+    # Test direct access to trace method
+    try:
+        logger.trace("Direct trace method call")
+        print("Direct trace method works!")
+    except AttributeError as e:
+        print(f"Direct trace method failed: {e}")
+
+    # Test multi-argument logging
+    log_info("Multiple", "arguments", "supported")
+    for i in tqdm(range(100000)):
+        logger.debug(f'Test message filler: {i}')
+        logger.debug(f'Test message filler: {i} ' + 'x' * 30)
+        logger.info(f'Test message info: {i} ' + 'x' * 30)
+        logger.trace(f'Test message info: {i} ' + 'x' * 30)
+
+# End New Enhanced logging
 
 
 def find_files(path, reg_exp):
@@ -1478,37 +1870,40 @@ def float_range(advanced_range):
 # Main Section
 if __name__ == "__main__":
     print('Should not be run as standalone python script.')
+    if True:
+        test_new_logging()
 
-    results = read_json(f'../logs/results.json')
-    save_to_excel(results, '../logs/results.xlsx')
+    if False:
+        results = read_json(f'../logs/results.json')
+        save_to_excel(results, '../logs/results.xlsx')
 
 
-    def test_candlepp():
-        import random
-        cpp = CandlePP(title='Live OHLC Signal Stream')
-        for idx in range(50):
-            now = datetime.datetime.now().strftime('%H:%M:%S')
-            c = random.uniform(21000, 22844)
-            candle = [now, now, 'BTCUSD', 20193.41, 20193.41, 20186.18, c, 0.002229, False, '     ', '     ']
-            # cpp.add_row(candle)
-            if idx < 5:
-                cpp.update_row(candle)
-            elif 5 <= idx <= 25:
-                cpp.update_row(candle)
-                cpp.update_row(candle)
-                cpp.update_row(candle)
-                cpp.add_alert(1, True, False)
-            elif 26 <= idx <= 45:
-                cpp.update_row(candle)
+        def test_candlepp():
+            import random
+            cpp = CandlePP(title='Live OHLC Signal Stream')
+            for idx in range(50):
+                now = datetime.datetime.now().strftime('%H:%M:%S')
+                c = random.uniform(21000, 22844)
+                candle = [now, now, 'BTCUSD', 20193.41, 20193.41, 20186.18, c, 0.002229, False, '     ', '     ']
+                # cpp.add_row(candle)
+                if idx < 5:
+                    cpp.update_row(candle)
+                elif 5 <= idx <= 25:
+                    cpp.update_row(candle)
+                    cpp.update_row(candle)
+                    cpp.update_row(candle)
+                    cpp.add_alert(1, True, False)
+                elif 26 <= idx <= 45:
+                    cpp.update_row(candle)
 
-            # time.sleep(2)
-        # pp = cpp.table.get_string(start=3, end=4)
-        hdr = cpp.get_hdr()
-        lst = cpp.get_last()
-        # print(hdr)
-        # print()
-        # print(lst)
+                # time.sleep(2)
+            # pp = cpp.table.get_string(start=3, end=4)
+            hdr = cpp.get_hdr()
+            lst = cpp.get_last()
+            # print(hdr)
+            # print()
+            # print(lst)
 
-    # test_candlepp()
+        # test_candlepp()
 
 # Last line

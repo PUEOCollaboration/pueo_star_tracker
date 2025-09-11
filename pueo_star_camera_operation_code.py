@@ -102,8 +102,7 @@ class PueoStarCameraOperation:
     _status = 'Initializing'
 
     def __init__(self, cfg):
-        global log
-        self.log = log = logging.getLogger('pueo')
+        self.log = logging.getLogger('pueo')
 
         self.cfg = cfg
         self.cfg._log = self.log    # Add loger to the config object

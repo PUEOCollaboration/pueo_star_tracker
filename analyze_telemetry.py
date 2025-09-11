@@ -19,7 +19,7 @@ from tqdm import tqdm
 # --- Configuration / defaults ---
 TARGET_CADENCE = 1.0  # sec per entry (target)
 MAX_LOG_SIZE_MB = 16  # MB per file
-MAX_LOG_BACKUP_FILES = 64
+MAX_LOG_BACKUP_FILES = 96
 APPROX_BYTES_PER_LINE = 512  # average bytes per log line (approx)
 
 

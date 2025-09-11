@@ -842,7 +842,8 @@ def init_logging(name: Optional[str] = None,
     _log.addHandler(fh)
 
     # Set global reference
-    log = _log
+    if is_global:
+        log = _log
 
     # Test trace logging immediately
     try:

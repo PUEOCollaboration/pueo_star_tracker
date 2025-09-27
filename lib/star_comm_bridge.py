@@ -312,7 +312,13 @@ class StarCommBridge:
             elif not self.server.is_running:
                 message = f'Server not running.'
             # self.log.debug(f'Status check response: {message}')
-            data = {'mode': self.server.flight_mode}
+            data = {
+                'flight_mode': self.server.flight_mode,
+                'chamber_mode': self.server.chamber_mode,
+                'autonomous': self.server.operation_enabled,
+                'filesystem_critical': self.server.monitor.is_critical,
+                'filesystem': self.server.monitor.status()
+            }
             res = Status.get_status(Status.SUCCESS, message, data)
             res['messages'] = self.messages.get_messages()
             return res
@@ -345,6 +351,11 @@ class StarCommBridge:
                     'timestamp': ts,
                     'size': len(telemetry_elements),
                     'data': telemetry_elements
+                },
+                'filesystem': {
+                    'timestamp': ts,
+                    'size': 1,
+                    'data': [self.server.monitor.status(), ]
                 }
             }
             return Status.success(data, message)
@@ -486,10 +497,14 @@ class StarCommBridge:
                 ret = Status.success({'data': {'param': cmd.param, 'value': value}}, f"Get {cmd.param}.")
 
             elif commands == Commands.FLIGHT_MODE:
+                ret = None
                 if cmd.method == 'set':
+                    target_mode = cmd.mode.lower()
                     self.server.flight_mode = cmd.mode
                     self.server.cfg.set_dynamic(flight_mode=self.server.flight_mode)
-                ret = Status.success({'data': {'mode': self.server.flight_mode}}, f"Flight mode {cmd.method}.")
+                    if target_mode != self.server.flight_mode:
+                        ret = Status.error({'data': {'mode': self.server.flight_mode}}, f"Error: Flight mode {cmd.method}. Mode remains unchanged! Check status!")
+                ret = ret or Status.success({'data': {'mode': self.server.flight_mode}}, f"Flight mode {cmd.method}.")
             else:
                 self.log.warning("Unknown command received: %s", commands)
                 return Status.get_status(Status.ERROR, f"Unknown command: {commands}")

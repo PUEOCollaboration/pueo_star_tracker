@@ -179,7 +179,7 @@ def logit(msg, attrs=None, color=None, is_tqdm=False, end='\n'):
 
 
 def logline(length=30, prefix='  '):
-    """Note: length was 22"""
+    """Note: length was 22."""
     print(f'{prefix}{"-" * length}')
 
 
@@ -848,9 +848,9 @@ def init_logging(name: Optional[str] = None,
     # Test trace logging immediately
     try:
         _log.trace("TRACE level test - this should work now!")
-        print("✓ Trace logging test passed")
+        # print("✓ Trace logging test passed")
     except Exception as e:
-        print(f"✗ Trace test failed: {e}")
+        # print(f"✗ Trace test failed: {e}")
 
         # Add trace method dynamically as fallback
         def trace_fallback(self, msg, *args, **kwargs):

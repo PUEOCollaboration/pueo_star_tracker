@@ -67,6 +67,7 @@ from lib.astrometry import Astrometry
 from lib.start_tracker_body_rates import StarTrackerBodyRates
 from lib.telemetry import Telemetry
 from lib.commands import Command
+from lib.fs_monitor import FSMonitor, MonitorCfg
 
 # CONFIG - [GLOBAL]
 config_file = 'config.ini'  # Note this file can only be changed HERE!!! IT is still config.ini, but just for ref.
@@ -74,7 +75,7 @@ dynamic_file = 'dynamic.ini'
 
 __version__ = '1.00b'
 __created_modified__ = '2024-10-22'
-__last_modified__ = '2025-06-18'
+__last_modified__ = '2025-09-27'
 __release_date__ = '2025-01-06'
 __program__ = 'Pueo Star Tracker Server'
 __program_short__ = 'pueo_star_camera_operation_code.py'
@@ -210,12 +211,12 @@ class PueoStarCameraOperation:
         with suppress(RuntimeError):
             self.versa_api.set_pin(self.cfg.sbc_dio_focuser_pin, False)
 
+        # Wait 5 secs after setting the on-off camera/focuser pins.
         time.sleep(5)
 
         self.logit('Setting GPIO Pins For Camera to False (LOW):', color='cyan')
         with suppress(RuntimeError):
             self.versa_api.set_pin(self.cfg.sbc_dio_camera_pin, False)
-
 
         # Wait 2 secs in case Camera/Focuser got started.
         time.sleep(2)
@@ -223,6 +224,19 @@ class PueoStarCameraOperation:
         # Create compute object
 
         self.compute = Compute(self.log)
+
+        # Create monitor object
+        self.monitor = FSMonitor(self.cfg, self.log)
+        warning_pct = self.monitor.cfg.warning_pct
+        critical_pct = self.monitor.cfg.critical_pct
+        # Add paths:
+        # Add root for disk-only checks as an example
+        root = os.path.abspath(os.sep) if os.name != "nt" else os.path.splitdrive(os.getcwd())[0] + os.sep
+        self.monitor.add_path("root", root, warning_pct=warning_pct, critical_pct=critical_pct, fs_type="internal")
+        self.monitor.add_path("ssd", self.cfg.ssd_path, warning_pct=warning_pct, critical_pct=critical_pct, fs_type="data")
+        self.monitor.add_path("sd_card", self.cfg.sd_card_path, warning_pct=warning_pct, critical_pct=critical_pct, fs_type="data")
+        # Start monitoring
+        self.monitor.run()
 
         # Create camera object
         self.camera = PueoStarCamera(self.cfg)
@@ -1731,7 +1745,7 @@ class PueoStarCameraOperation:
                 # TODO: HAve these captured differently!!!
                 self.astrometry['PlateScale'] = plate_scale_value
                 exposure = self.camera.get_control_values().get('Exposure', 'unknown')
-                self.astrometry['ExposureTime'] = f'{exposure} us' # microsec
+                self.astrometry['ExposureTime'] = f'{exposure} us' # microsecond
 
     def info_add_misc_info(self, omega_x, omega_y, omega_z, pk):
         with open(self.info_file, "a", encoding='utf-8') as file:
@@ -1851,6 +1865,12 @@ class PueoStarCameraOperation:
             is_raw = cmd.mode == 'raw'  # cmd.mode == Raw
             self.solver = self.solver if is_raw else cmd.mode  # cmd.mode == solver1  or solver2
             self.cfg.set_dynamic(solver=self.solver)
+
+        # Check Filesystem Monitor and change to preflight if any of the monitored paths has reached critical level
+        if self.monitor.enabled and self.monitor.is_critical and self.is_flight:
+            self.flight_mode = self.flight_mode # Check will be done within the setter!!!
+            self.cfg.set_dynamic(flight_mode=self.flight_mode)
+            self.logit(f"Changing flight_mode to PREFLIGHT. Filesystem CRITICAL level reached.", color='red')  # Timestamp at END
 
         dt = datetime.datetime.now().isoformat()  # Get current ISO timestamp
         if is_raw:
@@ -2400,6 +2420,12 @@ class PueoStarCameraOperation:
         allowed_modes = {'preflight', 'flight'}  # Use lowercase for consistency
         if value.lower() not in allowed_modes:
             raise ValueError(f"Invalid flight mode: {value}. Must be one of {allowed_modes}")
+
+        # Check if FileSystem is critical!!
+        # Force switch to preflight
+        if self.monitor.is_critical:
+            value = 'preflight'
+
         self._flight_mode = value.lower()  # Normalize to lowercase
 
     @property

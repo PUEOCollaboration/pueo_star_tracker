@@ -302,6 +302,9 @@ class PueoSocketClient:
         get_flight_telemetry_parser.add_argument('metadata', nargs='?', type=bool, default=False,
                                                  help='Include metadata (default: %(default)s)')
 
+        # PUEO Server Status
+        get_status_parser = subparsers.add_parser('get_status', help='Get PUEO Server status')
+
         # Parameter get commands
         get_list = ['aperture', 'aperture_position', 'focus', 'exposure', 'gain', 'level_filter', 'settings']
         set_list = ['aperture', 'aperture_position', 'focus', 'exposure', 'gain', 'level_filter']
@@ -363,6 +366,9 @@ class PueoSocketClient:
                 return cmd.flight_mode('set', args.mode)
             elif args.command == 'get_flight_telemetry':
                 return cmd.flight_telemetry(args.limit, args.metadata)
+            elif args.command == 'get_status':
+                return cmd.check_status()
+
             elif args.command.startswith('get_'):
                 param = args.command[4:]  # Remove 'get_' prefix
                 return cmd.get(param)

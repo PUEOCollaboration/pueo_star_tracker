@@ -40,12 +40,20 @@ class Focuser:
 
         self.ser = None
         self.f_stops = []
-        max_retry = 5
+        max_retry = 6
         retry = 0
         status = False
+        baud_rates = [self.cfg.baud_rate, 115200, 57600, 38400, 19200, 9600]
         while retry < max_retry:
             try:
-                self.ser = serial.Serial(self.cfg.focuser_port, self.cfg.baud_rate, timeout=2)  # camera focuser port
+                br_idx = min(retry, len(baud_rates) - 1) # Just in case - Safe indexing
+                baud_rate = baud_rates[br_idx]
+                if retry == 0:
+                    self.log.info(f'Initialising focuser: baud_rate: {baud_rate}')
+                else:
+                    self.log.warning(f'Initialising focuser: retry: {retry} baud_rate: {baud_rate}')
+
+                self.ser = serial.Serial(self.cfg.focuser_port, baudrate=baud_rate, timeout=2)  # camera focuser port
                # TODO: Refactor
                 # Another Computer for sending commands via serial - this will be replaced by GUI!
                 # other computer serial port
@@ -55,6 +63,7 @@ class Focuser:
                 self.num_stops: int = 0
                 self.f_max = None
                 # self.f_stops = []
+                self.response_mode(verbose_mode=1, protocol_mode=0)  # Setting Verbose
                 self.define_aperture()
                 self.initialize_aperture()
                 self.move_aperture_absolute(self.cfg.lab_best_aperture_position)
@@ -62,7 +71,7 @@ class Focuser:
                 status = True
                 break
             except Exception as e:
-                self.log.error(f'Error retry {retry}: {e}')
+                self.log.error(f'Initialising focuser: Error retry {retry}: {e}')
             self.ser = None
             retry += 1
 
@@ -93,6 +102,46 @@ class Focuser:
 
     def is_open(self):
         return self.ser is not None and self.ser and self.ser.is_open
+
+    def response_mode(self, verbose_mode: int = 1, protocol_mode: int = 0):
+        """
+        5.34 Set Response Modes (rm)
+        Command Type : Legacy/New
+        Syntax : rm <verbose{0, 1}>[, <new{0, 1}>]
+        Returns : OK or 0
+        Description
+        This command is used to set the response modes. The first argument can be 0 or
+        1, representing terse mode or verbose mode, respectively. In verbose mode all characters
+        sent to the device are echoed back out and most commands return confirmations and full
+        status strings. In terse mode, no characters are echoed and command responses are
+        limited to error codes for legacy behavior. The second argument is optional (if not
+        supplied it defaults to 0), and indicates the protocol mode – legacy (0) or new (1). Legacy
+        mode maintains protocol compatibility with libraries version 15 and earlier.
+        The response modes are set on a per-port basis, the change being effective for the
+        port over which the command is sent.
+        Examples:
+        rm0,1 <CR>
+        OK
+        rm0,0 <CR>
+        0
+        """
+        if not self.is_open():
+            self.log.warning('Focuser connection closed.')
+            return "0"
+
+        # Set response mode: rm<verbose_mode>,<protocol_mode>
+        cmd = f'rm{verbose_mode},{protocol_mode}\r'
+        self.ser.write(cmd.encode('ascii'))
+        out = self.ser.readline()  # Expected responses: b'rm0,1\rOK\r' or b'rm0,0\r0\r'
+        parts = out.decode('ascii').split('\r')
+        logit(f"Focuser RM (Response Mode): {parts}", color='magenta')
+
+        # Extract the response (either "OK" or "0")
+        response = parts[1] if len(parts) > 1 else parts[0]
+        logit(f'  Response mode - verbose: {verbose_mode}, protocol: {protocol_mode}, result: {response}',
+              color='yellow')
+
+        return response
 
     def generate_f_stops(self, f_min: str, num_stops: int, f_max: str):
         """
@@ -514,9 +563,52 @@ class Focuser:
         self.log.debug(f'Check lens results: {results}')
         return results
 
+
+def test():
+    # !/usr/bin/env python3
+    import time, serial
+    PORT = "/dev/serial/by-id/usb-FTDI_Chipi-X_FT2RA78W-if00-port0"
+    CMD = 'mz'
+    CMD = CMD.encode('ascii')
+    BAUD = 115200  # try also 9600, etc
+
+    def try_combo(baud, dtr, rts, rtscts, dsrdtr, term=b"\r"):
+        print("Trying", baud, "DTR", dtr, "RTS", rts, "rtscts", rtscts, "dsrdtr", dsrdtr, "term", term)
+        try:
+            s = serial.Serial(PORT, baudrate=baud, timeout=1.0,
+                              rtscts=rtscts, dsrdtr=dsrdtr,
+                              bytesize=serial.EIGHTBITS, parity=serial.PARITY_NONE, stopbits=serial.STOPBITS_ONE)
+        except Exception as e:
+            print("open failed:", e);
+            return
+        try:
+            s.setDTR(dtr);
+            s.setRTS(rts);
+            time.sleep(0.05)
+            s.reset_input_buffer();
+            s.reset_output_buffer()
+            s.write(CMD + term);
+            s.flush()
+            data = s.read(4096)
+            print("read:", data)
+        finally:
+            s.close()
+
+    # try a few combos
+    for baud in (115200, 57600, 38400, 19200, 9600):
+        for dtr in (False, True):
+            for rts in (False, True):
+                try_combo(baud, dtr, rts, False, False)
+
+
 # Example usage
 if __name__ == "__main__":
     logit('Running Focuser STANDALONE.')
+
+    if False:
+        test()
+        sys.exit(0)
+
     try:
         class cfg:
             focuser_port = '/dev/ttyS0'

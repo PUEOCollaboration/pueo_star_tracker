@@ -128,7 +128,8 @@ class PueoSocketClient:
             self.socket.sendall(cmd_str.encode('utf-8'))
 
             # Wait for response
-            response = self.socket.recv(8196)
+            # response = self.socket.recv(8196)
+            response = self.socket.recv(16384)
             response_time = (time.perf_counter() - start_time) * 1000  # Convert to ms
 
             if response:

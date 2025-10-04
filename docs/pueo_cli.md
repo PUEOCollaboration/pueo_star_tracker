@@ -1,6 +1,6 @@
 # PUEO Command Line Interface (CLI) Reference
-**Version:** 1.0 (Preliminary)
-**Last Updated:** 2025-05-23
+**Version:** 1.1
+**Last Updated:** 2025-10-04
 **Contact:** [Milan Stubljar](mailto:info@stubljar.com)
 
 ## Overview
@@ -23,11 +23,11 @@ python pueo-cli.py <command> [<args>...]
 
 ### System Control Commands
 
-| Command        | Description                    | Arguments                                                                                                           |
-|----------------|--------------------------------|---------------------------------------------------------------------------------------------------------------------|
-| `start`        | Start/resume autonomous mode   | `[solver]` (solver1, solver2), `[cadence]` (Cadence in seconds)<br/> (all optional, but must provide first or both) |
-| `stop`         | Stop autonomous mode           | None                                                                                                                |
-| `power_cycle`  | Power cycle camera and focuser | None                                                                                                                |
+| Command        | Description                    | Arguments                                                                                                                    |
+|----------------|--------------------------------|------------------------------------------------------------------------------------------------------------------------------|
+| `start`        | Start/resume autonomous mode   | `[solver]` (solver1, solver2, solver3), `[cadence]` (Cadence in seconds)<br/> (all optional, but must provide first or both) |
+| `stop`         | Stop autonomous mode           | None                                                                                                                         |
+| `power_cycle`  | Power cycle camera and focuser | None                                                                                                                         |
 
 ### Focus Operations
 
@@ -39,11 +39,11 @@ python pueo-cli.py <command> [<args>...]
 
 ### Camera Settings
 
-| Command          | Description                          | Arguments                     |
-|------------------|--------------------------------------|-------------------------------|
-| `auto_gain`      | Run autogain routine                | `[desired_max_pixel_value]` (optional) |
-| `auto_exposure`  | Run autoexposure routine            | `[desired_max_pixel_value]` (optional) |
-| `take_image`     | Capture image                       | `[type]` (optional: raw, solver1, solver2) |
+| Command          | Description                          | Arguments                                           |
+|------------------|--------------------------------------|-----------------------------------------------------|
+| `auto_gain`      | Run autogain routine                | `[desired_max_pixel_value]` (optional)              |
+| `auto_exposure`  | Run autoexposure routine            | `[desired_max_pixel_value]` (optional)              |
+| `take_image`     | Capture image                       | `[type]` (optional: raw, solver1, solver2, solver3) |
 
 ### Chamber Mode Control
 
@@ -65,9 +65,10 @@ Note: In preflight mode the images are not saved to sd/ssd while all other opera
 
 ### Flight Telemetry Data
 
-| Command                | Description               | Arguments                                   |
-|------------------------|---------------------------|---------------------------------------------|
-| `get_flight_telemetry` | Get flight telemetry data | `[limit]` (Number of solutions, 0 for all.) |
+| Command                | Description               | Arguments                                      |
+|------------------------|---------------------------|------------------------------------------------|
+| `get_flight_telemetry` | Get flight telemetry data | `[limit]` (Number of solutions, 0 for all.)<br/> `[metadata]` (Include metadata (default: False))    |
+
 
 Note: Number of solutions kept by server is defined in ```config.ini```, default 1. 
 ```ini
@@ -75,12 +76,19 @@ Note: Number of solutions kept by server is defined in ```config.ini```, default
 fq_max_size = 1
 ```
 
+### Status Data
+
+| Command      | Description            | Arguments                                   |
+|--------------|------------------------|---------------------------------------------|
+| `get_status` | Get server status data |  |
+
+
 ### Solver Settings
 
 | Command           | Description                          | Arguments                     |
 |-------------------|--------------------------------------|-------------------------------|
 | `get_level_filter` | Get current star level filter value. | None                          |
-| `set_level_filter`  | Set star level filter value.         | `<level>` |
+| `set_level_filter` | Set star level filter value.         | `<level>` |
 
 ### Parameter Access Commands
 
@@ -163,7 +171,7 @@ python pueo-cli.py --full-help
 ```bash
 $ python pueo_cli.py stop
 ```
-```
+```json
 pueo-cli v1.0.0
 Reading config file: conf/config.ini
 INFO: Connected to server at 127.0.0.1:5555
@@ -179,7 +187,7 @@ INFO: Session completed
 ```bash
 $ python pueo_cli.py start
 ```
-```
+```json
 pueo-cli v1.0.0
 Reading config file: conf/config.ini
 INFO: Connected to server at 127.0.0.1:5555
@@ -196,7 +204,7 @@ INFO: Session completed
 ```bash
 $ python pueo_cli.py set_gain 150
 ```
-```
+```json
 pueo-cli v1.0.0
 Reading config file: conf/config.ini
 INFO: Connected to server at 127.0.0.1:5555
@@ -212,7 +220,7 @@ INFO: Session completed
 ```bash
 $ python pueo_cli.py get_gain
 ```
-```
+```json
 pueo-cli v1.0.0
 Reading config file: conf/config.ini
 INFO: Connected to server at 127.0.0.1:5555
@@ -235,7 +243,7 @@ INFO: Session completed
 ```bash
 $ python pueo_cli.py set_exposure_time 200000
 ```
-```
+```json
 pueo-cli v1.0.0
 Reading config file: conf/config.ini
 INFO: Connected to server at 127.0.0.1:5555
@@ -251,7 +259,7 @@ INFO: Session completed
 ```bash
 $ python pueo_cli.py get_exposure
 ```
-```
+```json
 pueo-cli v1.0.0
 Reading config file: conf/config.ini
 INFO: Connected to server at 127.0.0.1:5555
@@ -272,9 +280,237 @@ INFO: Session completed
 
 ### 4. System Status
 ```bash
+$ python pueo_cli.py get_status
+```
+```json
+$ python pueo_cli.py get_status
+pueo-cli v1.0.0
+Reading config file: conf/config.ini
+Loading dynamic file: conf/dynamic.ini
+  Updating config values (from dynamic):
+                     flight_mode <- flight
+INFO: Connected to server at 127.0.0.1:5555
+INFO: Sending command: {'command': 'check_status', 'data': {}}
+INFO: Response time: 1.2ms Response:
+{
+  "error_code": 0,
+  "error_message": "Idle",
+  "data": {
+    "flight_mode": "flight",
+    "chamber_mode": false,
+    "autonomous": false,
+    "filesystem_critical": false,
+    "filesystem": {
+      "root": {
+        "status": "normal",
+        "is_critical": false,
+        "levels": {
+          "warning": 95.0,
+          "critical": 99.0
+        },
+        "current": {
+          "ts": 1759578463,
+          "folders": 0,
+          "files": 0,
+          "size_mb": 0.0,
+          "used_mb": 799189.75,
+          "total_mb": 976144.895,
+          "used_pct": 81.87,
+          "free_pct": 18.13
+        },
+        "trend": {
+          "1h": {
+            "folders": 0,
+            "files": 0,
+            "size_mb": 0.0,
+            "start_ts": 1759578283,
+            "end_ts": 1759578463
+          },
+          "6h": {
+            "folders": 0,
+            "files": 0,
+            "size_mb": 0.0,
+            "start_ts": 1759578283,
+            "end_ts": 1759578463
+          },
+          "24h": {
+            "folders": 0,
+            "files": 0,
+            "size_mb": 0.0,
+            "start_ts": 1759578283,
+            "end_ts": 1759578463
+          },
+          "week": {
+            "folders": 0,
+            "files": 0,
+            "size_mb": 0.0,
+            "start_ts": 1759578283,
+            "end_ts": 1759578463
+          },
+          "month": {
+            "folders": 0,
+            "files": 0,
+            "size_mb": 0.0,
+            "start_ts": 1759578283,
+            "end_ts": 1759578463
+          },
+          "all": {
+            "folders": 0,
+            "files": 0,
+            "size_mb": 0.0,
+            "start_ts": 1759578283,
+            "end_ts": 1759578463
+          }
+        },
+        "forecast": {
+          "critical": null,
+          "warning": null
+        }
+      },
+      "ssd": {
+        "status": "normal",
+        "is_critical": false,
+        "levels": {
+          "warning": 95.0,
+          "critical": 99.0
+        },
+        "current": {
+          "ts": 1759578463,
+          "folders": 6,
+          "files": 340,
+          "size_mb": 2771.339,
+          "used_mb": 799189.75,
+          "total_mb": 976144.895,
+          "used_pct": 81.87,
+          "free_pct": 18.13
+        },
+        "trend": {
+          "1h": {
+            "folders": 1,
+            "files": 8,
+            "size_mb": 64.325,
+            "start_ts": 1759578283,
+            "end_ts": 1759578463
+          },
+          "6h": {
+            "folders": 1,
+            "files": 8,
+            "size_mb": 64.325,
+            "start_ts": 1759578283,
+            "end_ts": 1759578463
+          },
+          "24h": {
+            "folders": 1,
+            "files": 8,
+            "size_mb": 64.325,
+            "start_ts": 1759578283,
+            "end_ts": 1759578463
+          },
+          "week": {
+            "folders": 1,
+            "files": 8,
+            "size_mb": 64.325,
+            "start_ts": 1759578283,
+            "end_ts": 1759578463
+          },
+          "month": {
+            "folders": 1,
+            "files": 8,
+            "size_mb": 64.325,
+            "start_ts": 1759578283,
+            "end_ts": 1759578463
+          },
+          "all": {
+            "folders": 1,
+            "files": 8,
+            "size_mb": 64.325,
+            "start_ts": 1759578283,
+            "end_ts": 1759578463
+          }
+        },
+        "forecast": {
+          "critical": "5d 9:57:36",
+          "warning": "4d 3:36:34"
+        }
+      },
+      "sd_card": {
+        "status": "normal",
+        "is_critical": false,
+        "levels": {
+          "warning": 95.0,
+          "critical": 99.0
+        },
+        "current": {
+          "ts": 1759578463,
+          "folders": 6,
+          "files": 325,
+          "size_mb": 168.133,
+          "used_mb": 799189.816,
+          "total_mb": 976144.895,
+          "used_pct": 81.87,
+          "free_pct": 18.13
+        },
+        "trend": {
+          "1h": {
+            "folders": 1,
+            "files": 8,
+            "size_mb": 4.433,
+            "start_ts": 1759578283,
+            "end_ts": 1759578463
+          },
+          "6h": {
+            "folders": 1,
+            "files": 8,
+            "size_mb": 4.433,
+            "start_ts": 1759578283,
+            "end_ts": 1759578463
+          },
+          "24h": {
+            "folders": 1,
+            "files": 8,
+            "size_mb": 4.433,
+            "start_ts": 1759578283,
+            "end_ts": 1759578463
+          },
+          "week": {
+            "folders": 1,
+            "files": 8,
+            "size_mb": 4.433,
+            "start_ts": 1759578283,
+            "end_ts": 1759578463
+          },
+          "month": {
+            "folders": 1,
+            "files": 8,
+            "size_mb": 4.433,
+            "start_ts": 1759578283,
+            "end_ts": 1759578463
+          },
+          "all": {
+            "folders": 1,
+            "files": 8,
+            "size_mb": 4.433,
+            "start_ts": 1759578283,
+            "end_ts": 1759578463
+          }
+        },
+        "forecast": {
+          "critical": "78d 13:47:03",
+          "warning": "60d 5:23:06"
+        }
+      }
+    }
+  },
+  "messages": []
+}
+INFO: Session completed
+```
+
+### 5. System Settings
+```bash
 $ python pueo_cli.py get_settings
 ```
-```
+```json
 pueo-cli v1.0.0
 Reading config file: conf/config.ini
 INFO: Connected to server at 127.0.0.1:5555
@@ -318,11 +554,11 @@ INFO: Response time: 4.4ms Response:
 INFO: Session completed
 ```
 
-### 5. Auto Functions (Note: These may timeout)
+### 6. Auto Functions (Note: These may timeout)
 ```bash
 $ python pueo_cli.py auto_exposure
 ```
-```
+```json
 pueo-cli v1.0.0
 Reading config file: conf/config.ini
 INFO: Connected to server at 127.0.0.1:5555
@@ -340,7 +576,7 @@ INFO: Session completed
 ```bash
 $ python pueo_cli.py set_focus 10000
 ```
-```
+```json
 pueo-cli v1.0.0
 Reading config file: conf/config.ini
 ERROR: Command error: Invalid value: name: focus_position: 10000 range: 0 .. 9000
@@ -351,7 +587,7 @@ INFO: Session completed
 ```bash
 $ python pueo_cli.py set_exposure -10000
 ```
-```
+```json
 pueo-cli v1.0.0
 Reading config file: conf/config.ini
 ERROR: Command error: Invalid value: name: exposure_time: -10000 range: 0 .. 5000000
@@ -362,7 +598,7 @@ INFO: Session completed
 ```bash
 $ python pueo_cli.py auto_focus 100 200
 ```
-```
+```json
 pueo-cli v1.0.0
 Reading config file: conf/config.ini
 ERROR: Command error: Either provide ALL positional arguments (start_position, stop_position, step_count) or NONE to use defaults.
@@ -374,7 +610,7 @@ INFO: Session completed
 ```bash
 $ python pueo_cli.py set_flight_mode invalid_mode
 ```
-```
+```json
 pueo-cli v1.0.0
 Reading config file: conf/config.ini
 ERROR: Command error: argument mode: invalid choice: 'invalid_mode' (choose from 'preflight', 'flight')
@@ -385,7 +621,7 @@ INFO: Session completed
 ```bash
 $ python pueo_cli.py auto_exposure
 ```
-```
+```json
 pueo-cli v1.0.0
 Reading config file: conf/config.ini
 INFO: Connected to server at 127.0.0.1:5555

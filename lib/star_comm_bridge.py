@@ -56,7 +56,7 @@ from lib.commands import Command, Commands
 from lib.common import get_dt, current_timestamp, logit
 from lib.status import Status
 from lib.messages import MessageHandler
-from lib.position_meta import position_meta
+from lib.position_meta import build_flight_telemetry, position_meta, telemetry_meta, filesystem_meta
 
 class StarCommBridge:
     """
@@ -338,26 +338,16 @@ class StarCommBridge:
             metadata = bool(cmd.metadata)
             position_elements = self.server.positions_queue.get_all(limit)
             telemetry_elements = self.server.telemetry_queue.get_all(limit)
+            filesystem_elements = [self.server.monitor.status(), ]
             ts = datetime.now().isoformat()
-            data = {
-                'mode': self.server.flight_mode,
-                'position': {
-                    'timestamp': ts,
-                    'size': len(position_elements),
-                    'data': position_elements,
-                    'metadata': position_meta if metadata else {}, # TOOO: Only include this token if metadata
-                },
-                'telemetry': {
-                    'timestamp': ts,
-                    'size': len(telemetry_elements),
-                    'data': telemetry_elements
-                },
-                'filesystem': {
-                    'timestamp': ts,
-                    'size': 1,
-                    'data': [self.server.monitor.status(), ]
-                }
-            }
+            data = build_flight_telemetry(
+               mode=self.server.flight_mode,
+               position_elements=position_elements,
+               telemetry_elements=telemetry_elements,
+               filesystem_entries=filesystem_elements,
+               ts_iso=ts,
+               include_metadata=metadata
+            )
             return Status.success(data, message)
 
         if not self.server.is_running:

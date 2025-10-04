@@ -1,13 +1,19 @@
 """
-Position Metadata Definition for Astrometry Telemetry
+Position/Telemetry/Filesystem metadata module + builder.
 
-This module defines the metadata structure for astronomical position and orientation
-telemetry data. The metadata provides descriptions, units, and type information for
-all fields in the position telemetry format.
-
-The metadata follows the JSON Schema-like structure for self-documenting telemetry data.
+Preserves the original position_meta you supplied (no semantic changes),
+and refines telemetry & filesystem metadata. Provides a builder helper that
+creates the server JSON exactly like your sample, and only adds the 'metadata'
+keys when requested (from CLI or API).
 """
 
+from typing import Any, Dict, List, Optional
+import time
+import copy
+
+# -------------------------
+# position_meta
+# -------------------------
 position_meta = {
     'timestamp': {
         'description': 'Timestamp of the position measurement in UTC',
@@ -146,65 +152,174 @@ position_meta = {
     }
 }
 
-# Additional metadata for the overall telemetry structure
-telemetry_structure_meta = {
-    'position': {
-        'description': 'Main telemetry container for astrometric position data',
-        'type': 'object',
-        'fields': {
-            'timestamp': {
-                'description': 'Timestamp of the telemetry packet creation',
-                'units': 'ISO 8601 datetime string',
-                'type': 'string'
+# -------------------------
+# telemetry_meta
+# dynamic headers are documented explicitly
+# -------------------------
+telemetry_meta = {
+    'description': 'Metadata describing telemetry container structure. Telemetry records carry dynamic headers + parallel data lists.',
+    'fields': {
+        'timestamp': {
+            'description': 'Container-level timestamp (ISO8601)',
+            'type': 'string'
+        },
+        'size': {
+            'description': 'Number of telemetry records in data array',
+            'type': 'integer'
+        },
+        'data_record': {
+            'description': 'A telemetry row: headers[] and data[] are parallel arrays; headers determine semantics',
+            'type': 'object',
+            'fields': {
+                'timestamp': {
+                    'description': 'Row capture time (string)',
+                    'type': 'string'
+                },
+                'headers': {
+                    'description': 'Array of header names (dynamic depending on attached sensors and system probes)',
+                    'type': 'array[string]'
+                },
+                'data': {
+                    'description': 'Array of string values matching headers by index. Parsing rules are external.',
+                    'type': 'array[string]'
+                }
             },
-            'size': {
-                'description': 'Number of position records in the data array',
-                'units': 'count',
-                'type': 'integer'
-            },
-            'data': {
-                'description': 'Array of position measurement records',
-                'type': 'array',
-                'items': position_meta
-            }
+            'notes': 'Header "S1..SN" generally represent Arduino or custom sensor channels; system sensors use descriptive names (coretemp_, drivetemp_, coreX_load, etc.)'
         }
-    },
-    'metadata': {
-        'description': 'Schema metadata describing the telemetry format',
-        'type': 'object',
-        'fields': {
-            'position': {
-                'description': 'Metadata for the position data structure',
-                'type': 'object'
+    }
+}
+
+# -------------------------
+# filesystem_meta
+# -------------------------
+filesystem_meta = {
+    'description': 'Metadata for filesystem container (root and device entries like ssd, sd_card)',
+    'fields': {
+        'timestamp': {
+            'description': 'Container-level timestamp (ISO8601)',
+            'type': 'string'
+        },
+        'size': {
+            'description': 'Number of filesystem records in data array',
+            'type': 'integer'
+        },
+        'data_record': {
+            'description': 'Device-level object (status, levels, current, trend, forecast)',
+            'type': 'object',
+            'fields': {
+                'name': {'description': 'logical name of device (root, ssd, sd_card)', 'type': 'string'},
+                'status': {'description': 'health string: normal|warning|critical', 'type': 'string'},
+                'is_critical': {'description': 'boolean flag', 'type': 'boolean'},
+                'levels': {'description': 'threshold percents', 'type': 'object'},
+                'current': {'description': 'current snapshot object (ts, folders, files, size_mb, used_mb, total_mb, used_pct, free_pct)', 'type': 'object'},
+                'trend': {'description': 'trend windows (1h,6h,24h,week,month,all)', 'type': 'object'},
+                'forecast': {'description': 'estimated time until warning/critical or null', 'type': 'object'}
             }
         }
     }
 }
 
-
-# Utility function to get field description
-def get_field_description(field_name):
+# -------------------------
+# Helper to optionally include metadata keys in containers
+# -------------------------
+def maybe_meta(meta_obj: Dict[str, Any], include: bool) -> Optional[Dict[str, Any]]:
     """
-    Get the description for a specific field in the position metadata.
+    Return a deep copy of meta_obj if include==True, otherwise return None.
+    The builder will only insert the metadata key if this returns a dict.
+    """
+    if include:
+        return copy.deepcopy(meta_obj)
+    return None
+
+
+# -------------------------
+# Main builder: constructs the JSON exactly like your server code intended
+# - only includes 'metadata' keys when include_metadata == True
+# - expects "position_elements" and "telemetry_elements" already assembled lists
+# -------------------------
+def build_flight_telemetry(
+    mode: str,
+    position_elements: List[Dict[str, Any]],
+    telemetry_elements: List[Dict[str, Any]],
+    filesystem_entries: List[Dict[str, Any]],
+    ts_iso: Optional[str] = None,
+    include_metadata: bool = False
+) -> Dict[str, Any]:
+    """
+    Build flight telemetry top-level payload.
 
     Args:
-        field_name (str): Name of the field to look up
+        mode: e.g. 'flight'
+        position_elements: list of position records (each matches position_meta)
+        telemetry_elements: list of telemetry records (each contains 'headers' and 'data')
+        filesystem_entries: list (usually one) of filesystem device objects (monitor.status())
+        ts_iso: optional ISO8601 timestamp for container-level timestamp; if None uses current time
+        include_metadata: if True, attach metadata dicts; otherwise omit metadata keys
 
     Returns:
-        str: Field description or None if not found
+        dict shaped like your example server response (no empty metadata when include_metadata=False)
     """
-    return position_meta.get(field_name, {}).get('description')
+    if ts_iso is None:
+        ts_iso = time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime())
+
+    # container 'position'
+    position_container = {
+        'timestamp': ts_iso,
+        'size': len(position_elements),
+        'data': position_elements
+    }
+    # only add 'metadata' key if requested
+    if include_metadata:
+        position_container['metadata'] = maybe_meta(position_meta, True)
+
+    # container 'telemetry'
+    telemetry_container = {
+        'timestamp': ts_iso,
+        'size': len(telemetry_elements),
+        'data': telemetry_elements
+    }
+    if include_metadata:
+        telemetry_container['metadata'] = maybe_meta(telemetry_meta, True)
+
+    # container 'filesystem'
+    filesystem_container = {
+        'timestamp': ts_iso,
+        'size': len(filesystem_entries),
+        'data': filesystem_entries
+    }
+    if include_metadata:
+        filesystem_container['metadata'] = maybe_meta(filesystem_meta, True)
+
+    payload = {
+        'mode': mode,
+        'position': position_container,
+        'telemetry': telemetry_container,
+        'filesystem': filesystem_container
+    }
+    return payload
 
 
-# Utility function to get field units
-def get_field_units(field_name):
-    """
-    Get the units for a specific field in the position metadata.
-
-    Args:
-        field_name (str): Name of the field to look up
-
-    Returns:
-        str: Field units or None if not found
-    """
-    return position_meta.get(field_name, {}).get('units')
+# -------------------------
+# Example CLI-style usage (how to wire into your pueo_cli.py)
+# -------------------------
+# Usage: pueo_cli.py get_flight_telemetry [limit] [metadata]
+# where `metadata` is a boolean flag (True/False)
+#
+# Example construction (pseudo-code used inside server handler):
+#
+#   ts = datetime.utcnow().isoformat()
+#   position_elements = [...]       # assembled by your solver loop
+#   telemetry_elements = [...]      # assembled by sensors (headers + data lists)
+#   filesystem_entries = [monitor.status()]
+#
+#   payload = build_flight_telemetry(
+#       mode=server.flight_mode,
+#       position_elements=position_elements,
+#       telemetry_elements=telemetry_elements,
+#       filesystem_entries=filesystem_entries,
+#       ts_iso=ts,
+#       include_metadata=args.metadata
+#   )
+#
+# This ensures metadata keys are only present in the JSON when the CLI requested them.
+# -------------------------

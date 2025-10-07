@@ -1,6 +1,6 @@
 # PUEO Star Tracker Cheatsheet  
-**Version:** 1.0 (Preliminary)  
-**Last Updated:** 2025-06-09  
+**Version:** 1.0  
+**Last Updated:** 2025-10-07  
 **Contact:** [Milan Stubljar](mailto:info@stubljar.com)
 ---
 
@@ -11,7 +11,6 @@
   cd ~/Projects/pcc/logs/
   ./cleanup_data.sh
   ```
-
 ---
 
 ## Server Management  
@@ -25,12 +24,13 @@ The server starts automatically on boot via:
 2. `PUEO Star Tracker Server`  
 
 ### Logs & PIDs  
-| Component          | Console Output                  | Debug Logs                     | PID File                     |
-|--------------------|---------------------------------|--------------------------------|------------------------------|
-| PUEO Server        | `~/Projects/pcc/logs/pueo-console.log` | `~/Projects/pcc/logs/debug-server.log` | `~/Projects/pcc-gui/logs/pueo.pid` |
-| CEDAR Server       | `~/Projects/pcc/logs/cedar_console.log` | N/A                            | `~/Projects/pcc-gui/logs/cedar.pid` |
-| PUEO CLI           | N/A                             | `~/Projects/pcc/logs/debug-client.log` | N/A                          |
-| PUEO GUI           | N/A                             | `~/Projects/pcc-gui/logs/debug-client.log` | N/A                          |
+| Component    | Console Output                          | Debug Logs                     | PID File                           |
+|--------------|-----------------------------------------|--------------------------------|------------------------------------|
+| PUEO Server  | `~/Projects/pcc/logs/pueo-console.log`  | `~/Projects/pcc/logs/debug-server.log` | `~/Projects/pcc-gui/logs/pueo.pid` |
+| CEDAR Server | `~/Projects/pcc/logs/cedar_console.log` | N/A                            | `~/Projects/pcc-gui/logs/cedar.pid` |
+| Web Server   | `~/Projects/pcc/logs/web_console.log`   | N/A                            | `~/Projects/pcc-gui/logs/web.pid`  |
+| PUEO CLI     | N/A                                     | `~/Projects/pcc/logs/debug-client.log` | N/A                                |
+| PUEO GUI     | N/A                                     | `~/Projects/pcc-gui/logs/debug-client.log` | N/A                                |
 
 ### Automatic Start/Stop/Restart/Status/Shutdown using PUEO Server Status Tool
 ```bash
@@ -53,17 +53,21 @@ PUEO Server: Running (PIDs: 39980,40181)
 ~/Projects/pcc/logs/status.sh restart
 # Example output:
 Stopping services (delay: 2s)...
-  CEDAR Detect: Terminated PIDs: 38631
-  PUEO Server: Terminated PIDs: 38634
-38844
+  CEDAR Detect: Terminated PIDs: 2310519
+  PUEO Server: Terminated PIDs: 2310522
+2310899
+  WEB Server: Terminated PIDs: 2310525
 Starting services...
   Executed: /home/pst/scripts/startup_commands.sh
 Waiting 5s for servers to initialize...
 
 Final Status:
-VL Install: Installed & Enabled (Success)
-CEDAR Detect: Running (PIDs: 39977)
-PUEO Server: Running (PIDs: 39980)
+=== System Status ===
+VL Driver: Not Installed
+VL Install: Not Configured
+CEDAR Detect: Running (PIDs: 2318689)
+PUEO Server: Running (PIDs: 2318693)
+WEB Server: Running (PIDs: 2318696)
 
 # Help:
 ~/Projects/pcc/logs/status.sh -h
@@ -117,8 +121,9 @@ Reports VL installation state and CEDAR/PUEO process status with PIDs
 
 ## Maintenance Tools  
 - **Cleanup:**  
+  Cleans data folders (images).
   ```bash
-  ~/Projects/pcc/logs/cleanup_data.sh  # Confirms before deletion
+  ~/Projects/pcc/logs/cleanup_data.sh  # Confirmation required before deletion
   ```  
 - **Status Check:**  
   ```bash
@@ -140,6 +145,7 @@ Reports VL installation state and CEDAR/PUEO process status with PIDs
    ~/Projects/pcc/logs/cleanup_data.sh
    ```  
 3. **Add test images** to `~/Projects/pcc/test_images/` (`.png` files).  
+  - Note: Server requires at least one image!
 4. **Restart server** (follow [Manual Restart](#manual-restart)).  
 
 ### Mission Mode  
@@ -164,7 +170,7 @@ Reports VL installation state and CEDAR/PUEO process status with PIDs
 1) How to perform a **manual autofocus**. Where to find file generated/images:
 
 **Ensure:**
-- autonomous: stopped (pasued)
+- autonomous: stopped (passed)
 - chamber_mode: False
 - flight_mode: flight
 
@@ -359,10 +365,13 @@ run_chamber = False
 # Take ONE image using default solver as per config.ini:solver setting
 ./pc.sh take_image
 
-# Take ONE image using solver1 (Windel Detect + ESA Tetra3 Solver)
+# Take ONE image using solver1 (Custom Detect + ESA Tetra3 Solver)
 ./pc.sh take_image solver1 
 
 # Take ONE image using solver2 (Cedar Detect + Cedar Tetra3 Solver)
 ./pc.sh take_image solver2
+
+# Take ONE image using solver3 (Custom Detect + Astrometry.net Solver)
+./pc.sh take_image solver3
 
 ```

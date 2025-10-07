@@ -1,6 +1,6 @@
 # Pueo Star Tracker API Specification
-**Version:** 1.0 (Preliminary)
-**Last Updated:** 2025-04-17
+**Version:** 1.0
+**Last Updated:** 2025-10-07
 **Contact:** [Milan Stubljar](mailto:info@stubljar.com)
 
 ## Overview
@@ -98,6 +98,7 @@ fq_max_size = 1
         {
           "timestamp": "2025-04-22T16:45:38.727641",
           "solver": "solver2",
+          "solver_name": "Cedar Tetra3",
           "astro_position": [
             78.72341647554903,
             7.712427624830612,
@@ -105,9 +106,19 @@ fq_max_size = 1
           ],
           "FOV": 10.804579396546963,
           "RMSE": 14.250483723479707,
+          "RMS": [
+            19492.219293473838,
+            107.51525421665598,
+            646769.7752664452
+          ],
           "sources": 30,
           "matched_stars": 18,
-          "probability": 2.446187512831069e-22
+          "probability": 2.446187512831069e-22,
+          "angular_velocity": [
+            NaN,
+            NaN,
+            NaN
+          ]
         }
       ]
     },
@@ -177,13 +188,219 @@ fq_max_size = 1
           ]
         }
       ]
+    },
+    "filesystem": {
+      "timestamp": "2025-10-06T22:43:01.702627",
+      "size": 1,
+      "data": [
+        {
+          "root": {
+            "status": "normal",
+            "is_critical": false,
+            "levels": {
+              "warning": 95.0,
+              "critical": 99.0
+            },
+            "current": {
+              "ts": 1759826529,
+              "folders": 0,
+              "files": 0,
+              "size_mb": 0.0,
+              "used_mb": 80187.375,
+              "total_mb": 128371.004,
+              "used_pct": 62.47,
+              "free_pct": 37.53
+            },
+            "trend": {
+              "1h": {
+                "folders": 0,
+                "files": 0,
+                "size_mb": 0.0,
+                "start_ts": 1759825689,
+                "end_ts": 1759826529
+              },
+              "6h": {
+                "folders": 0,
+                "files": 0,
+                "size_mb": 0.0,
+                "start_ts": 1759825689,
+                "end_ts": 1759826529
+              },
+              "24h": {
+                "folders": 0,
+                "files": 0,
+                "size_mb": 0.0,
+                "start_ts": 1759825689,
+                "end_ts": 1759826529
+              },
+              "week": {
+                "folders": 0,
+                "files": 0,
+                "size_mb": 0.0,
+                "start_ts": 1759825689,
+                "end_ts": 1759826529
+              },
+              "month": {
+                "folders": 0,
+                "files": 0,
+                "size_mb": 0.0,
+                "start_ts": 1759825689,
+                "end_ts": 1759826529
+              },
+              "all": {
+                "folders": 0,
+                "files": 0,
+                "size_mb": 0.0,
+                "start_ts": 1759825689,
+                "end_ts": 1759826529
+              }
+            },
+            "forecast": {
+              "critical": null,
+              "warning": null
+            }
+          },
+          "ssd": {
+            "status": "normal",
+            "is_critical": false,
+            "levels": {
+              "warning": 95.0,
+              "critical": 99.0
+            },
+            "current": {
+              "ts": 1759826529,
+              "folders": 2,
+              "files": 682,
+              "size_mb": 1439.732,
+              "used_mb": 80187.375,
+              "total_mb": 128371.004,
+              "used_pct": 62.47,
+              "free_pct": 37.53
+            },
+            "trend": {
+              "1h": {
+                "folders": 0,
+                "files": 0,
+                "size_mb": 0.0,
+                "start_ts": 1759825689,
+                "end_ts": 1759826529
+              },
+              "6h": {
+                "folders": 0,
+                "files": 0,
+                "size_mb": 0.0,
+                "start_ts": 1759825689,
+                "end_ts": 1759826529
+              },
+              "24h": {
+                "folders": 0,
+                "files": 0,
+                "size_mb": 0.0,
+                "start_ts": 1759825689,
+                "end_ts": 1759826529
+              },
+              "week": {
+                "folders": 0,
+                "files": 0,
+                "size_mb": 0.0,
+                "start_ts": 1759825689,
+                "end_ts": 1759826529
+              },
+              "month": {
+                "folders": 0,
+                "files": 0,
+                "size_mb": 0.0,
+                "start_ts": 1759825689,
+                "end_ts": 1759826529
+              },
+              "all": {
+                "folders": 0,
+                "files": 0,
+                "size_mb": 0.0,
+                "start_ts": 1759825689,
+                "end_ts": 1759826529
+              }
+            },
+            "forecast": {
+              "critical": null,
+              "warning": null
+            }
+          },
+          "sd_card": {
+            "status": "normal",
+            "is_critical": false,
+            "levels": {
+              "warning": 95.0,
+              "critical": 99.0
+            },
+            "current": {
+              "ts": 1759826529,
+              "folders": 2,
+              "files": 682,
+              "size_mb": 366.969,
+              "used_mb": 80187.375,
+              "total_mb": 128371.004,
+              "used_pct": 62.47,
+              "free_pct": 37.53
+            },
+            "trend": {
+              "1h": {
+                "folders": 0,
+                "files": 0,
+                "size_mb": 0.0,
+                "start_ts": 1759825689,
+                "end_ts": 1759826529
+              },
+              "6h": {
+                "folders": 0,
+                "files": 0,
+                "size_mb": 0.0,
+                "start_ts": 1759825689,
+                "end_ts": 1759826529
+              },
+              "24h": {
+                "folders": 0,
+                "files": 0,
+                "size_mb": 0.0,
+                "start_ts": 1759825689,
+                "end_ts": 1759826529
+              },
+              "week": {
+                "folders": 0,
+                "files": 0,
+                "size_mb": 0.0,
+                "start_ts": 1759825689,
+                "end_ts": 1759826529
+              },
+              "month": {
+                "folders": 0,
+                "files": 0,
+                "size_mb": 0.0,
+                "start_ts": 1759825689,
+                "end_ts": 1759826529
+              },
+              "all": {
+                "folders": 0,
+                "files": 0,
+                "size_mb": 0.0,
+                "start_ts": 1759825689,
+                "end_ts": 1759826529
+              }
+            },
+            "forecast": {
+              "critical": null,
+              "warning": null
+            }
+          }
+        }
+      ]
     }
   }
 }
 ```  
 
 #### **Notes**  
-- **`data`** in the response will contain an array of camera telemetry/solution records. Number of elements of the telemetry is dynamic and can vary based on the actual sensors reported by systems.
+- **`data`** in the response will contain an array of camera telemetry/solution/filesystem records. Number of elements of the telemetry is dynamic and can vary based on the actual sensors reported by systems.
 - **`limit=0`** fetches all available records since the last query.  
 - Error codes:  
   - `0`: Success.  
@@ -249,5 +466,3 @@ fq_max_size = 1
 
 
 ---
-
-Let us know if you need any adjustments! 🚀

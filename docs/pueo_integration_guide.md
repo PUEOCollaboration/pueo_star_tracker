@@ -88,6 +88,7 @@ The telemetry response contains two main sections:
 Key fields in the position solution:
 - `astro_position`: [RA, Dec, Roll] in degrees
 - `RMSE`: Root Mean Square Error of the solution
+- `RMS`: Per-axis Root Mean Square errors
 - `FOV`: Field of View in degrees
 - `sources`: Number of detected stars
 - `matched_stars`: Number of matched stars
@@ -288,7 +289,16 @@ $ ./pc.sh get_settings --help
 # See: https://github.com/windell747/pueo_star_tracker/blob/main/docs/pueo_cli.md
 ```
 
-## Advanced Socket API Integration
+## 6. Web Access to Latest Images
+**Web server** is listening on **port 8000**. Using browser open `localhost:8000`. The latest files are exposed:
+- astro.json
+- last_final_overlay_image_downscaled.png
+- last_info_file.txt
+- last_inspection_image.jpg.
+
+The web root folder is `pcc/web`.
+
+## 7. Advanced Socket API Integration
 
 For direct socket communication, refer to the complete [PUEO API documentation](https://github.com/windell747/pueo_star_tracker/blob/main/docs/pueo_api.md).
 
@@ -310,7 +320,7 @@ For direct socket communication, refer to the complete [PUEO API documentation](
 }
 ```
 
-## Troubleshooting
+## 8. Troubleshooting
 
 ### Common Issues
 

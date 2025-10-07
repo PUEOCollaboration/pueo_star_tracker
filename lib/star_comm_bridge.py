@@ -313,6 +313,7 @@ class StarCommBridge:
                 message = f'Server not running.'
             # self.log.debug(f'Status check response: {message}')
             data = {
+                'status': str(self.server.status).lower(),
                 'flight_mode': self.server.flight_mode,
                 'chamber_mode': self.server.chamber_mode,
                 'autonomous': self.server.operation_enabled,
@@ -359,9 +360,12 @@ class StarCommBridge:
 
         logit(f'Running: {commands.name}', color='green')
         try:
-            if commands == Commands.TAKE_IMAGE:
+            if not self.server.is_ready():
+                self.server.server.messages.write(f'Warning: Cannot execute command: {cmd.command_name}, server is not ready: {self.server.is_ready()}', 'warning')
+                ret = Status.get_status(Status.ERROR,f"Warning: Cannot take image, server not ready: {self.server.status}")
+            elif commands == Commands.TAKE_IMAGE:
                 # Execute the take image command here
-                if self.server.operation_enabled is not None and not self.server.operation_enabled and self.server.is_ready():
+                if self.server.operation_enabled is not None and not self.server.operation_enabled:
                     position = self.server.camera_take_image(cmd)
                     additional_message = 'Solved.'
                     if cmd.mode == 'raw':
@@ -374,9 +378,6 @@ class StarCommBridge:
                             additional_message = 'Solution not found.'
                     ret = Status.get_status(Status.SUCCESS, f"Image captured. {additional_message}")
                     ret['position'] = position
-                elif not self.server.is_ready():
-                    self.server.server.messages.write(f'Warning: Cannot take image, server is not ready: {self.server.is_ready()}','warning')
-                    ret = Status.get_status(Status.ERROR,f"Warning: Cannot take image, server not ready: {self.server.status}")
                 else:
                     self.server.server.messages.write('Warning: Cannot take image, autonomous operation is enabled.', 'warning')
                     ret = Status.get_status(Status.ERROR, "'Warning: Cannot take image, autonomous operation is enabled.")

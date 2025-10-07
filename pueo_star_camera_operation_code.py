@@ -50,7 +50,7 @@ import pandas as pd
 from lib.astrometry import Astrometry
 from lib.common import get_file_size, DroppingQueue
 from lib.compute_star_centroids import compute_centroids_from_still
-from lib.common import load_config, logit, current_timestamp, cprint, get_dt, save_to_json, save_to_excel
+from lib.common import init_common, load_config, logit, current_timestamp, cprint, get_dt, save_to_json, save_to_excel
 from lib.common import archive_folder, delete_folder
 from lib.config import Config
 from lib.versa_logic_api import VersaAPI
@@ -1493,6 +1493,12 @@ class PueoStarCameraOperation:
             self.distortion_calibration_params = default_distortion_calibration_params
 
         logit('Entering main operational loop:', color='green')
+        # TODO: REMOVE after TEST!!!
+        if True:
+            duration = 60  # seconds
+            for _ in tqdm(range(duration), desc=f"Test delay {duration}", unit="sec"):
+                time.sleep(1)
+
         self.status = 'Ready'
         while True:
             try:
@@ -2674,6 +2680,7 @@ def init():
 
     log = load_config(name='pueo', config_file=config_file,
                       log_file_name_token="server_log")  # Initialise logging, config.ini, ...
+    init_common(log)
     log.debug('Main - star_comm_bridge')
 
 

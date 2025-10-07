@@ -12,6 +12,7 @@ pillow
 pyusb
 tqdm
 termcolor
+colorama
 
 # source_finder.py
 scikit-image

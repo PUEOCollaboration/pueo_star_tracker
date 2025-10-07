@@ -82,6 +82,11 @@ import shutil
 
 # External modules
 from termcolor import cprint, colored
+import colorama
+# Initialize Colorama for cross-platform ANSI codes
+# IMPORTANT: strip=False ensures colors are kept even when redirected
+colorama.init(strip=False)
+
 
 # import prettytable as pt
 # from prettytable.colortable import ColorTable, Themes
@@ -141,6 +146,7 @@ def init_common(logger):
     global log
     log = logger
     log_debug(f'Init common.py')
+    colorama.init(strip=False)
 
 
 def sprint(*args, **kwargs):

@@ -17,7 +17,10 @@ printf "[%s] Executed ~/scripts/startup_commands.sh\n" "$(date '+%Y-%m-%d %H:%M:
 # Start Cedar Detect
 printf "[%s] Starting Cedar Detect:\n" "$(date '+%Y-%m-%d %H:%M:%S')" >> "$LOG_FILE"
 cd ~/Projects/pcc/lib/cedar_detect/python
-cargo run --release --bin cedar-detect-server > "$CEDAR_CONSOLE_FILE" 2>&1 &
+# Cedar Detect Server Startup (Development)
+# cargo run --release --bin cedar-detect-server > "$CEDAR_CONSOLE_FILE" 2>&1 &
+# Cedar Detect Server Startup (Production)
+~/Projects/pcc/lib/cedar_detect/target/release/cedar-detect-server > "$CEDAR_CONSOLE_FILE" 2>&1 &
 CEDAR_PID=$!
 printf "[%s]  Process id: %d\n" "$(date '+%Y-%m-%d %H:%M:%S')" "$CEDAR_PID" >> "$LOG_FILE"
 

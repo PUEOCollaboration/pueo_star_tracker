@@ -10,6 +10,11 @@
 > - `docs/Figure_PUEO_Telemetry_Architecture.png`  
 > - `docs/Figure_PUEO_Final_overlay_image.png`
 
+Note: Converted to docx with pandoc for ICD docx integration:
+```bash
+pandoc pueo_icd_sw.md --highlight-style=tango --shif-heading-level-by=3 -o pueo_icd_sw.docx
+```
+
 ---
 
 ## 3.2.6.1 Overview (Scope)
@@ -663,7 +668,7 @@ echo -e '{"command": "flight_telemetry", "data": {"limit": 1}} \n' | nc -v local
 ### Example telemetry log excerpt (one-second cadence)
 ```
 2025-09-09 01:38:37.699 1175971   488:                 log_data    INFO Telemetry header: acpitz_acpi_0_temp, coretemp_isa_0000_package_id_0_temp, ..., S1, S2, S3, S4, S5, S6
-2025-09-09 01:38:37.699 1175971   490:                 log_data    INFO Telemetry data: 2025-09-09 01:38:34, acpitz-acpi-0, coretemp-isa-0000, 49.0 %, 50.0 %, 49.0 %, 42.3 %, 29.31 °C, 33.75 °C, 34.06 °C, 32.75 °C, 28.62 °C, 27.12 °C
+2025-09-09 01:38:37.699 1175971   490:                 log_data    INFO Telemetry data: 2025-09-09 01:38:34, 32.75 °C, 32.75 °C, 49.0 %, 50.0 %, 49.0 %, 42.3 %, 29.31 °C, 33.75 °C, 34.06 °C, 32.75 °C, 28.62 °C, 27.12 °C
 ```
 
 ---

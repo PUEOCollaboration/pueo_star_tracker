@@ -27,7 +27,12 @@ printf "[%s]  Process id: %d\n" "$(date '+%Y-%m-%d %H:%M:%S')" "$CEDAR_PID" >> "
 # Start Pueo Star Tracker Server
 printf "[%s] Starting Pueo Star Tracker Server:\n" "$(date '+%Y-%m-%d %H:%M:%S')" >> "$LOG_FILE"
 cd ~/Projects/pcc
-.venv/bin/python pueo_star_camera_operation_code.py > "$PUEO_CONSOLE_FILE" 2>&1 &
+
+# The -oL option tells stdbuf to force the standard output stream of the command to be line-buffered.
+# This overrides the default behavior where the C library switches to full buffering when output is
+# redirected to a file. Line buffering ensures each line is written to $PUEO_CONSOLE_FILE immediately,
+# allowing 'tail -f' to display the output in near real-time.
+stdbuf -oL .venv/bin/python pueo_star_camera_operation_code.py > "$PUEO_CONSOLE_FILE" 2>&1 &
 # ./.venv/bin/python pueo_star_camera_operation_code.py > "~/Projects/pcc/logs/pueo-console.log" 2>&1 &
 
 PUEO_PID=$!

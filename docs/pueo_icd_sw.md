@@ -16,7 +16,7 @@
 This section documents the software components running on the onboard Single Board Computer (SBC), the data they produce and exchange, and the operator/flight-computer interfaces used during mission operations. The mechanical/physical purpose and high-level system description exist elsewhere in the ICD and are not repeated here. This document strictly addresses software, data, and operational interfaces.
 
 Key high-level points (no repetition of main ICD):
-- Primary on-board task: repeatedly capture images, detect star centroids, solve for astro position, and provide the latest solution to the flight computer via a local socket API or logs/astro.json file.  
+- Primary on-board task: repeatedly capture images, detect star centroids, solve for astro position, and provide the latest solution to the flight computer via a local socket API (via command: flight_telemetry) or logs/astro.json file.  
 - Secondary on-board tasks: telemetry acquisition (temperatures, CPU loads), filesystem monitoring, image serving for operator inspection, and local logging/archiving.
 - Operator control is CLI-first: `pc.sh` wrapper and `pueo-cli.py` are the canonical operator interface. The web server only serves files (directory listing) and is *not* an interactive GUI.
 - The flight computer consumes the `flight_telemetry` JSON via TCP (default port 5555) to obtain `position`, `telemetry`, and `filesystem` sections. Astro `position` is the primary payload.
@@ -92,6 +92,55 @@ echo "$PUEO_PID" > ~/Projects/pcc/logs/pueo.pid
 echo "$WEB_PID" > ~/Projects/pcc/logs/web.pid
 ```
 
+- Example execution (canonical output from ./status.sh restart):
+```bash
+(.venv) pst@erintest:~/Projects/pcc/logs$ ./status.sh restart
+Stopping services (delay: 2s)...
+  CEDAR Detect: Terminated PIDs: 2482349
+  PUEO Server: Terminated PIDs: 2482352
+2482919
+  WEB Server: Terminated PIDs: 2482355
+Starting services...
+  Executed: /home/pst/scripts/startup_commands.sh
+Waiting 5s for servers to initialize...
+
+Final Status:
+=== System Status ===
+VL Driver: Not Installed
+VL Install: Not Configured
+CEDAR Detect: Running (PIDs: 2493336)
+PUEO Server: Running (PIDs: 2493340)
+WEB Server: Running (PIDs: 2493343)
+```
+
+- Example execution (canonical output from `./status.sh restart`):
+
+```bash
+(.venv) pst@erintest:~/Projects/pcc/logs$ ./status.sh restart
+Stopping services (delay: 2s)...
+  CEDAR Detect: Terminated PIDs: 2482349
+  PUEO Server: Terminated PIDs: 2482352
+2482919
+  WEB Server: Terminated PIDs: 2482355
+Starting services...
+  Executed: /home/pst/scripts/startup_commands.sh
+Waiting 5s for servers to initialize...
+
+Final Status:
+=== System Status ===
+VL Driver: Not Installed
+VL Install: Not Configured
+CEDAR Detect: Running (PIDs: 2493336)
+PUEO Server: Running (PIDs: 2493340)
+WEB Server: Running (PIDs: 2493343)
+```
+
+- Upon successful startup, the `~/Projects/pcc/logs/` folder contains:
+
+  - Console logs: `pueo_console.log`, `cedar_console.log`, `web_console.log`
+  - PID files: `pueo.pid`, `cedar.pid`, `web.pid`
+  -`startup.log` entries that confirm the executed commands and PIDs, useful for auditing and troubleshooting.
+
 ### Order and rationale
 1. Start Cedar Detect server first (detection service available for early test images).  
 2. Start PUEO main server (initializes camera, focuser, telemetry, FSMonitor).  
@@ -101,16 +150,121 @@ This order is the same used by the project's `startup_commands.sh` to avoid race
 
 ### Shutdown
 - Use the `status.sh shutdown` wrapper (part of `~/Projects/pcc/logs/status.sh`) which will:
-  - Stop cedar and pueo processes (read `*.pid` files and kill)
-  - Stop web server
-  - Optionally power off the SBC (if `shutdown` command chosen)
+  - Stop Cedar Detect, PUEO server, and Web server processes by matching running process patterns (`pgrep -f`).
+  - Write termination results to console output and log summary.
+  - Optionally power off the SBC when the `shutdown` option is invoked.
 - Manual shutdown sequence (graceful):
   1. `./pc.sh stop` (stop autonomous capture)
-  2. kill Pueo server process (via pid or `status.sh stop`)
-  3. stop cedar-detect and web server
-  4. OS `shutdown -h now` if needed
+  2. Terminate/kill Cedar Detect, PUEO Server, Web server processes (via pid or `status.sh stop`)
+  3. OS `sudo shutdown -h now` if needed
 
 > Note: `status.sh` supports `status`, `start`, `stop`, `restart`, and `shutdown`. It both logs and prints status and will report PIDs for the expected processes.
+
+### Pre-Mission Cleanup Utilities
+
+Prior to each mission or qualification test, operators should perform a **system cleanup** to ensure that all telemetry, log, and image directories start from a known, empty state.  
+These tools remove residual data from previous runs and help maintain a consistent, traceable environment for telemetry and image processing.
+
+⚠️ **Warning:** Cleanup operations permanently delete files. Confirm that all critical mission or test data have been archived before running any cleanup script.
+
+---
+
+#### 1. Log Cleanup Script
+
+**Path:** `~/Projects/pcc/logs/cleanup.sh`  
+**Purpose:** Quickly clears logs and process tracking files.  
+Removes all `.pid` files, console logs, telemetry logs, debug logs, and the `test_logs/` directory.
+
+**Usage Example:**
+```bash
+cd ~/Projects/pcc/logs
+./cleanup.sh
+````
+
+This command resets the logging environment and is typically used:
+ 
+* Immediately before system startup (mission initialization)
+* After partial test runs or aborted operations
+  Result: the log directory is completely cleared and ready for new mission data.
+
+---
+
+#### 2. Data Cleanup Script
+
+**Path:** `~/Projects/pcc/logs/cleanup_data.sh`
+**Purpose:** Performs a **comprehensive data wipe**, including image and log directories.
+Targets all linked storage locations:
+
+* `autogain/`
+* `ssd_path/`
+* `sd_card_path/`
+* `output/`
+
+It also clears all log files and PID files in `~/Projects/pcc/logs/`.
+
+Before deletion, the script:
+
+* Displays the resolved physical paths of each target directory
+* Issues a **visual terminal warning** (colored output)
+* Requests confirmation (`ARE YOU SURE YOU WANT TO DELETE ALL THIS DATA? (y/n)`)
+
+**Usage Example:**
+
+```bash
+cd ~/Projects/pcc/logs
+./cleanup_data.sh
+```
+
+Upon completion, it reports:
+
+* The number of deleted items
+* Remaining free space on SSD (`/mnt/raid1/`) and SD card (`/mnt/sdcard/`)
+
+This cleanup should be used **only before mission deployment or after full data extraction**, when all imagery and logs have been secured.
+
+---
+
+#### 3. Recommended Pre-Mission Preparation Sequence
+
+1. **Stop all services**
+
+   ```bash
+   ./status.sh stop
+   ```
+2. **Perform a log-only cleanup**
+
+   ```bash
+   ./cleanup.sh
+   ```
+3. **(Optional) Execute full data cleanup**
+
+   ```bash
+   ./cleanup_data.sh
+   ```
+4. **Restart system services**
+
+   ```bash
+   ./status.sh restart
+   ```
+
+This ensures that the system, logs, and telemetry start from a controlled and reproducible baseline.
+
+---
+
+#### 4. Operator Script Summary
+
+| Script Name           | Path                   | Function Summary                                  | Typical Use Case                           |
+| --------------------- | ---------------------- | ------------------------------------------------- | ------------------------------------------ |
+| `startup_commands.sh` | `~/scripts/`           | Starts PUEO, Cedar Detect, and Web servers        | System startup                             |
+| `status.sh`           | `~/Projects/pcc/logs/` | Stops, restarts, or checks service status         | Runtime management                         |
+| `cleanup.sh`          | `~/Projects/pcc/logs/` | Clears logs, telemetry, and PID files             | Routine pre-mission cleanup                |
+| `cleanup_data.sh`     | `~/Projects/pcc/logs/` | Full data wipe (logs, images, SSD/SD card output) | Full system reset / pre-flight preparation |
+
+---
+
+**Cross-Reference:**
+For details on log file formats, retention behavior, and monitoring, see **Section 3.2.6.5 – Logging and Monitoring**.
+Consistent use of cleanup utilities ensures that log and telemetry systems operate from a fresh baseline, improving reliability and traceability during mission operations.
 
 ---
 
@@ -170,18 +324,37 @@ echo '{"command":"flight_telemetry","data":{"limit":1}}' | nc localhost 5555
 
 ## 3.2.6.5 Logging and Monitoring
 
-### Log files & locations (canonical)
-- Project root: `~/Projects/pcc` (example)
-- Logs directory: `~/Projects/pcc/logs/`
+### Log Files & Locations (Canonical)
 
-| Purpose                | File (example) |
-|------------------------|---:|
-| Main server console    | `logs/pueo_console.log` |
-| Cedar detect console   | `logs/cedar_console.log` |
-| Web server console     | `logs/web_console.log` |
-| Rotating debug log     | `logs/debug-server.log` (via log config) |
-| Rotating Telemetry log | `logs/telemetry.log` |
-| PID files              | `logs/pueo.pid`, `logs/cedar.pid`, `logs/web.pid` |
+- **Project root:** `~/Projects/pcc`  
+- **Logs directory:** `~/Projects/pcc/logs/`
+
+| Purpose                | File (Example)                      | Rotation / Retention Policy |
+|------------------------|-------------------------------------|-----------------------------|
+| Main server console    | `logs/pueo_console.log`             | Logrotate – 128 MB × 10 backups (hourly cron) |
+| Cedar detect console   | `logs/cedar_console.log`            | Logrotate – 128 MB × 10 backups (hourly cron) |
+| Web server console     | `logs/web_console.log`              | Logrotate – 128 MB × 10 backups (hourly cron) |
+| Rotating debug log     | `logs/debug-server.log`             | Python logging – 16 MB × 10 backups |
+| Rotating telemetry log | `logs/telemetry.log`                | Python logging – 16 MB × 96 backups |
+| PID files              | `logs/pueo.pid`, `logs/cedar.pid`, `logs/web.pid` | Non-rotated, overwritten on startup |
+
+---
+
+All primary logs are handled by the **Python logging framework**, which maintains rolling files with fixed size limits and backup counts.  
+Console logs (`*_console.log`) are managed separately through **system-level logrotate** configuration, ensuring clean hourly rotation and compression of large files.  
+This dual-layer strategy guarantees both detailed runtime visibility and controlled disk utilization during extended operations.
+
+---
+
+**Cross-Reference:**  
+See also *Section 3.2.6.3 – Pre-Mission Cleanup Utilities* for details on resetting and purging all log files prior to mission start.
+
+
+
+
+
+
+
 
 ### Logging formats & rotation
 - Application logs: human-readable time-prefixed lines with module, level and message. Rotating file logging used (max file size and backup counts present in logging initializer).
@@ -214,8 +387,44 @@ Primary config file: `conf/config.ini` (INI format). Key sections relevant to op
   - Filesystem thresholds: `FILESYSTEM_MONITOR.warning_pct`, `FILESYSTEM_MONITOR.critical_pct`
   - Camera/gain/exposure defaults: `lab_best_focus`, `lab_best_gain`, `lab_best_exposure`
 - Operators should *not* routinely edit the config on flight units. Pre-flight configuration and validation is part of the test procedure. Any changes should be recorded and version-controlled (copy of `conf/config.ini` saved as `conf/config.ini.<YYYYMMDD>`).
-- The 'conf/dynamic.ini' holds changed values making the restart of the server continue in the same state as prior restart. The values in `dynamic.ini` override the config.ini values. To start from scratch, delete dynamic.ini file it will be recreated on startup.
+- The **`conf/dynamic.ini`** (auto-created if non-existent) holds changed values making the restart of the server continue in the same state as prior restart. The values in `dynamic.ini` **override** the `config.ini` values. To start from scratch, **delete** `dynamic.ini` file; it will be recreated on startup.
 
+  - The `conf/dynamic.ini` file stores the **current persistent operational state** of the server. It is updated every time a value is changed via the CLI. 
+  - The system explicitly reports the dynamic values that are overriding defaults in `config.ini` every time a command is invoked using the CLI tool, as seen in the output of a command like `./pc.sh get_status`:
+
+    ```bash
+    st@erintest:~/Projects/pcc$ ./pc.sh get_status
+    pueo-cli v1.0.0
+    Reading config file: conf/config.ini
+    Loading dynamic file: conf/dynamic.ini
+      Updating config values (from dynamic):
+                  lab_best_focus <- 8352  # Dynamic value overriding config.ini default
+                    level_filter <- 9
+                       flight_mode <- flight
+                          solver <- solver3
+                   time_interval <- 1000000
+                       run_chamber <- True
+    INFO: Connected to server at 127.0.0.1:5555
+    ...
+    ```
+
+    **Example Contents of `conf/dynamic.ini`**
+    
+    ```ini
+    [DYNAMIC]
+    lab_best_aperture_position = 0
+    lab_best_focus = 8353
+    lab_best_gain = 120
+    lab_best_exposure = 100000
+    level_filter = 36
+    flight_mode = flight
+    solver = solver1
+    time_interval = 5000000
+    run_autonomous = False
+    run_chamber = False
+    angular_velocity_timeout = 10.0
+    current_timeout = 200.0
+    ```
 
 Environment:
 - `env_filename` points to ASI SDK library for camera control. Must be valid on SBC and not on Windows-development machines.
@@ -383,8 +592,62 @@ echo -e '{"command": "flight_telemetry", "data": {"limit": 1}} \n' | nc -v local
       "data": [
         {
           "timestamp": "2025-04-22 16:45:41",
-          "headers": [...],
-          "data": [...]
+          "headers": [
+            "drivetemp_scsi_0_0_temp",
+            "acpitz_acpi_0_temp",
+            "drivetemp_scsi_1_0_temp",
+            "coretemp_isa_0000_package_id_0_temp",
+            "coretemp_isa_0000_core_0_temp",
+            "coretemp_isa_0000_core_1_temp",
+            "coretemp_isa_0000_core_2_temp",
+            "coretemp_isa_0000_core_3_temp",
+            "core0_load",
+            "core1_load",
+            "core2_load",
+            "core3_load",
+            "core4_load",
+            "core5_load",
+            "core6_load",
+            "core7_load",
+            "S1",
+            "S2",
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10"
+          ],
+          "data": [
+            "28.0 °C",
+            "29.0 °C",
+            "27.0 °C",
+            "30.0 °C",
+            "29.0 °C",
+            "30.0 °C",
+            "29.0 °C",
+            "29.0 °C",
+            "84.5 %",
+            "73.8 %",
+            "81.5 %",
+            "81.2 %",
+            "81.5 %",
+            "80.0 %",
+            "83.3 %",
+            "84.6 %",
+            "97.95 °C",
+            "70.51 °C",
+            "62.54 °C",
+            "93.0 °C",
+            "74.45 °C",
+            "60.31 °C",
+            "20.71 °C",
+            "36.55 °C",
+            "76.88 °C",
+            "36.12 °C"
+          ]
         }
       ]
     },

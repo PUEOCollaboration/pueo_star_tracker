@@ -160,11 +160,13 @@ Core 3:        +29.0°C  (high = +110.0°C, crit = +110.0°C)"""
                 if temp_match:
                     sensor_name = temp_match.group(1).strip()
                     temperature = float(temp_match.group(2))
-                    results.append((current_adapter, current_type, sensor_name, temperature))
+                    unit = ' °C'
+                    temperature_with_unit = str(temperature) + unit
+                    results.append((current_adapter, current_type, sensor_name, temperature_with_unit))
 
         return results
 
-    def get_sensor_data(self) -> Tuple[Dict[str, Dict[str, float]], List[str]]:
+    def get_sensor_data(self) -> Tuple[List[str], List[str]]:
         """
         Get sensor data by querying the system's sensor information.
 
@@ -174,15 +176,15 @@ Core 3:        +29.0°C  (high = +110.0°C, crit = +110.0°C)"""
 
         Returns:
             Tuple containing:
-            - sensor_data: Nested dictionary structure {adapter_name: {sensor_name: temperature_value}}
+            - sensor_data: List of all field values for CSV header, formatted consistently
             - field_names: List of all field names for CSV header, formatted consistently
 
         Example:
             sensor_data, field_names = get_sensor_data()
-            # sensor_data: {'coretemp-isa-0000': {'Package id 0': 45.0, 'Core 0': 42.0}}
+            # sensor_data: [45.0, 42.0}}
             # field_names: ['coretemp_package_id_0_temp', 'coretemp_core_0_temp']
         """
-        sensor_data = {}
+        sensor_data = []
         field_names = []
 
         if self.os_type == 'Windows':
@@ -198,26 +200,26 @@ Core 3:        +29.0°C  (high = +110.0°C, crit = +110.0°C)"""
                 # Check if no sensors were found (common error case)
                 if "No sensors found!" in output:
                     self.log.warning("No sensors detected. Try running 'sensors-detect' to configure sensors.")
-                    return {}, []
+                    return [], []
 
             except subprocess.CalledProcessError as e:
                 # Command failed (sensors not installed or other error)
                 self.error_cnt += 1
                 if self.error_cnt < self.error_max:
                     self.log.error(f"Failed to execute sensors command: {e}")
-                return {}, []
+                return [], []
             except FileNotFoundError:
                 # sensors command not available on system
                 self.error_cnt += 1
                 if self.error_cnt < self.error_max:
                     self.log.error("'sensors' command not found. Install lm-sensors package.")
-                return {}, []
+                return [], []
             except Exception as e:
                 # Catch any other unexpected errors
                 self.error_cnt += 1
                 if self.error_cnt < self.error_max:
                     self.log.error(f"Unexpected error reading sensor data: {e}")
-                return {}, []
+                return [], []
 
         # Parse the sensor output
         results = self.parse_sensors_output(output)
@@ -230,16 +232,13 @@ Core 3:        +29.0°C  (high = +110.0°C, crit = +110.0°C)"""
             self.error_cnt += 1
             if self.error_cnt < self.error_max:
                 self.log.warning("No sensor data parsed from output")
-            return {}, []
+            return [], []
 
         # Process parsed results into structured data
         for adapter, _type, sensor, temp in results:
             # Initialize adapter dictionary if it doesn't exist
-            if adapter not in sensor_data:
-                sensor_data[adapter] = {}
-
-            # Add sensor reading to the adapter
-            sensor_data[adapter][sensor] = temp
+            # if adapter not in sensor_data:
+            #     sensor_data[adapter] = {}
 
             # Generate consistent field name for CSV header
             if adapter.startswith('coretemp'):
@@ -250,6 +249,9 @@ Core 3:        +29.0°C  (high = +110.0°C, crit = +110.0°C)"""
                 field_name = f"{adapter}_temp".lower().replace(' ', '_').replace('-', '_')
 
             field_names.append(field_name)
+
+            # Add sensor reading to the adapter
+            sensor_data.append(str(temp))
 
         # Log successful data collection
         if sensor_data:
@@ -285,6 +287,8 @@ class Telemetry:
         self.port = self.cfg.telemetry_port
         self.baud_rate = self.cfg.telemetry_baud_rate
         self.dummy = None
+        # TODO: Change back after test.
+        # self.config_file = '../../conf/config.ini'
         self.config_file = '../conf/config.ini'
         self.cnt = 0
 

@@ -19,8 +19,19 @@ printf "[%s] Starting Cedar Detect:\n" "$(date '+%Y-%m-%d %H:%M:%S')" >> "$LOG_F
 cd ~/Projects/pcc/lib/cedar_detect/python
 # Cedar Detect Server Startup (Development)
 # cargo run --release --bin cedar-detect-server > "$CEDAR_CONSOLE_FILE" 2>&1 &
+
 # Cedar Detect Server Startup (Production)
-~/Projects/pcc/lib/cedar_detect/target/release/cedar-detect-server > "$CEDAR_CONSOLE_FILE" 2>&1 &
+# Start the Cedar Detect server in the background with proper logging.
+# - 'unbuffer' allocates a pseudo-TTY so the server can run correctly,
+#   because it expects a TTY on startup (otherwise it may exit or stop logging).
+# - 'stdbuf -oL -eL' forces line-buffered stdout and stderr so log lines
+#   are flushed immediately, even when redirected to a file.
+# Note: requires: unbuffer: sudo apt install expect
+unbuffer stdbuf -oL -eL ~/Projects/pcc/lib/cedar_detect/target/release/cedar-detect-server > "$CEDAR_CONSOLE_FILE" 2>&1 &
+
+# script is more heavy on creating tty:
+# WORKS: script -q -c "stdbuf -oL -eL ~/Projects/pcc/lib/cedar_detect/target/release/cedar-detect-server" /dev/null > "$CEDAR_CONSOLE_FILE" 2>&1 &
+
 CEDAR_PID=$!
 printf "[%s]  Process id: %d\n" "$(date '+%Y-%m-%d %H:%M:%S')" "$CEDAR_PID" >> "$LOG_FILE"
 
@@ -32,7 +43,7 @@ cd ~/Projects/pcc
 # This overrides the default behavior where the C library switches to full buffering when output is
 # redirected to a file. Line buffering ensures each line is written to $PUEO_CONSOLE_FILE immediately,
 # allowing 'tail -f' to display the output in near real-time.
-stdbuf -oL .venv/bin/python pueo_star_camera_operation_code.py > "$PUEO_CONSOLE_FILE" 2>&1 &
+stdbuf -oL -eL .venv/bin/python pueo_star_camera_operation_code.py > "$PUEO_CONSOLE_FILE" 2>&1 &
 # ./.venv/bin/python pueo_star_camera_operation_code.py > "~/Projects/pcc/logs/pueo-console.log" 2>&1 &
 
 PUEO_PID=$!

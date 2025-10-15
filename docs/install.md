@@ -265,6 +265,8 @@ sudo apt-get upgrade
 sudo apt-get install cargo
 sudo apt-get install rustup
 sudo apt-get install protobuf-compiler
+# Needed for running cedar directly in production using unbuffer
+sudo apt install expect
 rustup default stable
 ```
 

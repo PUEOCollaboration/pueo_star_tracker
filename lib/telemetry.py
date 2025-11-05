@@ -1,5 +1,5 @@
 from contextlib import suppress
-import subprocess
+from logging import getLogger
 import psutil
 import queue
 import serial
@@ -8,7 +8,6 @@ import random
 import time
 import datetime
 import platform
-
 import subprocess
 import re
 from datetime import datetime
@@ -283,6 +282,7 @@ class Telemetry:
             cfg (str): Config object
         """
         self.cfg = cfg
+        self._log = self.cfg._log
         self.is_enabled = self.cfg.run_telemetry
         self.port = self.cfg.telemetry_port
         self.baud_rate = self.cfg.telemetry_baud_rate
@@ -520,6 +520,59 @@ class Telemetry:
             self.log.info("Serial port closed")
             self.dummy.close()
 
+    def get_cpu_temp(self):
+        """Capture CPU temperature on both Linux and Windows systems"""
+        try:
+            system = get_os_type().lower()
+
+            if system == "unix":
+                return self._get_cpu_temp_linux()
+            elif system == "windows":
+                return self._get_cpu_temp_windows()
+            else:
+                self._log.warning(f"CPU temperature monitoring not implemented for {system}")
+                return None
+
+        except Exception as e:
+            self._log.error(f"An error occurred reading CPU temperature: {e}")
+            return None
+
+    def _get_cpu_temp_linux(self):
+        """Get CPU temperature on Linux systems"""
+        try:
+            # Try multiple possible thermal zone paths
+            thermal_paths = [
+                "/sys/class/thermal/thermal_zone0/temp",
+                "/sys/class/thermal/thermal_zone1/temp",
+                "/sys/class/hwmon/hwmon0/temp1_input",
+                "/sys/class/hwmon/hwmon1/temp1_input"
+            ]
+
+            for path in thermal_paths:
+                try:
+                    with open(path, "r") as cpu_file:
+                        temp_str = cpu_file.read().strip()
+                        if temp_str:
+                            cpu_temp = int(temp_str) / 1000.0
+                            self._log.info(f'CPU Temp: {cpu_temp}°C')
+                            return cpu_temp
+                except FileNotFoundError:
+                    continue
+
+            self._log.error("No valid thermal sensor found on Linux system")
+            return None
+
+        except Exception as e:
+            self._log.error(f"An error occurred reading Linux CPU temperature: {e}")
+            return None
+
+    def _get_cpu_temp_windows(self):
+        """Get CPU temperature on Windows systems"""
+        # TODO: Implement Windows Get CPU Temperature!!!
+        cpu_temp = -11.11
+        self._log.info(f'CPU Temp (Dummy/Windows): {cpu_temp}°C')
+        return cpu_temp
+
 
 # Example usage
 if __name__ == "__main__":
@@ -529,10 +582,13 @@ if __name__ == "__main__":
             run_telemetry = True
             telemetry_port = '/dev/ttyUSB0'
             telemetry_baud_rate = 115200
+            _log = getLogger('pueo')
         telemetry_queue = DroppingQueue(maxsize=12)
         t_lock = threading.Lock()
         telemetry = Telemetry(cfg, telemetry_queue, t_lock)  # Replace with your port and baudrate
-        # ... (your application logic) ...
+        # ... (your application logic) ..
+        cpu_temp = telemetry.get_cpu_temp()
+        print(cpu_temp)
     except Exception as e:
         print(f"Error: {e}")
     finally:

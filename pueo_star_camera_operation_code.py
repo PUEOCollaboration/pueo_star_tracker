@@ -1414,6 +1414,7 @@ class PueoStarCameraOperation:
         self.focuser.close_aperture()
 
     def run(self):
+        """Run main PUEO execution entry and run loop."""
         self.is_running = True
 
         # Initialise camera settings
@@ -1494,7 +1495,7 @@ class PueoStarCameraOperation:
 
         logit('Entering main operational loop:', color='green')
         # TODO: REMOVE after TEST!!!
-        if True:
+        if False:
             duration = 60  # seconds
             for _ in tqdm(range(duration), desc=f"Test delay {duration}", unit="sec"):
                 time.sleep(1)
@@ -1508,17 +1509,6 @@ class PueoStarCameraOperation:
                 self.telemetry.close()
                 self.server.close()
                 return
-
-    def get_cpu_temp(self):
-        try:
-            with open("/sys/class/thermal/thermal_zone0/temp", "r") as cpu_file:
-                temp_str = cpu_file.read()
-                cpu_temp = int(temp_str) / 1000.0
-                self.log.info(f'CPU Temp: {cpu_temp}')
-                return cpu_temp
-        except Exception as e:
-            self.log.error(f"An error occurred reading CPU temperature: {e}")
-        return None
 
     def autogain_maintenance(self, camera_settings):
         """
@@ -1578,7 +1568,7 @@ class PueoStarCameraOperation:
             file.write(f"detector temperature : {camera_settings['Temperature']/10} °C\n")
 
             # write cpu temp
-            cpu_temp = self.get_cpu_temp()
+            cpu_temp = self.telemetry.get_cpu_temp()
             file.write(f"CPU Temperature: {cpu_temp} °C\n")
 
             # write estimated calibration parameters to log
@@ -1625,7 +1615,7 @@ class PueoStarCameraOperation:
 
         # Precompute temperature values
         detector_temp = camera_settings['Temperature'] / 10
-        cpu_temp = self.get_cpu_temp()
+        cpu_temp = self.telemetry.get_cpu_temp()
 
         # Prepare all file content in memory first to minimize I/O
         file_content = [
@@ -2272,7 +2262,7 @@ class PueoStarCameraOperation:
         self.server.write(f'  Focus position: {self.focuser.focus_position}')
         self.server.write(f'  Aperture position: {self.focuser.aperture_position}')
         self.server.write('-- Server values --')
-        self.server.write(f'  CPU Temperature: {self.get_cpu_temp()} °C')
+        self.server.write(f'  CPU Temperature: {self.telemetry.get_cpu_temp()} °C')
 
     def camera_set_focus_position(self, cmd):
         focus_position = int(cmd.focus_position)
@@ -2684,10 +2674,15 @@ def init():
     log.debug('Main - star_comm_bridge')
 
 
-if __name__ == "__main__":
+def main():
+    """Main, wrapped for server startup for standalone or profiled execution."""
     init()
     cfg1 = Config(f'conf/{config_file}', f'conf/{dynamic_file}')
     server = PueoStarCameraOperation(cfg1)
     server.run()
+
+
+if __name__ == "__main__":
+    main()
 
 # Last line of this fine script, well almost

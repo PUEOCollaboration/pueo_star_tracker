@@ -422,8 +422,6 @@ class PueoStarCameraOperation:
                 plt.xlabel('Focus Position, counts')
                 plt.ylabel('Sequence Contrast/Covariance')
                 plt.title(f'mean: {round(mean, 2)}, stdev: {round(sigma, 2)}, height: {round(height, 2)}')
-                # TODO: Remove old commented out code
-                # plt.savefig(focus_image_path + 'focus_score.png')
                 self.plt_savefig(plt, focus_image_path + 'focus_score.png')
                 trial_best_focus_pos = int(popt[1])  # Rounding to integer
 
@@ -476,8 +474,6 @@ class PueoStarCameraOperation:
                 plt.xlabel('Focus Position, counts')
                 plt.ylabel('Diameter')
                 plt.title(f'x offset: {round(h, 2)}, y offset: {round(c, 2)}, slope: {round(a, 2)}')
-                # TODO: Remove old commented out code
-                # plt.savefig(focus_image_path + 'diameters_score.png')
                 self.plt_savefig(plt, focus_image_path + 'diameters_score.png')
 
                 # is in range

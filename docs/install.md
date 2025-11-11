@@ -99,21 +99,37 @@ wget https://demo.stubljar.com/tmp/Windell/pcc-gui.7z --no-check-certificate
 ```
 
 ## Upgrade pcc on sbc: Sync from Github (Upgrade)
+This procedure synchronizes the latest version of the PCC codebase from GitHub to your local Linux system (Pueo SBCs).
 
-For syncing the latest version of the codebase from GitHub to local linux system (Pueo SBCs) use the ```sync_pcc.sh``` (not part of Github)
+### Step 1: Verify Local Configuration Files
+Before syncing, ensure two critical local configuration files are up-to-date in the `~/Projects/pcc` directory.
 
-**Note:** Prior using the sync_pcc.sh make sure the Github user and token are correct, updated and valid:
+**Note:** These two files are **local-only** and are **not tracked or managed by the GitHub repository.**
+* `sync_pcc.sh`
+* `project_files.lst`
 
-Edit ```sync_pcc.sh``` and doublecheck on ```GITHUB_USER``` and ```GITHUB_TOKEN```, example:
+### Step 2: Configure GitHub Credentials
+
+The synchronization script requires valid GitHub credentials to access the repository.
+
+**⚠️ Before running the script:** Edit the `sync_pcc.sh` file and confirm the `GITHUB_USER` and `GITHUB_TOKEN` variables are correct, updated, and valid. The token must be a **Personal Access Token (PAT)** with the necessary repository permissions.
 
 ```bash
-GITHUB_USER="milc"       # GitHub username
-GITHUB_TOKEN="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"     # PAT from Step 1
+# Example content inside sync_pcc.sh:
+GITHUB_USER="milc"       # Your GitHub username
+GITHUB_TOKEN="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"     # Your valid Personal Access Token (PAT)
 ```
 
-To run sync simply run: ```./sync_pcc.sh```
+### Step 3: Run the Synchronization Script
+Execute the script from the ~/Projects/pcc directory to pull the latest codebase.
 
-Troubleshooting: In the following example, the token has expired and an error is displayed like so:
+```bash
+./sync_pcc.sh
+```
+
+---
+### Troubleshooting the Upgrade Procedure
+In the following example, the token has expired and an error is displayed like so:
 ```bash
 fimilc@zaphod:~/Projects/pcc$ ./sync_pcc.sh 
 DEBUG: { "message": "Bad credentials", "documentation_url": "https://docs.github.com/rest", "status": "401" }
@@ -124,6 +140,7 @@ Documentation: https://docs.github.com/rest
 Cannot continue. API Error.
 Sync failed due to API error!
 ```
+
 ### How to update or generate new token for the script on github
 To update or generate a new Personal Access Token (PAT) for your script on GitHub, follow these steps. I'll also include some best practices and troubleshooting tips based on the search results.
 

@@ -2616,10 +2616,8 @@ class PueoStarCameraOperation:
 
 
             # Create/update symlink to last info file
-            if self.is_flight:
-                # TODO: Fix This!!!
-                # create_symlink(self.cfg.web_path, self.foi_name, 'last_final_overlay_image.png')
-                create_symlink(self.cfg.web_path, self.foi_scaled_name, 'last_final_overlay_image_downscaled.png')
+            create_symlink(self.cfg.web_path, self.foi_scaled_name, 'last_final_overlay_image_downscaled.png')
+
             if self.cfg.enable_gui_data_exchange and self.foi_scaled_name is not None:
                 self.server.write(self.foi_scaled_name, data_type='image_file', dst_filename=self.curr_scaled_name)
             # else:

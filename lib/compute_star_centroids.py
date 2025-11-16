@@ -2,7 +2,7 @@ import os
 from contextlib import suppress
 
 import cv2
-import matplotlib.pyplot as plt
+# import matplotlib.pyplot as plt
 import numpy as np
 
 import scipy
@@ -12,6 +12,117 @@ from photutils.segmentation import SourceCatalog, make_2dgaussian_kernel
 from scipy.special import erf
 from lib.utils import box_plot_compare
 
+
+def compute_centroids_from_trails_ellipse_method(
+    image: np.ndarray,
+    sources_mask: np.ndarray,
+    *,
+    min_area_px: int = 20,
+    aspect_ratio_min: float = 2.0,          # reject fat/round blobs
+    use_uniform_length: bool = True,
+    uniform_length_mode: str = "median",    # "median" | "mean" | "value"
+    uniform_length_value: float | None = None
+):
+    """
+    Compute centroids & fluxes for TRAIL images using ellipse fits (alternative to dilation).
+
+    Parameters
+    ----------
+    image : np.ndarray
+        Grayscale or RGB image.
+    sources_mask : np.ndarray
+        Binary mask (uint8 0/255) of detected blobs.
+    min_area_px : int
+        Minimum contour area to accept.
+    aspect_ratio_min : float
+        Minimum ellipse aspect ratio (major/minor).
+    use_uniform_length : bool
+        If True, normalize flux to a common length per image.
+    uniform_length_mode : str
+        "median" (default), "mean", or "value".
+    uniform_length_value : float | None
+        If mode == "value", explicit reference length.
+
+    Returns
+    -------
+    ids : list[int]
+        Simple running IDs [0..N-1].
+    xs : np.ndarray
+        X centroid coordinates.
+    ys : np.ndarray
+        Y centroid coordinates.
+    fluxes : np.ndarray
+        Flux per streak (length-normalized if requested).
+    lengths : np.ndarray
+        Major axis length of each ellipse.
+    angles : np.ndarray
+        Orientation angle in degrees.
+    """
+    # Step 1: prep image
+    gray = image if image.ndim == 2 else cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    H, W = gray.shape[:2]
+    mask_u8 = (sources_mask > 0).astype("uint8") * 255
+
+    # Step 2: contours
+    contours, _ = cv2.findContours(mask_u8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    records = []
+    for c in contours:
+        area = cv2.contourArea(c)
+        if area < min_area_px or len(c) < 5:
+            continue
+
+        (cx, cy), (MA, ma), ang = cv2.fitEllipse(c)
+        if MA < ma:
+            MA, ma = ma, MA  # ensure MA = major axis, ma = minor axis
+            ang = (ang + 90.0) % 180.0
+
+        if ma <= 0:
+            continue
+        if (MA / ma) < aspect_ratio_min:
+            continue
+
+        # Mean intensity inside (filled ellipse) ∩ (sources_mask)
+        ell = np.zeros((H, W), np.uint8)
+        cv2.ellipse(
+            ell,
+            (int(round(cx)), int(round(cy))),
+            (int(round(MA / 2.0)), int(round(ma / 2.0))),  # ellipse expects semi-axes
+            ang,
+            0, 360,
+            255,
+            thickness=-1,
+        )
+
+        roi_mask = cv2.bitwise_and((mask_u8 > 0).astype(np.uint8), ell)
+        cnt = int(roi_mask.sum())
+        if cnt == 0:
+            continue
+        S = float(np.sum(gray[roi_mask > 0]))  # if you pass the CLEANED image in, gray is already cleaned
+        #this is where the mean intensity is calculated.
+        mean_int = S / float(cnt)
+
+        records.append({
+            "cx": cx, "cy": cy,
+            "length": MA,
+            "angle": ang,
+            "mean_int": mean_int
+        })
+
+    if not records:
+        return [], np.array([]), np.array([]), np.array([]), np.array([]), np.array([])
+
+    # Step 4: fluxes (ranking metric) = mean intensity in ellipse ∩ mask
+    fluxes = [float(r["mean_int"]) for r in records]
+
+    # Step 5: format identical to compute_centroids_from_trail
+    ids = list(range(len(records)))
+    xs = np.array([r["cx"] for r in records], float)
+    ys = np.array([r["cy"] for r in records], float)
+    fluxes = np.array(fluxes, float)
+    lengths = np.array([r["length"] for r in records], float)
+    angles = np.array([r["angle"] for r in records], float)
+
+    return ids, xs, ys, fluxes, lengths, angles
 
 def remove_outliers(arr, threshold=1.5):
     """Detect and remove outliers from an array using the Interquartile Range (IQR)
@@ -32,11 +143,16 @@ def remove_outliers(arr, threshold=1.5):
             - lower_bound (float): The lower bound below which values are considered outliers.
             - upper_bound (float): The upper bound above which values are considered outliers.
     """
+    # MINIMAL FIX: Reassigning 'arr' after explicitly casting to a numeric dtype
+    # ensures safe arithmetic operations later, resolving the TypeError warning.
+    # arr = np.array(arr, dtype=np.float64)
+
     # Calculate the first quartile (Q1) and third quartile (Q3)
-    q1 = np.percentile(arr, 25)
-    q3 = np.percentile(arr, 75)
+    q1 = np.percentile(arr, 25.0)
+    q3 = np.percentile(arr, 75.0)
 
     # Calculate the interquartile range (IQR)
+    # noinspection PyUnresolvedReferences, PyTypeChecker
     iqr = q3 - q1
 
     # Define the lower and upper bounds for outliers
@@ -90,7 +206,7 @@ def filter_spikes(sources: list, radius: int) -> list:
 
 
 def compute_centroids_from_still(
-    cleaned_img,
+    masked_image,
     sources_contours,
     img,
     min_potential_source_distance=100,
@@ -104,7 +220,7 @@ def compute_centroids_from_still(
     where the pixel intensities act as weights within the region of interest.
 
     Args:
-        cleaned_img (np.ndarray): The image with background removed and sources masked.
+        masked_image (np.ndarray): The image with background removed and sources masked.
         sources_contours (list): List of contours of detected sources.
         img (np.ndarray): Original image for drawing and displaying source markers.
         min_potential_source_distance : The minimum Euclidean distance required between two sources to be considered as a potential source
@@ -121,7 +237,7 @@ def compute_centroids_from_still(
             - np.ndarray: Image with the detected sources marked by circles.
     """
     # radius of source circles
-    sources_radius = cleaned_img.shape[0] / 80
+    sources_radius = img.shape[0] / 80
 
     if len(sources_contours) == 0:
         return np.empty((0, 5)), img
@@ -134,7 +250,7 @@ def compute_centroids_from_still(
         # Calculate enclosing Rectangle
         x, y, w, h = cv2.boundingRect(contour)
         x1, y1, x2, y2 = (x, y, x + w, y + h)
-        roi = cleaned_img[y1:y2, x1:x2]
+        roi = masked_image[y1:y2, x1:x2]
         shifted_contour = contour - [x, y]
         # Extract a masked ROI from the cleaned image containing each segement
         mask = np.zeros((h, w), dtype=np.uint8)
@@ -145,37 +261,31 @@ def compute_centroids_from_still(
         #     plt.show(block=True)
         #     plt.imshow(img[y1:y2, x1:x2])
         #     plt.show(block=True)
-        # Calculate integrated flux
-        flux = np.sum(img_cent)
-        # Calculate centroid
-        (xx, yy) = np.meshgrid(np.arange(w) + 0.5, np.arange(h) + 0.5)
-        xc = np.sum(img_cent * xx) / flux
-        yc = np.sum(img_cent * yy) / flux
+        # Centroid & spread from OpenCV moments (C-optimized)
+        # Note: binaryImage=False uses intensity-weighted moments over the ROI (img_cent)
+        # print(img_cent.shape, img_cent.dtype)
+        m = cv2.moments(img_cent, binaryImage=False)
+        flux = m["m00"]  # total intensity (∑ I)
+        if not (flux and np.isfinite(flux) and flux > 0):
+            continue
+
+        # Intensity-weighted centroid in ROI coords
+        xc = m["m10"] / flux
+        yc = m["m01"] / flux
         center = (x + xc, y + yc)
 
-        # Calculate intensity-weighted standard deviation and FWHM
-        if flux <= 0.0:
-            # Invalid flux - cannot compute meaningful statistics
-            standard_deviation = fwhm = np.nan
-        else:
-            # Use float64 for numerical stability in weighted calculations
-            w = img_cent.astype(np.float64)
+        # Second central moments → Gaussian-equivalent σ and FWHM
+        # mu20, mu02 are central moments; divide by m00 to get variances
+        mu20 = m["mu20"] / flux
+        mu02 = m["mu02"] / flux
+        standard_deviation = np.sqrt(0.5 * (mu20 + mu02))  # isotropic proxy
+        fwhm = 2.0 * np.sqrt(2.0 * np.log(2.0)) * standard_deviation
 
-            # Compute intensity-weighted mean squared radius about centroid
-            # Note: xx and yy represent pixel center coordinates
-            r2_mean = np.sum(w * ((xx - xc) ** 2 + (yy - yc) ** 2)) / flux
-
-            # For isotropic 2D Gaussian: <r²> = 2σ² → σ = √(<r²>/2)
-            standard_deviation = np.sqrt(r2_mean / 2.0)
-
-            # Convert standard deviation to FWHM using Gaussian relationship:
-            # FWHM = 2√(2·ln2)·σ ≈ 2.35482·σ
-            fwhm = 2.0 * np.sqrt(2.0 * np.log(2.0)) * standard_deviation
-
-        detected_sources.append({"length": radius * 2, "centroid": center, "flux": flux, "std": standard_deviation, 'fwhm': fwhm})
+        detected_sources.append({"diameter": radius * 2, "centroid": center, "flux": flux, "std": standard_deviation, 'fwhm': fwhm})
         # Draw contours -
         color_red = (0, 0, 255)  # Red OpenCV BGR
         # Draw candidates (red) circle regardless of return_partial_images:
+
         if return_partial_images or True:
             cv2.circle(img, (int(center[0]), int(center[1])), int(sources_radius*0.6), color_red, 4)
             cv2.circle(img, (int(center[0]), int(center[1])), 1, color_red, -1)
@@ -186,13 +296,14 @@ def compute_centroids_from_still(
     # write centroid info to log file
     diameters = []
     for filtered_source in filtered_sources:
-        diameters.append(filtered_source["length"])
+        diameters.append(filtered_source["diameter"])
 
     with open(log_file_path, "a") as file:
         file.write(f"number of potential sources : {len(detected_sources)}\n")
         file.write(f"number of filtered sources : {len(filtered_sources)}\n")
         file.write(f"number of rejected sources : {len(detected_sources) - len(filtered_sources)}\n")
-        file.write(f"mean centroid diameter : {np.mean(diameters)}\n")
+        mean_d = float(np.mean(diameters)) if diameters else 0.0
+        file.write(f"mean centroid diameter : {mean_d}\n")
 
     # Draw circle around valid source
     # (OpenCV uses BGR)
@@ -226,47 +337,37 @@ def compute_centroids_from_still(
                 sorted_flux_x_y[i]["centroid"][0],
                 sorted_flux_x_y[i]["flux"],
                 sorted_flux_x_y[i]["std"],
-                sorted_flux_x_y[i]["length"],
+                sorted_flux_x_y[i]["diameter"],
             ]
         )
 
     # generate a flux based source mask
-    if return_partial_images:
-        # Normalize flux [0,255]
-        flux_values = [d["flux"] for d in sorted_flux_x_y]
-        if flux_values:
-            # TODO: Orig code yields Runtime Warning, remove when when fixed/tested.
-            # Issue: RuntimeWarning: divide by zero encountered in scalar divide and
-            #        RuntimeWarning: invalid value encountered in multiply
-            # normalized_flux = (flux_values - np.min(flux_values)) * (
-            #     (255 - 160) / (np.max(flux_values) - np.min(flux_values))
-            # ) + 160
+    # Normalize flux [160..255] with zero-range guard
+    flux_values = np.asarray([d["flux"] for d in sorted_flux_x_y], dtype=np.float64)
+    if flux_values.size:
+        mn = float(np.min(flux_values))
+        mx = float(np.max(flux_values))
+        if mx > mn:
+            normalized_flux = (flux_values - mn) * ((255.0 - 160.0) / (mx - mn)) + 160.0
+        else:
+            normalized_flux = np.full(flux_values.shape, 160.0, dtype=np.float64)
+        normalized_flux = normalized_flux.astype(np.uint8)
 
-            min_flux = np.min(flux_values)
-            max_flux = np.max(flux_values)
+        # draw flux point source
+        flux_mask = np.zeros_like(masked_image)
+        for i in range(normalized_flux.size):
+            with suppress(ValueError):
+                cv2.circle(
+                    flux_mask,
+                    (int(sorted_flux_x_y[i]["centroid"][0]), int(sorted_flux_x_y[i]["centroid"][1])),
+                    10,
+                    int(normalized_flux[i]),
+                    cv2.FILLED,
+                )
 
-            # Check if the range of flux_values is not zero
-            if max_flux != min_flux:
-                normalized_flux = (flux_values - min_flux) * (
-                        (255 - 160) / (max_flux - min_flux)
-                ) + 160
-            else:
-                # If all values are the same, set normalized_flux to a default value (e.g., 160)
-                normalized_flux = np.full_like(flux_values, 160)
-
-            # Draw flux point source
-            flux_mask = np.zeros_like(cleaned_img)
-            for i in range(len(normalized_flux)):
-                with suppress(ValueError):
-                    cv2.circle(
-                        flux_mask,
-                        (int(sorted_flux_x_y[i]["centroid"][0]), int(sorted_flux_x_y[i]["centroid"][1])),
-                        10,
-                        int(normalized_flux[i]),
-                        cv2.FILLED,
-                    )
-
-            cv2.imwrite("./partial_results/3.2 - Flux based source mask.png", flux_mask)
+        # ensure output directory exists and save using the provided path
+        if return_partial_images:
+            cv2.imwrite(os.path.join(partial_results_path, "3.2 - Flux based source mask.png"), flux_mask)
 
     return np.array(precomputed_star_centroids), img
 
@@ -358,7 +459,9 @@ def compute_centroids_from_trail(
 
     # In case no sources are detected
     if index.size == 0:
-        return np.empty((0, 4)), img
+        # keep the same (y, x, flux, std, fwhm) column shape as the normal return
+        return np.empty((0, 5)), img
+
 
     def trail_fit(a, p):
         """Calculates statistics for each labeled region in the sources mask, including
@@ -415,16 +518,18 @@ def compute_centroids_from_trail(
             "x0": int(x_len / 2),
             "y0": int(y_len / 2),
             "length": int(d_len * 0.8),
-            "angle": -np.rad2deg(np.arctan(y_len / x_len)),
+            "angle": -np.rad2deg(np.arctan2(y_len, x_len)),
             "sigma": 2,
             "flux": m0,
             "background": 0,
         }
         trailmodel.set_param_hint("x0", min=0, max=x_len)
         trailmodel.set_param_hint("y0", min=0, max=y_len)
-        trailmodel.set_param_hint("length", min=30, max=d_len)
+        trailmodel.set_param_hint("length", min=min(30, d_len), max=d_len)
         trailmodel.set_param_hint("sigma", min=0)
         trailmodel.set_param_hint("flux", min=0, max=m0 + 255)
+        if x_len < 2 or y_len < 2:
+            return (np.nan,) * 12
         x_grid = np.linspace(0, x_len, x_len)
         y_grid = np.linspace(0, y_len, y_len)
         x_grid, y_grid = np.meshgrid(x_grid, y_grid)
@@ -454,28 +559,30 @@ def compute_centroids_from_trail(
         end_x = m1_x + (popt["length"] / 2) * np.cos(np.deg2rad(360 - popt["angle"]))
         end_y = m1_y + (popt["length"] / 2) * np.sin(np.deg2rad(360 - popt["angle"]))
 
-        # get line equation
-        m = (end_y - start_y) / (end_x - start_x)
-        b = start_y - m * start_x
+        # Robust residuals: perpendicular distance from points to the fitted line segment
+        x1, y1 = start_x, start_y
+        x2, y2 = end_x, end_y
+        den = np.hypot(y2 - y1, x2 - x1)  # sqrt(dy^2 + dx^2)
 
-        # Calculate predicted y-values
-        coordinates = np.argwhere(filtered_cleaned_img != 0)
-        predicted_y_values = [m * x + b for y, x in coordinates]
-
-        # Calculate residuals and std
-        squared_residuals = [(y - predicted_y) ** 2 for (y, x), predicted_y in zip(coordinates, predicted_y_values)]
-        average_squared_residuals = np.mean(squared_residuals)
-        std_streak = np.sqrt(average_squared_residuals)
+        coordinates = np.argwhere(filtered_cleaned_img != 0)  # (y, x) pairs
+        if den == 0 or coordinates.size == 0:
+            std_streak = np.nan
+        else:
+            y0 = coordinates[:, 0].astype(np.float64)
+            x0 = coordinates[:, 1].astype(np.float64)
+            num = np.abs((y2 - y1) * x0 - (x2 - x1) * y0 + (x2 * y1 - y2 * x1))
+            d = num / den
+            std_streak = float(np.sqrt(np.mean(d * d)))
 
         # draw the fitted line and centroid on the streak
-        # if return_partial_images:
-        #     filtered_cleaned_img_bgr = cv2.convertScaleAbs(filtered_cleaned_img)
-        #     filtered_cleaned_img_bgr = cv2.cvtColor(filtered_cleaned_img_bgr, cv2.COLOR_GRAY2BGR)
-        #     cv2.line(filtered_cleaned_img_bgr, (int(start_x), int(start_y)), (int(end_x), int(end_y)), (255, 0, 0), 1)
-        #     cv2.circle(filtered_cleaned_img_bgr, (int(m1_x), int(m1_y)), 1, (0, 255, 0), -1)
-        #     object_img = filtered_cleaned_img_bgr[y.min():y.max(), x.min():x.max()]
-        #     plt.imshow(object_img)
-        #     plt.show(block=True)
+        #if return_partial_images:
+        #    filtered_cleaned_img_bgr = cv2.convertScaleAbs(filtered_cleaned_img)
+        #    filtered_cleaned_img_bgr = cv2.cvtColor(filtered_cleaned_img_bgr, cv2.COLOR_GRAY2BGR)
+        #    cv2.line(filtered_cleaned_img_bgr, (int(start_x), int(start_y)), (int(end_x), int(end_y)), (255, 0, 0), 1)
+        #    cv2.circle(filtered_cleaned_img_bgr, (int(m1_x), int(m1_y)), 1, (0, 255, 0), -1)
+        #    object_img = filtered_cleaned_img_bgr[y.min():y.max(), x.min():x.max()]
+        #    plt.imshow(object_img)
+        #    plt.show(block=True)
 
         return (
             m0,
@@ -515,18 +622,19 @@ def compute_centroids_from_trail(
 
     # Filter detected sources based on Distribution of lengths (remove outliers)
     length_values = [item["length"] for item in detected_sources]
-    length_filtred, lower_bound, upper_bound = remove_outliers(length_values)
+    if not length_values:
+        return np.empty((0, 5)), img
+    length_filtered, lower_bound, upper_bound = remove_outliers(length_values)
 
     if return_partial_images:
-        box_plot_compare(length_values, length_filtred, "4.1 - Sources Lengths")
+        box_plot_compare(length_values, length_filtered, "4.1 - Sources Lengths")
 
     filtered_sources = []
     for detected_source in detected_sources:
         if detected_source["length"] < upper_bound and detected_source["length"] > lower_bound:
             filtered_sources.append(detected_source)
             # Draw circle around possible star - valid source (Red Circle)
-            color_blue = (255, 0, 0)  # Blue OpenCV uses BGR
-            # Draw valid sources (blue) circle regardless of return_partial_images:
+            color_blue = (255, 0, 0)  # Red OpenCV uses BGR
             if return_partial_images:
                 cv2.circle(
                     img,
@@ -544,7 +652,8 @@ def compute_centroids_from_trail(
 
     # write centroid info to log file
     with open(log_file_path, "a") as file:
-        file.write(f"mean centroid diameter : {np.mean(length_values)}\n")
+        mean_len = float(np.mean(length_values)) if length_values else 0.0
+        file.write(f"mean centroid diameter : {mean_len}\n")
         file.write(f"number of potential sources : {len(length_values)}\n")
         file.write(f"number of filtered sources : {len(filtered_sources)}\n")
         file.write(f"number of rejected sources : {len(length_values) - len(filtered_sources)}\n")
@@ -567,11 +676,18 @@ def compute_centroids_from_trail(
 
     # generate a flux based source mask
     if return_partial_images:
-        # Normalize flux [0,255]
-        flux_values = [d["flux"] for d in sorted_flux_x_y]
-        normalized_flux = (flux_values - np.min(flux_values)) * (
-            (255 - 160) / (np.max(flux_values) - np.min(flux_values))
-        ) + 160
+        # Normalize flux [160..255] with zero-range guard
+        flux_values = np.asarray([d["flux"] for d in sorted_flux_x_y], dtype=np.float64)
+        if flux_values.size:
+            mn = float(np.min(flux_values))
+            mx = float(np.max(flux_values))
+            if mx > mn:
+                normalized_flux = (flux_values - mn) * ((255.0 - 160.0) / (mx - mn)) + 160.0
+            else:
+                normalized_flux = np.full(flux_values.shape, 160.0, dtype=np.float64)
+            normalized_flux = normalized_flux.astype(np.uint8)
+        else:
+            normalized_flux = np.array([], dtype=np.uint8)
 
         # draw flux point source
         flux_mask = np.zeros_like(cleaned_img)

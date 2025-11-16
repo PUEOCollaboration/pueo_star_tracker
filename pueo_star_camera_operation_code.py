@@ -35,6 +35,7 @@ import multiprocessing
 from multiprocessing.pool import AsyncResult
 from tqdm import tqdm
 import cProfile
+# from datetime import datetime, timezone, timedelta
 
 # External imports
 import cv2
@@ -58,10 +59,8 @@ from lib.camera import PueoStarCamera, DummyCamera
 from lib.compute import Compute
 from lib.focuser import Focuser
 from lib.star_comm_bridge import StarCommBridge
-from lib.utils import read_image_grayscale, read_image_BGR, display_overlay_info, save_raws, image_resize, timed_function, create_symlink
-from lib.source_finder import global_background_estimation, local_levels_background_estimation, \
-    median_background_estimation, sextractor_background_estimation, find_sources, find_sources_photutils, \
-    select_top_sources, select_top_sources_photutils
+from lib.utils import read_image_grayscale, read_image_BGR, display_overlay_info, save_raws, image_resize, timed_function, create_symlink, get_current_utc_timestamp, delete_files
+from lib.source_finder import global_background_estimation,  ring_mean_background_estimation, subtract_background, estimate_noise_pairs,  threshold_with_noise
 # from lib.astrometry import do_astrometry, optimize_calibration_parameters
 from lib.astrometry import Astrometry
 from lib.start_tracker_body_rates import StarTrackerBodyRates
@@ -138,7 +137,7 @@ class PueoStarCameraOperation:
         self.max_focus_position = None
         self.min_focus_position = None
         self.return_partial_images = None
-        self.info_file = None
+        self.info_file = self.prev_info_file = None
         self.focus_image_path = None
 
         self.online_auto_gain_enabled = None
@@ -156,9 +155,9 @@ class PueoStarCameraOperation:
         self.curr_scaled_info = None
 
         # Final Overlay Image
-        self.foi_name = None
+        self.foi_name = self.prev_foi_name = None
         self.foi_info = None
-        self.foi_scaled_name = None
+        self.foi_scaled_name = self.prev_foi_scaled_name = None
         self.foi_scaled_info = None
 
         self.prev_star_centroids = None
@@ -344,9 +343,11 @@ class PueoStarCameraOperation:
     def save_capture_properties(self, filename, timestamp_string):
         settings = self.camera.get_control_values()
         with open(filename, 'w') as f:
+            f.write('--- Capture Properties ---\n')
             for k in sorted(settings.keys()):
-                f.write('%s: %s\n' % (k, str(settings[k])))
-            f.write(f'Timestamp: {timestamp_string}')
+                f.write(f'{k}: {settings[k]}\n')
+            f.write(f'Timestamp: {timestamp_string}\n')
+            f.write('\n')  # blank line after this block
         self.logit(f'Capture properties saved to {filename}')
 
     @staticmethod
@@ -363,6 +364,79 @@ class PueoStarCameraOperation:
         laplacian = cv2.Laplacian(img1, cv2.CV_64F)
         score = laplacian.var()
         return score
+
+    def focus_score_starfield_edge(self, img, top_frac=0.08):
+        """
+        Edge-contrast focus score for star fields.
+
+        Steps:
+        - Convert to float and normalize
+        - Light Gaussian blur to suppress noise
+        - Sobel gradients -> magnitude
+        - Score = mean of top `top_frac` fraction of gradient magnitudes
+        """
+        # 1) to float
+        img_f = img.astype(np.float32, copy=False)
+
+        # 2) normalize to [0, 1] by max (safe for 8- or 16-bit)
+        m = float(img_f.max())
+        if m > 0:
+            img_f /= m
+
+        # 3) light smoothing
+        img_smooth = cv2.GaussianBlur(img_f, (3, 3), 0)
+
+        # 4) Sobel gradients + magnitude
+        gx = cv2.Sobel(img_smooth, cv2.CV_32F, 1, 0, ksize=3)
+        gy = cv2.Sobel(img_smooth, cv2.CV_32F, 0, 1, ksize=3)
+        mag = cv2.magnitude(gx, gy)
+
+        # 5) robust pooling: mean of top X% magnitudes
+        vals = mag.ravel()
+        if vals.size == 0:
+            return 0.0
+
+        if 0.0 < top_frac < 1.0:
+            k = max(32, int(vals.size * top_frac))
+            if k < vals.size:
+                idx = np.argpartition(vals, -k)[-k:]
+                vals = vals[idx]
+
+        return float(vals.mean())
+
+    def robust_avg_diameter(self, diameters, min_px=1.5, max_px=30.0, trim_frac=0.10):
+        """
+        Robust mean of star diameters:
+        - drop non-positive and out-of-range diameters
+        - sigma-clip outliers
+        - trim upper/lower tails
+        """
+        d = np.asarray(diameters, dtype=float).ravel()
+        d = d[np.isfinite(d)]
+
+        # basic range filter (throw away obvious garbage)
+        d = d[(d >= min_px) & (d <= max_px)]
+        if d.size == 0:
+            return None
+
+        # sigma-clipping around median
+        med = np.median(d)
+        mad = 1.4826 * np.median(np.abs(d - med))
+        if mad > 0:
+            keep = np.abs(d - med) <= 3.0 * mad
+            if np.any(keep):
+                d = d[keep]
+
+        if d.size < 5:
+            return float(np.mean(d))
+
+        # trim tails
+        d = np.sort(d)
+        k = int(round(trim_frac * d.size))
+        if k > 0 and 2 * k < d.size:
+            d = d[k:-k]
+
+        return float(np.mean(d))
 
     def plt_savefig(self, plt, image_file, is_preserve=True):
         """Saves an image and sends it to the messenger."""
@@ -422,6 +496,8 @@ class PueoStarCameraOperation:
                 plt.xlabel('Focus Position, counts')
                 plt.ylabel('Sequence Contrast/Covariance')
                 plt.title(f'mean: {round(mean, 2)}, stdev: {round(sigma, 2)}, height: {round(height, 2)}')
+                # TODO: Remove old commented out code
+                # plt.savefig(focus_image_path + 'focus_score.png')
                 self.plt_savefig(plt, focus_image_path + 'focus_score.png')
                 trial_best_focus_pos = int(popt[1])  # Rounding to integer
 
@@ -474,6 +550,8 @@ class PueoStarCameraOperation:
                 plt.xlabel('Focus Position, counts')
                 plt.ylabel('Diameter')
                 plt.title(f'x offset: {round(h, 2)}, y offset: {round(c, 2)}, slope: {round(a, 2)}')
+                # TODO: Remove old commented out code
+                # plt.savefig(focus_image_path + 'diameters_score.png')
                 self.plt_savefig(plt, focus_image_path + 'diameters_score.png')
 
                 # is in range
@@ -778,7 +856,7 @@ class PueoStarCameraOperation:
             txt_filename = f'{basename}_histogram.txt'
             try:
                 with open(txt_filename, 'w') as f:
-                    # Write header with metadata
+                    f.write("--- Histogram Data ---\n")
                     f.write(f"# Histogram data for: {basename}\n")
                     f.write(f"# High pixel value: {high_pix_value}\n")
                     f.write(f"# Second largest pixel value: {second_largest_pix_value}\n")
@@ -790,6 +868,8 @@ class PueoStarCameraOperation:
                     # Write bin edges and counts in a readable format
                     for i in range(len(counts)):
                         f.write(f"{bins[i]:.1f},{bins[i + 1]:.1f},{counts[i]}\n")
+
+                    f.write("\n")  # blank line after this block
 
                 self.log.debug(f'Histogram data saved to {txt_filename}')
             except Exception as e:
@@ -1020,74 +1100,57 @@ class PueoStarCameraOperation:
         self.logit(f'do_auto_exposure_routine completed in {get_dt(t0)}.', color='cyan')
         return new_exposure_value
 
-    def get_centroid_diameters(self, img, is_array=True, log_file_path="log/test_log.txt", return_partial_images=True):
-        # read image in array format. From camera
+    def get_centroid_diameters(self, img, is_array=True,
+                               log_file_path="log/test_log.txt",
+                               return_partial_images=True):
+        """
+        Autofocus helper.
+
+        Here `img` is expected to be a *binary sources mask* (True/False,
+        0/1, or 0/255). We compute a contour-based diameter for each blob
+        directly from the mask geometry (no background subtraction or
+        source_finder inside this function).
+        """
+        # --- Normalize to a uint8 mask (0 or 255) ---
         if is_array:
-            # Scale the 16-bit values to 8-bit (0-255) range
-            scale_factor = float(2 ** self.cfg.pixel_well_depth) - 1
-            scaled_data = ((img / scale_factor) * 255).astype(np.uint8)
-            # Create a BGR image
-            img_bgr = cv2.merge([scaled_data, scaled_data, scaled_data])
+            mask = img.astype(np.uint8)
         else:
-            img_bgr = read_image_BGR(img)
-            img = read_image_grayscale(img)
+            # if a filename is ever passed, read as grayscale
+            mask = read_image_grayscale(img)
 
-        # save image. For debugging
-        if return_partial_images:
-            # Create partial result folder. For debugging
-            # partial_results_path = './ partial_results'
-            if not os.path.exists(self.cfg.partial_results_path):  # partial_results_path
-                os.makedirs(self.cfg.partial_results_path)
-            # save input image
-            partial_image_path_tmpl = r'{partial_results_path}/{partial_image_name}'
-            partial_image_path = partial_image_path_tmpl.format(partial_results_path=self.cfg.partial_results_path,
-                                                                partial_image_name=self.cfg.partial_image_name)
-            # cv2.imwrite("./partial_results/0 - Input Image.png", img_bgr)
-            cv2.imwrite(partial_image_path, img_bgr)
+        # Ensure binary 0/255
+        if mask.max() <= 1:
+            mask = (mask > 0).astype(np.uint8) * 255
 
-        # source finder
-        self.logit("--------Substract background--------")
-        # global background estimation
-        global_cleaned_img = global_background_estimation(img, return_partial_images, self.cfg.sigma_clipped_sigma)
-        img = global_cleaned_img
-        # local background estimation
-        cleaned_img, background_img = local_levels_background_estimation(img=img, log_file_path=log_file_path,
-                                                                         return_partial_images=return_partial_images,
-                                                                         leveling_filter_downscale_factor=self.cfg.leveling_filter_downscale_factor,
-                                                                         level_filter=self.level_filter,
-                                                                         level_filter_type=self.cfg.level_filter_type)
-        self.logit("--------Find sources--------")
-        bkg_threshold = self.cfg.img_bkg_threshold  # img_bkg_threshold = 3.1
-        masked_image, estimated_noise = find_sources(img, background_img, bkg_threshold, return_partial_images,
-                                    self.cfg.local_sigma_cell_size,
-                                    self.cfg.src_kernal_size_x, self.cfg.src_kernal_size_y, self.cfg.src_sigma_x,
-                                    self.cfg.src_dst)
-        self.logit("--------Select top sources--------")
-        self.number_sources = self.cfg.img_number_sources  # img_number_source = 40
-        min_size = self.cfg.img_min_size  # img_min_size = 20
-        max_size = self.cfg.img_max_size  # img_max_size = 600
-        masked_image, sources_mask, sources_contours = select_top_sources(img, masked_image,
-                                                                          estimated_noise=estimated_noise, fast=False, # TODO: HARD CODED: estimated_noise=None, fast=True
-                                                                          number_sources=self.number_sources,
-                                                                          min_size=min_size, max_size=max_size,
-                                                                          return_partial_images=return_partial_images,
-                                                                          dilate_mask_iterations=self.cfg.dilate_mask_iterations)
+        # --- Find blobs in the mask ---
+        contours, _ = cv2.findContours(
+            mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        )
 
-        # TODO: Review this logic
-        # The select_top_sources exited due to too many contours
-        if masked_image is None:
+        if not contours:
+            self.logit("Focus Routine: no contours found in mask; returning [-1].")
             return [-1, ]
-        # Compute source centroids
-        self.logit("--------Compute source centroids--------")
-        precomputed_star_centroids, contours_img = compute_centroids_from_still(masked_image, sources_contours,
-                                                                                img=img_bgr,
-                                                                                min_potential_source_distance=self.cfg.min_potential_source_distance,
-                                                                                log_file_path=log_file_path,
-                                                                                return_partial_images=return_partial_images)
-        if precomputed_star_centroids.size == 0:
+
+        min_size = self.cfg.img_min_size
+        max_size = self.cfg.img_max_size
+
+        diameters = []
+        for cnt in contours:
+            area = cv2.contourArea(cnt)
+            if area < min_size or area > max_size:
+                continue
+
+            # Diameter of contour: use enclosing circle diameter
+            (cx, cy), radius = cv2.minEnclosingCircle(cnt)
+            d = 2.0 * float(radius)
+            diameters.append(d)
+
+        if not diameters:
+            self.logit("Focus Routine: all contours rejected by size limits; returning [-1].")
             return [-1, ]
-        diameters = precomputed_star_centroids[:, -1]
-        self.logit("--------Diameter List--------")
+
+        diameters = np.array(diameters, dtype=float)
+        self.logit("--------Focus Routine: Diameter List (mask-based, contour diameter)--------")
         self.logit(str(diameters))
         return diameters
 
@@ -1116,22 +1179,99 @@ class PueoStarCameraOperation:
             self.logit('Taking image')
             log_file_path = "log/test_log.txt"
             img, basename = self.capture_timestamp_save(focus_image_path, inserted_string)
-            # We intend to calculate both scores using sequence_diameter and sequence_contrast
-            diameters = self.get_centroid_diameters(img=img, is_array=True, log_file_path=log_file_path)
-            # TODO: diameters will not be none but [-1], decide with next if...
-            if diameters is None:
-                self.logit(f"best focus fit failed. Setting focus position to {self.cfg.lab_best_focus}.")
-                # When the routine fails, set the focus to lab_best_focus:
-                self.focuser.move_focus_position(self.cfg.lab_best_focus)
-                return self.cfg.lab_best_focus, self.cfg.stdev_error_value
 
-            diameter_score = np.mean(diameters)
-            self.logit(f'Diameter Focus score: {diameter_score}')
-            self.logit(f'Length of diameters: {len(diameters)}')
-            focus_scores.append(diameter_score)
-            score = self.process_image_covariance(img)
-            self.logit(f'Covariance Focus score: {score}')
-            focus_scores.append(score)
+            d = int(self.cfg.local_sigma_cell_size)
+            if d < 3:
+                raise ValueError("d must be >= 3")
+
+            # Downscale image
+            downscale_factor = self.cfg.leveling_filter_downscale_factor
+            if downscale_factor > 1:
+                downsampled_img = cv2.resize(img, (img.shape[1] // downscale_factor, img.shape[0] // downscale_factor),
+                                             interpolation=cv2.INTER_AREA)
+                d_small = max(3, d // downscale_factor)  # shrink kernel accordingly
+            else:
+                downsampled_img = img
+                d_small = d
+
+            initial_local_levels = ring_mean_background_estimation(downsampled_img, d_small)
+
+            # Upscale back with interpolation
+            print("Upscaling initial local levels.")
+            if downscale_factor > 1:
+                initial_local_levels = cv2.resize(initial_local_levels, (img.shape[1], img.shape[0]),
+                                                  interpolation=cv2.INTER_LINEAR)
+            #subtract background the first time.
+            cleaned_img = subtract_background(img, initial_local_levels)
+
+            # Downscale image
+            downscale_factor = self.cfg.leveling_filter_downscale_factor
+            if downscale_factor > 1:
+                downsampled_img = cv2.resize(cleaned_img, (cleaned_img.shape[1] // downscale_factor,
+                                                           cleaned_img.shape[0] // downscale_factor),
+                                             interpolation=cv2.INTER_AREA)
+                d_small = max(3, d // downscale_factor)  # shrink kernel accordingly
+            else:
+                downsampled_img = cleaned_img
+                d_small = d
+
+            final_local_levels = ring_mean_background_estimation(downsampled_img, d_small)
+
+            # Upscale back with cubic spline
+            if downscale_factor > 1:
+                final_local_levels = cv2.resize(final_local_levels, (img.shape[1], img.shape[0]),
+                                                interpolation=cv2.INTER_LINEAR)
+
+            # estimate noise for image
+            sigma_g = estimate_noise_pairs(cleaned_img, sep=int(self.cfg.noise_pair_sep_full))
+            estimated_noise = np.full_like(cleaned_img, sigma_g, dtype=np.float32)
+
+            # Build leveled residual for hysteresis thresholding
+            residual_img = subtract_background(cleaned_img, final_local_levels)
+
+            # threshold using hysteresis
+            print("Creating mask using hystersis thresholding.")
+            sources_mask, sources_mask_u8 = threshold_with_noise(
+                residual_img,
+                sigma_map=estimated_noise,
+                k_high=float(self.cfg.hyst_k_high),
+                k_low=float(self.cfg.hyst_k_low),
+                use_hysteresis=True,
+                min_area=int(self.cfg.hyst_min_area),
+                close_kernel=int(self.cfg.hyst_close_kernel),
+                sigma_gauss=float(self.cfg.hyst_sigma_gauss),
+                sigma_floor=float(self.cfg.hyst_sigma_floor),
+            )
+
+            # We intend to calculate both scores using sequence_diameter and sequence_contrast
+            diameters = self.get_centroid_diameters(
+                img=sources_mask,
+                is_array=True,
+                log_file_path=log_file_path
+            )
+
+            # Handle failure or sentinel [-1]
+            if (diameters is None or
+                    (hasattr(diameters, "__len__") and len(diameters) == 1 and float(diameters[0]) < 0)):
+                self.logit("No valid diameters at this focus position; assigning penalty diameter score.")
+                diameter_score = 1e6  # very bad focus for sequence_diameter mode
+            else:
+                diameter_score = self.robust_avg_diameter(diameters)
+                if diameter_score is None:
+                    diameter_score = float(np.mean(diameters))
+
+            self.logit(f'Average star diameter (robust): {diameter_score:.3f} px')
+            self.logit(f'Number of diameters: {len(diameters)}')
+
+            # Store for diameter-based autofocus (sequence_diameter)
+            diameter_scores.append(diameter_score)
+
+            # Edge-contrast metric on your background-subtracted image
+            edge_score = self.focus_score_starfield_edge(cleaned_img, top_frac=0.08)
+            self.logit(f'Edge-contrast Focus score: {edge_score:.6g}')
+
+            # Store for contrast-based autofocus (sequence_contrast)
+            focus_scores.append(edge_score)
 
             count = count + 1
 
@@ -1405,6 +1545,10 @@ class PueoStarCameraOperation:
         # Set camera exposure to lab_best_exposure
         self.camera.set_control_value(asi.ASI_EXPOSURE, self.cfg.lab_best_exposure)
         self.logit(f'Set camera exposure to: {self.cfg.lab_best_exposure} [us]', color='blue')
+        # Keep cfg.exposure_time_s in sync (seconds)
+        # TODO: Fix exposure_time_s, this is not a CONFIG value shall be defined at correct app level
+        self.cfg.exposure_time_s = float(self.cfg.lab_best_exposure) / 1e6
+
 
         # Close aperture
         self.focuser.close_aperture()
@@ -1448,7 +1592,6 @@ class PueoStarCameraOperation:
 
         # astrometry vars
         self.is_array = True
-        self.is_trail = self.cfg.ast_is_trail
         self.save_raw = self.cfg.save_raw
         self.number_sources = self.cfg.ast_number_sources
         self.min_size = self.cfg.ast_min_size
@@ -1505,6 +1648,298 @@ class PueoStarCameraOperation:
                 self.telemetry.close()
                 self.server.close()
                 return
+
+    def software_autogain(self, img: np.ndarray, old_gain_value: int, min_gain_step: int = 1) -> int:
+        """
+        SOFTWARE AUTO-GAIN (single-frame)
+
+        Steps:
+          1) Background subtraction (ring-mean perimeter filter)
+          2) Noise estimation (estimate_noise_pairs)
+          3) Hysteresis thresholding to get a star mask
+          4) Mask the *original* image
+          5) Measure bright masked pixels (99.5 percentile)
+          6) Compute new gain using calculate_gain_adjustment()
+          7) Apply only if |Δgain| >= min_gain_step
+
+        Designed to be called periodically (e.g., every N images).
+
+        Returns:
+            int → new gain (or old_gain_value if unchanged)
+        """
+        cfg = self.cfg
+
+        if img is None or img.size == 0:
+            self.logit("software_autogain: empty image; keeping current gain.")
+            return old_gain_value
+
+        if img.ndim != 2:
+            self.logit("software_autogain: expected 2D grayscale; keeping current gain.")
+            return old_gain_value
+
+        H, W = img.shape
+        img_f = img.astype(np.float32, copy=False)
+
+        pixel_saturated_value = self.pixel_saturated_value
+        desired_max_pix_value = self.desired_max_pix_value
+        pixel_count_tolerance = self.pixel_count_tolerance
+
+        # --- 1) Local background via ring-mean ---
+        d = int(cfg.level_filter)
+        if d < 3:
+            d = 3
+
+        downscale_factor = int(cfg.leveling_filter_downscale_factor)
+        if downscale_factor < 1:
+            downscale_factor = 1
+
+        if downscale_factor > 1:
+            ds_W = max(1, W // downscale_factor)
+            ds_H = max(1, H // downscale_factor)
+            downsampled_img = cv2.resize(img_f, (ds_W, ds_H), interpolation=cv2.INTER_AREA)
+            d_small = max(3, d // downscale_factor)
+        else:
+            downsampled_img = img_f
+            d_small = d
+
+        local_levels_small = ring_mean_background_estimation(downsampled_img, d_small)
+
+        if downscale_factor > 1:
+            local_levels = cv2.resize(local_levels_small, (W, H), interpolation=cv2.INTER_LINEAR)
+        else:
+            local_levels = local_levels_small
+
+        # --- 2) Background-subtracted image ---
+        cleaned_img = subtract_background(img_f, local_levels)
+
+        # --- 3) Global noise ---
+        try:
+            noise_sep = int(cfg.noise_pair_sep_full)
+            if noise_sep < 1:
+                noise_sep = 1
+            sigma_g = estimate_noise_pairs(cleaned_img, sep=noise_sep)
+        except Exception as e:
+            self.logit(f"software_autogain: noise estimation failed ({e}); keeping current gain.")
+            return old_gain_value
+
+        estimated_noise = np.full_like(cleaned_img, sigma_g, dtype=np.float32)
+
+        # --- 4) Residual + hysteresis mask ---
+        residual_img = subtract_background(cleaned_img, local_levels)
+
+        self.logit("software_autogain: creating hysteresis mask.")
+        sources_mask_bool, _ = threshold_with_noise(
+            residual_img,
+            sigma_map=estimated_noise,
+            k_high=float(cfg.hyst_k_high),
+            k_low=float(cfg.hyst_k_low),
+            use_hysteresis=True,
+            min_area=int(cfg.hyst_min_area),
+            close_kernel=int(cfg.hyst_close_kernel),
+            sigma_gauss=float(cfg.hyst_sigma_gauss),
+            sigma_floor=float(cfg.hyst_sigma_floor),
+        )
+
+        mask_u8 = (sources_mask_bool > 0).astype(np.uint8) * 255
+        n_mask_px = int(mask_u8.sum() // 255)
+        self.logit(f"software_autogain: mask covers ~{n_mask_px} pixels.")
+
+        if n_mask_px == 0:
+            self.logit("software_autogain: no mask pixels; keeping current gain.")
+            return old_gain_value
+
+        # --- 5) Mask the ORIGINAL image ---
+        masked_original = cv2.bitwise_and(img, img, mask=mask_u8)
+        star_pixels = masked_original[mask_u8 > 0].astype(np.int64)
+
+        if star_pixels.size == 0:
+            self.logit("software_autogain: no masked pixels; keeping current gain.")
+            return old_gain_value
+
+        # Drop saturated pixels
+        unsat = star_pixels[star_pixels < pixel_saturated_value]
+        if unsat.size == 0:
+            self.logit("software_autogain: masked pixels saturated; using all.")
+            unsat = star_pixels
+
+        # --- 6) Brightness metric ---
+        bright_value = int(np.percentile(unsat, 99.5))
+        self.logit(f"software_autogain: bright={bright_value}, desired={desired_max_pix_value}")
+
+        if abs(desired_max_pix_value - bright_value) <= pixel_count_tolerance:
+            self.logit("software_autogain: within tolerance; no gain change.")
+            return old_gain_value
+
+        # --- 7) Use your existing gain equation ---
+        new_gain = self.calculate_gain_adjustment(
+            old_gain_value,
+            bright_value,
+            desired_max_pix_value,
+        )
+
+        # clamp
+        new_gain = max(cfg.min_gain_setting, min(cfg.max_gain_setting, new_gain))
+
+        if abs(new_gain - old_gain_value) < min_gain_step:
+            self.logit(f"software_autogain: gain change < {min_gain_step}; skipping.")
+            return old_gain_value
+
+        # Apply to camera
+        try:
+            self.camera.set_control_value(asi.ASI_GAIN, int(new_gain))
+        except Exception as e:
+            self.logit(f"software_autogain: failed to set gain ({e}); keeping old gain.")
+            return old_gain_value
+
+        self.logit(f"software_autogain: gain {old_gain_value} -> {new_gain}")
+        return int(new_gain)
+
+    def software_autogain(self, img: np.ndarray, old_gain_value: int, min_gain_step: int = 1) -> int:
+        """
+        SOFTWARE AUTO-GAIN (single-frame)
+
+        Uses:
+          - ring-mean background subtraction
+          - hysteresis thresholding on residual
+          - mask applied to ORIGINAL image
+          - bright percentile of unsaturated masked pixels
+        Then uses calculate_gain_adjustment() and only applies the new gain
+        if |Δgain| >= min_gain_step.
+        """
+        cfg = self.cfg
+
+        if img is None or img.size == 0 or img.ndim != 2:
+            self.logit("software_autogain: invalid image; keeping current gain.")
+            return old_gain_value
+
+        H, W = img.shape
+        img_f = img.astype(np.float32, copy=False)
+
+        pixel_saturated_value = self.pixel_saturated_value
+        desired_max_pix_value = self.desired_max_pix_value
+        pixel_count_tolerance = self.pixel_count_tolerance
+
+        # 1) Local background (ring-mean, possibly downsampled)
+        d = max(3, int(cfg.level_filter))
+        downscale_factor = max(1, int(cfg.leveling_filter_downscale_factor))
+
+        if downscale_factor > 1:
+            ds_W = max(1, W // downscale_factor)
+            ds_H = max(1, H // downscale_factor)
+            downsampled = cv2.resize(img_f, (ds_W, ds_H), interpolation=cv2.INTER_AREA)
+            d_small = max(3, d // downscale_factor)
+        else:
+            downsampled = img_f
+            d_small = d
+
+        local_levels_small = ring_mean_background_estimation(downsampled, d_small)
+        if downscale_factor > 1:
+            local_levels = cv2.resize(local_levels_small, (W, H), interpolation=cv2.INTER_LINEAR)
+        else:
+            local_levels = local_levels_small
+
+        # 2) Background-subtracted image
+        cleaned = subtract_background(img_f, local_levels)
+
+        # 3) Global noise
+        try:
+            noise_sep = max(1, int(cfg.noise_pair_sep_full))
+            sigma_g = estimate_noise_pairs(cleaned, sep=noise_sep)
+        except Exception as e:
+            self.logit(f"software_autogain: noise estimation failed ({e}); keeping current gain.")
+            return old_gain_value
+
+        sigma_map = np.full_like(cleaned, sigma_g, dtype=np.float32)
+
+        # 4) Residual + hysteresis threshold
+        residual = subtract_background(cleaned, local_levels)
+
+        self.logit("software_autogain: creating hysteresis mask.")
+        mask_bool, _ = threshold_with_noise(
+            residual,
+            sigma_map=sigma_map,
+            k_high=float(cfg.hyst_k_high),
+            k_low=float(cfg.hyst_k_low),
+            use_hysteresis=True,
+            min_area=int(cfg.hyst_min_area),
+            close_kernel=int(cfg.hyst_close_kernel),
+            sigma_gauss=float(cfg.hyst_sigma_gauss),
+            sigma_floor=float(cfg.hyst_sigma_floor),
+        )
+
+        mask_u8 = (mask_bool > 0).astype(np.uint8) * 255
+        n_mask_px = int(mask_u8.sum() // 255)
+        self.logit(f"software_autogain: mask covers ~{n_mask_px} pixels.")
+
+        if n_mask_px == 0:
+            self.logit("software_autogain: no mask pixels; keeping current gain.")
+            return old_gain_value
+
+        # 5) Mask ORIGINAL image
+        masked_original = cv2.bitwise_and(img, img, mask=mask_u8)
+        star_pixels = masked_original[mask_u8 > 0].astype(np.int64)
+
+        if star_pixels.size == 0:
+            self.logit("software_autogain: no masked pixels; keeping current gain.")
+            return old_gain_value
+
+        unsat = star_pixels[star_pixels < pixel_saturated_value]
+        if unsat.size == 0:
+            unsat = star_pixels
+
+        # 6) Brightness metric
+        bright_value = int(np.percentile(unsat, 99.5))
+        self.logit(
+            f"software_autogain: bright={bright_value}, "
+            f"desired={desired_max_pix_value}, tol={pixel_count_tolerance}"
+        )
+
+        if abs(desired_max_pix_value - bright_value) <= pixel_count_tolerance:
+            self.logit("software_autogain: within tolerance; no gain change.")
+            return old_gain_value
+
+        # 7) Gain equation
+        new_gain = self.calculate_gain_adjustment(
+            old_gain_value,
+            bright_value,
+            desired_max_pix_value,
+        )
+
+        # clamp
+        new_gain = max(cfg.min_gain_setting, min(cfg.max_gain_setting, new_gain))
+
+        # software-only deadband
+        if abs(new_gain - old_gain_value) < min_gain_step:
+            self.logit(
+                f"software_autogain: gain change {new_gain - old_gain_value} < {min_gain_step}; skipping."
+            )
+            return old_gain_value
+
+        try:
+            self.camera.set_control_value(asi.ASI_GAIN, int(new_gain))
+        except Exception as e:
+            self.logit(f"software_autogain: failed to set gain ({e}); keeping old gain.")
+            return old_gain_value
+
+        self.logit(f"software_autogain: gain {old_gain_value} -> {new_gain}")
+        return int(new_gain)
+
+    def software_autogain_maintenance(self, camera_settings):
+        """
+        Periodic software autogain called every N images
+        when autogain_mode = 'software'.
+        """
+        current_gain = camera_settings['Gain']
+        min_step = self.cfg.software_autogain_min_step
+
+        new_gain = self.software_autogain(
+            self.curr_img,
+            old_gain_value=current_gain,
+            min_gain_step=min_step,
+        )
+
+        return int(new_gain)
+
 
     def autogain_maintenance(self, camera_settings):
         """
@@ -1585,7 +2020,7 @@ class PueoStarCameraOperation:
         Args:
             camera_settings (dict): Camera configuration parameters including
                 exposure, gain, and temperature.
-            curr_utc_timestamp (str): UTC timestamp of image capture.
+            curr_utc_timestamp (float): UTC timestamp of image capture.
 
         Performance optimizations:
         - Uses np.min/max on flattened array views instead of full arrays
@@ -1637,7 +2072,21 @@ class PueoStarCameraOperation:
 
         # Write all content in a single I/O operation
         with open(self.info_file, "a", encoding='utf-8', buffering=8192) as file:
+            file.write("\n=== IMAGE METADATA ===\n")
+
+            # Compute start, mid, and end times (UTC)
+            exp_us = int(camera_settings.get("Exposure", 0) or 0)
+            t_start = datetime.datetime.fromtimestamp(curr_utc_timestamp, tz=timezone.utc)
+            t_mid = t_start + datetime.timedelta(microseconds=exp_us // 2)
+            t_end = t_start + datetime.timedelta(microseconds=exp_us)
+
+            file.write(f"capture_start_utc : {t_start.isoformat()}\n")
+            file.write(f"mid_exposure_utc : {t_mid.isoformat()}\n")
+            file.write(f"capture_end_utc : {t_end.isoformat()}\n")
+            file.write(f"exposure_time_us : {exp_us}\n")
+
             file.writelines(file_content)
+            file.write("\n")
 
         self.log.debug(f'Saved image info in {get_dt(t0)}.')
 
@@ -1698,24 +2147,28 @@ class PueoStarCameraOperation:
     def info_add_astro_info(self):
         with open(self.info_file, "a", encoding='utf-8') as file:
             # image size
+            # === FILES & STORAGE ===
+            file.write("\n=== FILES & STORAGE ===\n")
             file.write(f"raw file size: {sys.getsizeof(self.curr_img)} bytes\n")
             file.write(f"compressed file size: {os.path.getsize(self.cfg.ssd_path)} bytes\n")
-            # available disk space - THIS IS UNIX!!! only
-            # statvfs = os.statvfs('/')
-            # available_space = statvfs.f_frsize * statvfs.f_bavail
             available_space = self.get_disk_usage()['free_space']
-
             available_space_gb = available_space / (1024 ** 3)
-            file.write(f"Available disk space: {available_space_gb:.2f} GB\n")
-            # astrometry result
-            file.write("y coordinates, x coordinates, flux, std, fwhm:\n")
-            # fwhm ~ Full Width Half Max
+            file.write(f"available disk space: {available_space_gb:.2f} GB\n")
+            file.write("\n")
+
+            # === DETECTIONS (sorted by flux) ===
+            file.write("=== DETECTIONS (sorted by flux) ===\n")
+            file.write("y,x,flux,std,fwhm\n")  # CSV header for easy parsing
             with suppress(IndexError, TypeError):
                 for i in range(len(self.curr_star_centroids)):
                     std = self.curr_star_centroids[i][3]
                     fwhm = self.curr_star_centroids[i][4]
-                    file.write(f"{self.curr_star_centroids[i][0]},{self.curr_star_centroids[i][1]}, {self.curr_star_centroids[i][2]}, {std}, {fwhm}\n")
-            file.write("\nAstrometry:\n")
+                    file.write(
+                        f"{self.curr_star_centroids[i][0]},{self.curr_star_centroids[i][1]},{self.curr_star_centroids[i][2]},{std},{fwhm}\n")
+            file.write("\n")
+
+            # === ASTROMETRY ===
+            file.write("=== ASTROMETRY ===\n")
             for key, value in self.astrometry.items():
                 file.write(f"{key}: {value}\n")
 
@@ -1754,22 +2207,30 @@ class PueoStarCameraOperation:
                 file.write(f"name of previous image: {self.prev_image_name}\n")
                 file.write(f"time difference between images: {self.curr_time - self.prev_time}")
 
-    def info_add_angular_velocity_info(self, angular_velocity, delta_t_sec):
+    def info_add_angular_velocity_info(self, omega_xyz_deg_s, delta_t_sec, eci_los_vec=None):
         """
-        Add angular velocity information to the info file.
+        Append camera angular velocity (deg/s) and optional ECI LOS vector to the info file.
 
         Args:
-            angular_velocity (dict): Dictionary containing 'roll_rate', 'az_rate', 'el_rate' in deg/s
-            delta_t_sec (float): Time difference between solutions in seconds
+            omega_xyz_deg_s: iterable/list/np.array of [omega_x, omega_y, omega_z] in deg/s (camera frame)
+            delta_t_sec: float Δt between solutions in seconds
+            eci_los_vec: optional iterable [eci_x, eci_y, eci_z] (unit vector)
         """
+        ox, oy, oz = [float(v) for v in omega_xyz_deg_s]
         with open(self.info_file, "a", encoding='utf-8') as file:
-            file.write(f"Body rotation rate:\n")
-            file.write(f"omega_roll: {angular_velocity.get('roll_rate', 'N/A')} deg/s\n")
-            file.write(f"omega_az: {angular_velocity.get('az_rate', 'N/A')} deg/s\n")
-            file.write(f"omega_el: {angular_velocity.get('el_rate', 'N/A')} deg/s\n")
-            file.write(f"time difference between images\\solutions: {delta_t_sec} seconds\n")
+            file.write("Camera rotation rate:\n")
+            file.write(f"omega_x: {ox:.6f} deg/s\n")
+            file.write(f"omega_y: {oy:.6f} deg/s\n")
+            file.write(f"omega_z: {oz:.6f} deg/s\n")
+            file.write(f"time difference between images\\solutions: {delta_t_sec:.6f} seconds\n")
             if hasattr(self, 'prev_image_name') and self.prev_image_name:
                 file.write(f"name of previous image: {self.prev_image_name}\n")
+            if eci_los_vec is not None:
+                ex, ey, ez = [float(v) for v in eci_los_vec]
+                file.write("ECI LOS unit vector:\n")
+                file.write(f"eci_x: {ex:.9f}\n")
+                file.write(f"eci_y: {ey:.9f}\n")
+                file.write(f"eci_z: {ez:.9f}\n")
 
     def do_astrometry(self, is_multiprocessing=True):
         """astro.do_astrometry wrapper function."""
@@ -1816,27 +2277,101 @@ class PueoStarCameraOperation:
         return result  # Direct function result
 
     def compute_angular_velocity(self):
-        """Compute angular velocity wrapper"""
-        delta_t_sec = self.curr_time - self.prev_time
-        angular_velocity = a_v = self.compute.angular_velocity(self.astrometry, self.prev_astrometry, delta_t_sec)
+        """Compute camera-frame angular velocity via SO(3) and log ECI LOS."""
+        import numpy as np
 
-        keys_in_order = ["roll_rate", "az_rate", "el_rate"]
+        # Δt
+        delta_t_sec = float(self.curr_time - self.prev_time)
 
-        self.omega = [angular_velocity[key] for key in keys_in_order]
+        # Camera-frame angular rates [deg/s] from consecutive (RA,Dec,Roll)
+        # This uses your SO(3)-based helper already in this file.
+        omega_x, omega_y, omega_z = self.compute_camera_rates_from_astrometry()  # returns deg/s
 
-        # Write results to a file
-        self.info_add_angular_velocity_info(angular_velocity, delta_t_sec)
-        # Get current orientation for logging
+        # Save in self.omega as [x,y,z] in deg/s (camera frame)
+        self.omega = [float(omega_x), float(omega_y), float(omega_z)]
+
+        # For logging: current orientation
         ra = self.astrometry.get('RA', 'N/A')
         dec = self.astrometry.get('Dec', 'N/A')
         roll = self.astrometry.get('Roll', 'N/A')
 
-        # Log the results
-        self.log.debug(f'Angular velocity: {angular_velocity}')
-        self.server.write(f'{self.curr_time}, RA: {ra}, DEC: {dec}, ROLL: {roll} [deg]')
-        self.server.write(f'{self.curr_time}, Ω_roll: {a_v["roll_rate"]}, Ω_az: {a_v["az_rate"]}, Ω_el: {a_v["el_rate"]} [deg/sec]')
+        # ECI LOS unit vector for this (RA,Dec,Roll)
+        R_e_c = self._radec_roll_to_R_eci_from_cam(ra, dec, roll)  # columns are cam axes in ECI
+        z_eci = R_e_c[:, 2]  # +Z_cam LOS in ECI
 
-        return angular_velocity
+        # Write detailed info file line (camera rates + ECI LOS)
+        self.info_add_angular_velocity_info(self.omega, delta_t_sec, eci_los_vec=z_eci)
+
+        # Console/server logs
+        self.log.debug(f'Camera angular velocity (deg/s): {self.omega}')
+        self.server.write(f'{self.curr_time}, RA: {ra}, DEC: {dec}, ROLL: {roll} [deg]')
+        self.server.write(f'{self.curr_time}, Ωx: {omega_x:.6f}, Ωy: {omega_y:.6f}, Ωz: {omega_z:.6f} [deg/s]')
+        self.server.write(
+            f'{self.curr_time}, ECI LOS: eci_x={z_eci[0]:.9f}, eci_y={z_eci[1]:.9f}, eci_z={z_eci[2]:.9f}')
+
+        return {'omega_x': float(omega_x), 'omega_y': float(omega_y), 'omega_z': float(omega_z)}
+
+    def _radec_roll_to_R_eci_from_cam(self, ra_deg, dec_deg, roll_deg):
+        import numpy as np
+        # Inputs are degrees
+        α = np.deg2rad(float(ra_deg));
+        δ = np.deg2rad(float(dec_deg));
+        ρ = np.deg2rad(float(roll_deg))
+
+        # +Z_cam as LOS in ECI
+        z_eci = np.array([np.cos(δ) * np.cos(α), np.cos(δ) * np.sin(α), np.sin(δ)], dtype=float)
+
+        # Orthonormal x/y basis ⟂ z_eci
+        ref = np.array([0, 0, 1.0], dtype=float)
+        if abs(z_eci @ ref) > 0.98:
+            ref = np.array([1.0, 0, 0], dtype=float)
+        x0 = np.cross(ref, z_eci);
+        x0 /= (np.linalg.norm(x0) + 1e-12)
+        y0 = np.cross(z_eci, x0);
+        y0 /= (np.linalg.norm(y0) + 1e-12)
+
+        # Apply roll about boresight
+        x_eci = x0 * np.cos(ρ) + y0 * np.sin(ρ)
+        y_eci = -x0 * np.sin(ρ) + y0 * np.cos(ρ)
+
+        # Columns = camera axes expressed in ECI
+        return np.column_stack([x_eci, y_eci, z_eci])
+
+    def compute_camera_rates_from_astrometry(self):
+        """
+        Angular velocity in the CAMERA frame [deg/s] via SO(3) log map between
+        consecutive (RA, Dec, Roll) solutions. Camera frame == body frame here.
+        """
+        import numpy as np
+        # Pull consecutive solutions and Δt
+        ra1 = self.astrometry.get('RA');
+        dec1 = self.astrometry.get('Dec');
+        roll1 = self.astrometry.get('Roll')
+        ra0 = self.prev_astrometry.get('RA');
+        dec0 = self.prev_astrometry.get('Dec');
+        roll0 = self.prev_astrometry.get('Roll')
+        dt = max(1e-6, float(self.curr_time - self.prev_time))
+
+        # ECI<-Cam at t1 and t0
+        R_e_c1 = self._radec_roll_to_R_eci_from_cam(ra1, dec1, roll1)
+        R_e_c0 = self._radec_roll_to_R_eci_from_cam(ra0, dec0, roll0)
+
+        # Since camera==body, rates are expressed in camera frame.
+        # Relative rotation (t0->t1) expressed in camera frame at t0
+        R_rel = R_e_c0.T @ R_e_c1
+
+        # Log map: ω*dt = vee(log(R_rel))  — robust axis-angle
+        tr = np.clip(np.trace(R_rel), -1.0, 3.0)
+        angle = np.arccos(0.5 * (tr - 1.0))
+        if angle < 1e-12:
+            S = 0.5 * (R_rel - R_rel.T)
+            wdt = np.array([S[2, 1], S[0, 2], S[1, 0]])
+        else:
+            S = 0.5 * (R_rel - R_rel.T)
+            axis = np.array([S[2, 1], S[0, 2], S[1, 0]]) / (np.sin(angle) + 1e-12)
+            wdt = angle * axis
+
+        return np.degrees(wdt / dt)  # [ωx, ωy, ωz] in deg/s (camera frame)
 
     def camera_take_image(self, cmd=None, is_operation=False, is_test=False):
         """
@@ -1871,29 +2406,8 @@ class PueoStarCameraOperation:
             self.logit(f"Taking photo: operation: {is_operation} solver: {self.solver} mode: {self.flight_mode} @{dt}", color='cyan')  # Timestamp at END
 
         self.curr_time = time.monotonic()
-        dt = datetime.datetime.now(timezone.utc)
-        utc_time = dt.replace(tzinfo=timezone.utc)
-        curr_utc_timestamp = utc_time.timestamp()
-
-        #  Flight computer ASTRO POSITION:
-        position = {
-            'timestamp':  utc_time.isoformat(),
-            'solver': self.solver,
-            'solver_name': self.astro.get_solver_name(self.solver),
-            'astro_position': [None, None, None],
-            'FOV': None,
-            'RMSE': None,
-            'RMS': [None, None, None],
-            'sources': 0,
-            'matched_stars': 0,
-            'probability': float(0.0),
-            'angular_velocity': [None, None, None]  # Initialize empty angular velocity dict
-        }
-
-        # curr_serial_utc_timestamp = self.serial_utc_update + time.monotonic() - self.serial_time_datum
-        timestamp_string = dt.strftime(self.timestamp_fmt)  # Used for filename, ':' should not be used.
-
-        self.info_file = f"{self.get_daily_path(self.cfg.final_path)}/log_{timestamp_string}.txt"
+        # Default: will be updated just in time before capture!!!
+        dtc, utc_time, curr_utc_timestamp = get_current_utc_timestamp()
 
         if self.focuser.aperture_position == 'closed':
             self.focuser.open_aperture()
@@ -1910,6 +2424,7 @@ class PueoStarCameraOperation:
         if not is_test:
             t1 = time.monotonic()
             try:
+                self.logit(f'Not testing. Taking image using real camera.')
                 self.logit(f'Capturing image @{get_dt(t0)}.', color='green')
                 # HW Autogain Request:
                 #   In autonomous mode, every n-th image if hw_autogain_recalibration_interval > 0
@@ -1920,16 +2435,37 @@ class PueoStarCameraOperation:
                 )
                 # Context manager for a hardware autogain cycle.
                 with self.camera.hw_autogain_cycle():
+                    dtc, utc_time, curr_utc_timestamp = get_current_utc_timestamp()
                     self.curr_img = self.camera.capture()
                 self.img_cnt += 1
-                self.logit(f'Camera image captured in {get_dt(t1)} @{get_dt(t0)} shape: {self.curr_img.shape}.', color='green')
+                self.logit(f'Camera image captured in {get_dt(t1)} @{get_dt(t0)} shape: {self.curr_img.shape} capture timestamp: {curr_utc_timestamp}.', color='green')
             except Exception as e:
                 self.logit(f'Capture error: {e}', level='error', color='red')
                 if not self.chamber_mode:
                     return
 
+        # Set defaults:
+        #  Flight computer ASTRO POSITION:
+        position = {
+            'timestamp':  utc_time.isoformat(),
+            'solver': self.solver,
+            'solver_name': self.astro.get_solver_name(self.solver),
+            'astro_position': [None, None, None],
+            'FOV': None,
+            'RMSE': None,
+            'RMS': [None, None, None],
+            'sources': 0,
+            'matched_stars': 0,
+            'probability': float(0.0),
+            'angular_velocity': [None, None, None]  # Initialize empty angular velocity dict
+        }
+
+        # curr_serial_utc_timestamp = self.serial_utc_update + time.monotonic() - self.serial_time_datum
+        timestamp_string = dtc.strftime(self.timestamp_fmt)  # Used for filename, ':' should not be used.
+
         # Chamber mode/test mode?
         if self.chamber_mode or is_test:
+            self.logit(f'Testing. Using image files.')
             self.curr_img = self.camera_dummy.capture()
             self.logit(f'Taking DUMMY capture from file: {self.camera_dummy.filename}', 'warning', color='blue')
 
@@ -1939,41 +2475,48 @@ class PueoStarCameraOperation:
 
         # Get and log camera settings
         camera_settings = self.camera.get_control_values()
-        self.logit(f"exposure time (us) : {camera_settings['Exposure']}")
+        self.logit(f"camera exposure time (us) : {camera_settings['Exposure']}")
         current_gain = camera_settings['Gain']
-        self.logit(f"gain (cB) : {current_gain}")
+        self.logit(f"camera gain (cB) : {current_gain}")
         self.logit(f'curr image length: {len(self.curr_img)} prev image length: {len(self.prev_img)}')
         self.logit(f"Max pixel: {np.max(self.curr_img)}, Min pixel: {np.min(self.curr_img)}. ")
 
         # Write image info to log
+        self.info_file = f"{self.get_daily_path(self.cfg.final_path)}/log_{timestamp_string}.txt"
         self.info_add_image_info(camera_settings, curr_utc_timestamp)
 
         # Periodic Autogain (in autonomous mode)
         # Single iteration keeps the camera in range.
         # TODO: If the autonomous mode is disabled it will lose track so needs to rerun the full autogain interactions again
         is_threaded_autogain_maintenance = True
-        if is_operation and self.cfg.autogain_update_interval != 0 and (self.img_cnt % self.cfg.autogain_update_interval) == 0 and not is_test:
-            # Periodic Autogain (in autonomous mode)
-            # Single iteration keeps the camera in range.
-
-            if is_threaded_autogain_maintenance:
-                # TODO: If the autonomous mode is disabled it will lose track so needs to rerun the full autogain interactions again
-                # Check if previous autogain thread is still running
-                if self._autogain_thread is None or not self._autogain_thread.is_alive():
-                    # Start autogain in a new thread
-                    self.log.debug('Running autogain_maintenance in a NEW thread.')
-                    self._autogain_thread = threading.Thread(
-                        target=self._run_autogain_maintenance,
-                        args=(camera_settings, current_gain),
-                        daemon=True
-                    )
-                self._autogain_thread.start()
-            else:
-                self.log.debug('Running autogain_maintenance in a MAIN thread.')
-                new_gain, gain_exec = timed_function(self.autogain_maintenance, camera_settings)
-                self.logit(
-                    f'Single image autogain completed: interval: {self.cfg.autogain_update_interval} current gain: {current_gain} new gain: {new_gain} in {gain_exec:.4f} seconds.',
-                    color='cyan')
+        if (
+                is_operation
+                and self.cfg.autogain_update_interval != 0
+                and (self.img_cnt % self.cfg.autogain_update_interval) == 0
+                and not is_test
+                # TODO: NEXT condition is from Windell, but does not resolve!!!
+                # and hw_autogain_enabled
+        ):
+            self.logit(f"Autogain mode: {self.cfg.autogain_mode}", color="cyan")
+            if self.cfg.autogain_mode == "software":
+                # self.logit("software autogain iteration.")
+                self.log.debug('Running software_autogain_maintenance in MAIN thread.')
+                new_gain, gain_exec = timed_function(self.software_autogain_maintenance, camera_settings)
+                self.logit(f'Software autogain completed: interval={self.cfg.autogain_update_interval} current gain: {current_gain} new gain: {new_gain} in {gain_exec:.4f} seconds.', color='cyan')
+            elif self.cfg.autogain_mode == "hardware":
+                if is_threaded_autogain_maintenance:
+                    if self._autogain_thread is None or not self._autogain_thread.is_alive():
+                        self.log.debug('Running hardware autogain_maintenance in a NEW thread.')
+                        self._autogain_thread = threading.Thread(
+                            target=self._run_autogain_maintenance,
+                            args=(camera_settings, current_gain),
+                            daemon=True,
+                        )
+                        self._autogain_thread.start()
+                else:
+                    self.log.debug('Running autogain_maintenance in MAIN thread.')
+                    new_gain, gain_exec = timed_function(self.autogain_maintenance, camera_settings)
+                    self.logit(f'Single image autogain completed: interval={self.cfg.autogain_update_interval} current gain: {current_gain} new gain: {new_gain} in {gain_exec:.4f} seconds.', color='cyan')
 
         # Perform astrometry
         image_file = timestamp_string
@@ -2070,6 +2613,8 @@ class PueoStarCameraOperation:
                 self.cfg.foi_resize_mode,
                 self.cfg.png_compression,
                 self.is_flight)
+
+
             # Create/update symlink to last info file
             if self.is_flight:
                 # TODO: Fix This!!!
@@ -2080,11 +2625,21 @@ class PueoStarCameraOperation:
             # else:
             #     cprint('Error no scaled image', color='red')
             #     self.log.error('foi_scaled_name was None, no downscaled image generated.')
+
+            # Delete prev files (output folder), keeping only Last one.
+            deleted_cnt = delete_files(self.prev_foi_name, self.prev_foi_scaled_name, self.prev_info_file)
+            if deleted_cnt:
+                self.log.debug(f'Cleanup deleted {deleted_cnt} files (foi, info file).')
+
             self.prev_time = self.curr_time
             self.prev_img = self.curr_img
             self.prev_astrometry = self.astrometry
             self.prev_star_centroids = self.curr_star_centroids
             self.prev_image_name = self.curr_image_name
+
+            self.prev_foi_name = self.foi_name
+            self.prev_foi_scaled_name = self.foi_scaled_name
+            self.prev_info_file = self.info_file
 
         # Send the file to clients
         if self.astrometry is not None:
@@ -2239,6 +2794,13 @@ class PueoStarCameraOperation:
         self.server.write(f"Changing camera exposure to: {manual_exposure_time}")
         self.camera.set_control_value(asi.ASI_EXPOSURE, int(manual_exposure_time))  # units microseconds,
         self.cfg.set_dynamic(lab_best_exposure=int(manual_exposure_time))  # Update dynamic lab_best_exposure
+        # TODO: DO NOT DO THIS HERE THIS WAY!!! Also update cfg.exposure_time_s in seconds for streak ω estimation
+        # TODO: exposure_time_s is defined in config but its not a config var!!! Fix thsi!
+        try:
+            self.cfg.exposure_time_s = float(manual_exposure_time) / 1e6
+        except Exception:
+            self.cfg.exposure_time_s = 0.0
+
 
     def camera_set_gain(self, cmd):
         gain_setting = cmd.gain

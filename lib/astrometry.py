@@ -18,21 +18,21 @@ from tqdm import tqdm
 
 # Custom imports
 from lib.config import Config
-from lib.common import current_timestamp, cprint, get_dt
+from lib.common import current_timestamp, cprint, get_dt, logit
 from lib.utils import read_image_grayscale, read_image_BGR, display_overlay_info, timed_function, print_img_info
-from lib.source_finder import global_background_estimation, local_levels_background_estimation, \
-    median_background_estimation, sextractor_background_estimation, find_sources, find_sources_photutils, \
-    select_top_sources, select_top_sources_photutils, source_finder
+from lib.source_finder import global_background_estimation, source_finder
+# from lib.source_finder import global_background_estimation, local_levels_background_estimation, \
+#     median_background_estimation, sextractor_background_estimation, find_sources, find_sources_photutils, \
+#     select_top_sources, select_top_sources_photutils, source_finder
+
 from lib.compute_star_centroids import compute_centroids_from_still, compute_centroids_from_trail, \
-    compute_centroids_photutils
+    compute_centroids_photutils, compute_centroids_from_trails_ellipse_method
 from lib.utils import get_files, split_path
 from lib.tetra3 import Tetra3
 from lib.cedar_solve import Tetra3 as Tetra3Cedar  # , cedar_detect_client
 from lib.cedar import Cedar
 from lib.astrometry_net import  AstrometryNet
 from lib.compute import Compute
-
-# from lib.tetra3_cedar_old import Tetra3 as Tetra3Cedar # , cedar_detect_client
 
 
 class Astrometry:
@@ -77,6 +77,759 @@ class Astrometry:
 
         self.cedar = Cedar(database_name, cfg)
         self.cedar.test = self.test
+
+
+    @staticmethod
+    def _fit_ellipses_from_mask(mask_u8, min_area=10, min_major=12):
+        """
+        Fit ellipses to ALL connected components in the binary mask (no AR gating here).
+        Returns a list of dicts with: cx, cy, a, b, L, ang, area, ar.
+        - 'L' is the major-axis length in pixels (2*a).
+        - 'ang' is orientation in degrees, normalized to [0, 180).
+        """
+        cnts, _ = cv2.findContours(mask_u8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+        ell = []
+        for c in cnts:
+            A = cv2.contourArea(c)
+            if A < min_area:
+                continue
+            if len(c) >= 5:
+                (cx, cy), (W, H), theta = cv2.fitEllipse(c)
+            else:
+                (cx, cy), (W, H), theta = cv2.minAreaRect(c)
+            a = max(W, H) * 0.5
+            b = max(1e-6, min(W, H) * 0.5)
+            L = 2.0 * a
+            if L < min_major:
+                continue
+            # normalize orientation so major axis is the reference, range [0,180)
+            ang = theta if W >= H else (theta + 90.0)
+            ang = (ang + 180.0) % 180.0
+            ell.append({
+                "cx": float(cx), "cy": float(cy),
+                "a": float(a), "b": float(b),
+                "L": float(L), "ang": float(ang),
+                "area": float(A), "ar": float(a / b)
+            })
+        return ell
+
+    @staticmethod
+    def _ellipse_metrics_ar(ell, ar_elong=1.70):
+        """
+        Split blobs by AR threshold and compute elongated-only metrics:
+          - L_med_elong: median major-axis length among AR>=ar_elong
+          - R_star: double-angle orientation coherence in [0,1]
+        Returns dict: N, N_elong, f_elong, L_med_elong, R_star
+        """
+        N = len(ell)
+        if N == 0:
+            return dict(N=0, N_elong=0, f_elong=0.0, L_med_elong=0.0, R_star=0.0)
+
+        ar = np.array([e["ar"] for e in ell], float)
+        L  = np.array([e["L"]  for e in ell], float)
+        # accept either 'ang' or 'theta_deg' field for orientation
+        th = np.array([ (e["ang"] if "ang" in e else e["theta_deg"]) for e in ell ], float)
+
+        idx = ar >= ar_elong
+        N_elong = int(np.count_nonzero(idx))
+        f_elong = float(N_elong / N)
+
+        if N_elong:
+            L_med_elong = float(np.median(L[idx]))
+            th2 = np.deg2rad(2.0 * th[idx])
+            R_star = float(np.hypot(np.sum(np.cos(th2)), np.sum(np.sin(th2))) / N_elong)
+        else:
+            L_med_elong, R_star = 0.0, 0.0
+
+        return dict(
+            N=N,
+            N_elong=N_elong,
+            f_elong=f_elong,
+            L_med_elong=L_med_elong,
+            R_star=R_star
+        )
+
+
+    def classify_frame_still_biased(self,
+                                    ell,
+                                    ar_elong=1.70,
+                                    min_elong=5,
+                                    min_L=12.0,
+                                    min_R=0.60,
+                                    min_frac=0.60,
+                                    min_conf=0.65):   # NEW: confidence gate
+        M = self._ellipse_metrics_ar(ell, ar_elong=ar_elong)
+        if M["N"] == 0:
+            return "empty", 0.0, M
+
+        is_streaked = (M["N_elong"] >= min_elong and
+                       M["L_med_elong"] >= min_L and
+                       M["R_star"] >= min_R and
+                       M["f_elong"] >= min_frac)
+        label = "streaked" if is_streaked else "still"
+
+        s_N    = min(1.0, M["N_elong"]    / max(min_elong, 1))
+        s_L    = min(1.0, M["L_med_elong"]/ max(min_L, 1e-6))
+        s_R    = min(1.0, M["R_star"]     / max(min_R, 1e-6))
+        s_frac = min(1.0, M["f_elong"]    / max(min_frac, 1e-6))
+
+        if label == "streaked":
+            conf = float((s_N + s_L + s_R + s_frac) / 4.0)
+        else:
+            conf = float(((1-s_N) + (1-s_L) + (1-s_frac)) / 4.0)
+
+        # NEW: hard gate on minimum confidence
+        if label == "streaked" and conf < float(min_conf):
+            label = "still"
+
+        M["coherence_R_star"] = M["R_star"]
+        M["min_conf"] = float(min_conf)
+        return label, conf, M
+
+    @staticmethod
+    def _estimate_omega_from_ellipses_plate_scale(
+        ell,
+        plate_scale_arcsec_per_px,
+        exposure_time_s,
+        image_shape,
+        ar_min=1.7,
+        L_min_px=5.0,
+        area_min_px=0.0,
+    ):
+        """
+        Estimate camera angular velocity from a list of ellipse dicts produced by
+        _fit_ellipses_from_mask, using plate scale and exposure time.
+
+        Parameters
+        ----------
+        ell : list of dict
+            Each element with keys: cx, cy, L, ang, area, ar.
+        plate_scale_arcsec_per_px : float
+            Plate scale [arcsec / pixel].
+        exposure_time_s : float
+            Exposure time [s] for this frame.
+        image_shape : (H, W)
+            Image height and width (same frame ell was fit on).
+        ar_min : float
+            Minimum aspect ratio (a/b) for a blob to be treated as a streak.
+        L_min_px : float
+            Minimum major-axis length [px].
+        area_min_px : float
+            Minimum area [px^2].
+
+        Returns
+        -------
+        omega_deg_s : np.ndarray | None
+            [wx, wy, wz] in deg/s (camera frame), or None if not solvable.
+        diag : dict
+            Diagnostics: N_used, rank, resid_rms_deg_s.
+        """
+        if plate_scale_arcsec_per_px <= 0.0 or exposure_time_s <= 0.0:
+            return None, {
+                "N_used": 0,
+                "rank": 0,
+                "resid_rms_deg_s": float("nan"),
+            }
+
+        if not isinstance(image_shape, (tuple, list)) or len(image_shape) < 2:
+            raise ValueError("image_shape must be (H, W)")
+
+        H, W = int(image_shape[0]), int(image_shape[1])
+        cx = (W - 1) * 0.5
+        cy = (H - 1) * 0.5
+
+        # Plate scale [rad / pixel]
+        s = plate_scale_arcsec_per_px * (np.pi / 180.0) / 3600.0
+
+        A_rows = []
+        b_rows = []
+        n_used = 0
+
+        for e in ell:
+            A_e = float(e.get("area", 0.0))
+            ar_e = float(e.get("ar", 0.0))
+            L_px = float(e.get("L", 0.0))
+
+            if A_e < area_min_px:
+                continue
+            if ar_e < ar_min:
+                continue
+            if L_px < L_min_px:
+                continue
+
+            cx_e = float(e["cx"])
+            cy_e = float(e["cy"])
+            ang_deg = float(e["ang"])
+
+            # Position in tangent plane [rad]
+            x_ang = (cx_e - cx) * s
+            y_ang = (cy_e - cy) * s
+
+            # Pixel flow along major axis
+            theta = np.deg2rad(ang_deg)
+            du_dt_px = (L_px * np.cos(theta)) / exposure_time_s
+            dv_dt_px = (L_px * np.sin(theta)) / exposure_time_s
+
+            # Flow in angular units [rad/s]
+            u_ang = du_dt_px * s
+            v_ang = dv_dt_px * s
+
+            # Optical flow model for pure rotation:
+            # dx/dt = x*y*wx + (-1 - x^2)*wy + y*wz
+            # dy/dt = (1 + y^2)*wx + (-x*y)*wy + (-x)*wz
+            A_rows.append([x_ang * y_ang, -(1.0 + x_ang * x_ang), y_ang])
+            b_rows.append(u_ang)
+            A_rows.append([1.0 + y_ang * y_ang, -x_ang * y_ang, -x_ang])
+            b_rows.append(v_ang)
+
+            n_used += 1
+
+        if len(A_rows) < 3:
+            return None, {
+                "N_used": n_used,
+                "rank": 0,
+                "resid_rms_deg_s": float("nan"),
+            }
+
+        A = np.asarray(A_rows, dtype=np.float64)
+        b = np.asarray(b_rows, dtype=np.float64)
+
+        omega_rad_s, residuals, rank, svals = np.linalg.lstsq(A, b, rcond=None)
+        omega_deg_s = np.degrees(omega_rad_s)
+
+        # residuals in (rad/s)^2 → RMS rad/s → deg/s
+        if residuals.size > 0 and A.shape[0] > 0:
+            resid_rms_rad_s = float(np.sqrt(residuals[0] / A.shape[0]))
+            resid_rms_deg_s = float(np.degrees(resid_rms_rad_s))
+        else:
+            resid_rms_deg_s = float("nan")
+
+        diag = {
+            "N_used": int(n_used),
+            "rank": int(rank),
+            "resid_rms_deg_s": resid_rms_deg_s,
+        }
+        return omega_deg_s, diag
+
+    @staticmethod
+    def _blob_reason(area, ar, min_area_px, aspect_ratio_min):
+        """
+        Return ('OK' or reason code, color BGR) for this blob’s pass/fail.
+        """
+        if area < min_area_px:
+            return "AREA", (0, 0, 255)      # red
+        if ar < aspect_ratio_min:
+            return "AR", (0, 0, 255)        # red
+        return "OK", (0, 200, 0)            # green
+
+    @staticmethod
+    def _pt(x, y):
+        """Return a cv2-friendly (int, int) point from any numpy/float input."""
+        xi = int(np.rint(np.asarray(x).squeeze()))
+        yi = int(np.rint(np.asarray(y).squeeze()))
+        return (xi, yi)
+
+    @staticmethod
+    def _draw_trail_overlay_like_still(
+        image,
+        mask=None,
+        centers_xy=None,
+        lengths=None,
+        angles_deg=None,
+        draw_ids=False,
+        ids=None,
+        contour_color=(0, 255, 255),   # contours (yellow-ish)
+        centroid_color=(0, 0, 255),    # centroids (red)
+        axis_color=(0, 255, 0),        # major-axis line (green)
+        thickness=1,
+        font=cv2.FONT_HERSHEY_SIMPLEX,
+        font_scale=0.4,
+        font_thickness=1
+    ):
+        """
+        Build a contours_img analog to 'compute_centroids_from_still':
+        - draws external contours from `mask`
+        - draws centroid red dots
+        - draws optional ID labels
+        - draws short major-axis lines for visual orientation
+        """
+        overlay = image.copy()
+        if overlay.ndim == 2:
+            overlay = cv2.cvtColor(overlay, cv2.COLOR_GRAY2BGR)
+
+        # 1) Draw contours first (underlay)
+        if mask is not None:
+            cnts, _ = cv2.findContours((mask > 0).astype('uint8'),
+                                       cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            if len(cnts) > 0:
+                cv2.drawContours(overlay, cnts, -1, contour_color, thickness)
+
+        # 2) Draw centroids + (optional) IDs + short major-axis lines
+        if centers_xy is None or lengths is None or angles_deg is None:
+            return overlay
+
+        for k, ((x, y), L, ang_deg) in enumerate(zip(centers_xy, lengths, angles_deg)):
+            # centroid (red dot)
+            cv2.circle(overlay, (int(round(x)), int(round(y))), 2, centroid_color, -1, cv2.LINE_AA)
+
+            # ID (optional)
+            if draw_ids:
+                label = str(ids[k] if ids is not None else k)
+                cv2.putText(overlay, label, (int(x)+5, int(y)-5),
+                            font, font_scale, (255,255,255), font_thickness, cv2.LINE_AA)
+
+            # major-axis short line (visual hint)
+            half = max(6.0, 0.15 * float(L))
+            # Windel use of math
+            # theta = math.radians(float(ang_deg))
+            # dx, dy = half * math.cos(theta), half * math.sin(theta)
+
+            # Convert degrees to radians and store in theta
+            theta = np.radians(float(ang_deg))
+            # Calculate dx and dy using cosine and sine of the radian angle
+            dx, dy = half * np.cos(theta), half * np.sin(theta)
+
+            p1 = (int(round(x - dx)), int(round(y - dy)))
+            p2 = (int(round(x + dx)), int(round(y + dy)))
+            cv2.line(overlay, p1, p2, axis_color, thickness, cv2.LINE_AA)
+
+        return overlay
+
+    def _trail_ellipse_adapter(
+        self,
+        masked_image,
+        sources_mask,
+        original_image,
+        min_area_px=20,
+        aspect_ratio_min=2.0,
+        use_uniform_length=True,
+        uniform_length_mode="median",
+        return_partial_images=False,
+        partial_results_path=None,
+        frame_tag=None,
+    ):
+        """
+        Returns EXACTLY what the old trail path expected:
+          (precomputed_star_centroids, contours_img)
+        When return_partial_images=True, saves a still-style overlay and mask to partial_results_path.
+        """
+        ids, xs, ys, fluxes, lengths, angles = compute_centroids_from_trails_ellipse_method(
+            image = masked_image,
+            sources_mask=sources_mask,
+            min_area_px=min_area_px,
+            aspect_ratio_min=aspect_ratio_min,
+            use_uniform_length=use_uniform_length,
+            uniform_length_mode=uniform_length_mode,
+        )
+        # Ensure the solver gets the same order we saved: mean-intensity descending
+        # np.argsort()
+        order = np.argsort(-np.asarray(fluxes, float))  # fluxes == mean intensity from ellipse∩mask
+        xs = np.asarray(xs, float)[order]
+        ys = np.asarray(ys, float)[order]
+        fluxes = np.asarray(fluxes, float)[order]
+        lengths = np.asarray(lengths, float)[order]
+        angles = np.asarray(angles, float)[order]
+
+        # --- Build precomputed_star_centroids (N×5: [y, x, flux, std, diameter]) ---
+        if len(ids) == 0: # sames as if ids:
+            precomputed_star_centroids = np.empty((0, 5), dtype=float)
+            contours_img = self._draw_trail_overlay_like_still(
+                image=original_image,
+                mask=sources_mask,
+                centers_xy=[],
+                lengths=[],
+                angles_deg=[]
+            )
+            # Save partial images if requested
+            if return_partial_images and partial_results_path:
+                tag = frame_tag or "frame"
+                cv2.imwrite(f"{partial_results_path}/trail_overlay_{tag}.png", contours_img)
+                cv2.imwrite(f"{partial_results_path}/trail_mask_{tag}.png",
+                            (sources_mask > 0).astype('uint8') * 255)
+            return precomputed_star_centroids, contours_img
+
+        xs = np.asarray(xs, dtype=float)
+        ys = np.asarray(ys, dtype=float)
+        fluxes = np.asarray(fluxes, dtype=float)
+        lengths = np.asarray(lengths, dtype=float)
+        angles = np.asarray(angles, dtype=float)
+
+        std = np.full_like(fluxes, np.nan, dtype=float)   # preserve shape
+        diameter = lengths.astype(float)                   # use major axis as diameter proxy
+        precomputed_star_centroids = np.stack([ys, xs, fluxes, std, diameter], axis=1)
+
+        # --- Build still-style overlay (contours + centroids + axes + ellipse outlines) ---
+        overlay = self._draw_trail_overlay_like_still(
+            image=original_image,
+            mask=sources_mask,
+            centers_xy=list(zip(xs, ys)),
+            lengths=lengths,
+            angles_deg=angles,
+            draw_ids=True,
+        )
+
+        # --- Draw per-contour diagnostics and ellipses for ACCEPTED blobs -----------
+        # Build array of accepted centers to match contours to accepted results
+        acc_centers = np.column_stack([xs, ys]) if len(xs) else np.zeros((0, 2), float)
+
+        # Indexing helper to find nearest accepted center to a contour-fit center
+        def nearest_acc_idx(cx, cy, tol_px=6.0):
+            if acc_centers.shape[0] == 0:
+                return -1
+            dx = acc_centers[:, 0] - cx
+            dy = acc_centers[:, 1] - cy
+            j = int(np.argmin(dx * dx + dy * dy))
+            return j if (dx[j] * dx[j] + dy[j] * dy[j]) <= (tol_px * tol_px) else -1
+
+        # Walk all contours from the MASK (fit ellipses to mask geometry)
+        cnts, _ = cv2.findContours((sources_mask > 0).astype('uint8'),
+                                   cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        # Numbering for on-image labels
+        blob_idx = 0
+        for c in cnts:
+            if len(c) < 5:
+                # Not enough points for ellipse fit; annotate anyway with area
+                area = cv2.contourArea(c)
+                reason, color = self._blob_reason(area, ar=999.0, min_area_px=min_area_px, aspect_ratio_min=aspect_ratio_min)
+                M = cv2.moments(c)
+                cx = cy = np.nan
+                if M["m00"] > 0:
+                    cx = M["m10"] / M["m00"]
+                    cy = M["m01"] / M["m00"]
+                # Fallback to geometric center if moments are not finite
+                if not (np.isfinite(cx) and np.isfinite(cy)):
+                    cx = float(c[:, 0, 0].mean())
+                    cy = float(c[:, 0, 1].mean())
+                # Only annotate if we have finite numbers
+                if np.isfinite(cx) and np.isfinite(cy):
+                    cv2.putText(overlay, f"{blob_idx}:{reason}", (int(round(cx)) + 4, int(round(cy)) - 4),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1, cv2.LINE_AA)
+                blob_idx += 1
+                continue
+
+            # Try to fit an ellipse; if it fails, annotate FITFAIL and continue
+            try:
+                (cx, cy), (MA, ma), ang = cv2.fitEllipse(c)
+                if MA < ma:
+                    MA, ma = ma, MA  # ensure MA = major axis, ma = minor axis
+                    ang = (ang + 90.0) % 180.0
+            except Exception:
+                reason, color = "FITFAIL", (0, 0, 255)
+                # geometric center as fallback to place the label
+                M = cv2.moments(c)
+                gx = gy = np.nan
+                if M["m00"] > 0:
+                    gx = M["m10"] / M["m00"]
+                    gy = M["m01"] / M["m00"]
+                if not (np.isfinite(gx) and np.isfinite(gy)):
+                    gx = float(c[:, 0, 0].mean())
+                    gy = float(c[:, 0, 1].mean())
+                if np.isfinite(gx) and np.isfinite(gy):
+                    cv2.circle(overlay, (int(round(gx)), int(round(gy))), 2, color, -1, cv2.LINE_AA)
+                    cv2.putText(overlay, f"{blob_idx}:{reason}", (int(round(gx)) + 6, int(round(gy)) - 6),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1, cv2.LINE_AA)
+                blob_idx += 1
+                continue
+
+            area = cv2.contourArea(c)
+            ar = (MA / ma) if ma > 0 else 999.0
+
+            # Pass/fail reason & color
+            reason, color = self._blob_reason(area, ar, min_area_px, aspect_ratio_min)
+
+
+            #_x = int(np.rint(np.asarray(cx).squeeze()))
+            #_y = int(np.rint(np.asarray(cy).squeeze()))
+            #cv2.putText(
+            #    overlay, f"{blob_idx}:{reason}",
+            #    (int(_x) + 4, int(_y) - 6),
+            #    cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1, cv2.LINE_AA
+            #)
+
+            # Draw a small dot at the contour-fit center
+            #cv2.circle(overlay, (int(round(cx)), int(round(cy))), 2, color, -1, cv2.LINE_AA)
+
+            # If accepted (OK), draw the ellipse outline and also label its accepted ID (nearest centroid)
+            if reason == "OK":
+                j = nearest_acc_idx(cx, cy, tol_px=6.0)
+                if j < 0:
+                    # Base checks passed, but no nearby accepted centroid → draw ellipse anyway in red
+                    reason_nomatch = "NOMATCH"
+                    cv2.putText(
+                        overlay, f"{blob_idx}:{reason_nomatch}",
+                        (int(cx) + 6, int(cy) - 6),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 255), 1, cv2.LINE_AA
+                    )
+
+                    center = (int(round(cx)), int(round(cy)))
+                    axes = (int(round(MA / 2.0)), int(round(ma / 2.0)))
+                    cv2.ellipse(overlay, center, axes, float(ang), 0, 360, (0, 0, 255), 1, cv2.LINE_AA)  # red outline
+
+                    blob_idx += 1
+                    continue
+
+                # ellipse outline (accepted & matched)
+                center = (int(round(cx)), int(round(cy)))
+                axes = (int(round(MA / 2.0)), int(round(ma / 2.0)))
+                cv2.ellipse(overlay, center, axes, float(ang), 0, 360, (0, 180, 255), 1, cv2.LINE_AA)
+
+                # Optional: show matched accepted ID next to the centroid
+                if j >= 0:
+                    cv2.putText(overlay, f"ID{j}", (int(cx) + 6, int(cy) + 14),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1, cv2.LINE_AA)
+
+        # Save partial images if requested (mirror still path behavior)
+        if return_partial_images:
+            tag = frame_tag or "frame"
+            cv2.imwrite(f"{partial_results_path}/trail_overlay_{tag}.png", overlay)
+            cv2.imwrite(f"{partial_results_path}/trail_mask_{tag}.png",
+                        (sources_mask > 0).astype('uint8') * 255)
+
+        return precomputed_star_centroids, overlay
+
+    def classify_streaks_axis_axis(
+        mask_u8,
+        theta_axes_thr=12.0,      # Δθ between major axes
+        dir_thr_col=15.0,         # center→center vs each axis
+        dist_w_factor=100.0,      # d_thr = W / dist_w_factor
+        perp_k=0.5,               # perpendicular gate factor
+        perp_min=3.0,             # min perp threshold (px)
+    ):
+        """
+        Input:
+          mask_u8: uint8 binary mask (0/255), already background-subtracted & thresholded (your pipeline)
+        Output:
+          label: "streaked" | "not-streaked"
+          metrics: dict with N, R_star_w, TL_norm (and others)
+          overlay_bgr: optional visualization (BGR) with merged ellipses; None if no blobs
+        """
+
+        # --- helpers ---
+        def angle_diff_deg_180(a, b):
+            d = abs(a - b) % 180.0
+            return min(d, 180.0 - d)
+
+        # TODO: Remove - Windell prototype code
+        # def angle_to_axis_deg_with_math(vx, vy, theta_deg):
+        #     ux = math.cos(math.radians(theta_deg))
+        #     uy = math.sin(math.radians(theta_deg))
+        #     dot = abs(vx*ux + vy*uy)
+        #     dot = max(-1.0, min(1.0, dot))
+        #     return math.degrees(math.acos(dot))
+
+        def angle_to_axis_deg(vx, vy, theta_deg):
+            # Convert degrees to radians for trigonometric functions, numpy implementation
+            theta_rad = np.radians(theta_deg)
+
+            # Calculate unit vector (ux, uy)
+            ux = np.cos(theta_rad)
+            uy = np.sin(theta_rad)
+
+            # Calculate the absolute value of the dot product (scalar projection)
+            dot = np.abs(vx * ux + vy * uy)
+
+            # Clip the dot product to the valid range [-1.0, 1.0] to prevent math domain errors
+            # (NumPy's clip function is ideal for this)
+            dot = np.clip(dot, -1.0, 1.0)
+
+            # Calculate the angle (in radians) and convert the final result back to degrees
+            return np.degrees(np.arccos(dot))
+
+        def fit_ellipse_from_contour(cnt):
+            if len(cnt) < 5:
+                return None
+            (cx, cy), (MA, mi), ang = cv2.fitEllipse(cnt)
+            a, b = (MA/2.0, mi/2.0) if MA >= mi else (mi/2.0, MA/2.0)
+            if mi > MA:  # swapped
+                ang = (ang + 90.0) % 180.0
+            return float(cx), float(cy), float(a), float(b), float(ang)
+
+        def should_merge_axis_axis(bi, bj, W):
+            dx = bj["cx"] - bi["cx"]
+            dy = bj["cy"] - bi["cy"]
+            d = float(np.hypot(dx, dy))
+            if d > W / dist_w_factor:
+                return False
+            if d < 1e-6:
+                return True
+
+            # axes nearly parallel
+            dtheta = angle_diff_deg_180(bi["ang"], bj["ang"])
+            if dtheta > theta_axes_thr:
+                return False
+
+            # collinearity vs each axis
+            vx, vy = dx/d, dy/d
+            a1 = angle_to_axis_deg(vx, vy, bi["ang"])
+            a2 = angle_to_axis_deg(vx, vy, bj["ang"])
+            if (a1 > dir_thr_col) or (a2 > dir_thr_col):
+                return False
+
+            # perpendicular offset gate (relative to bi axis)
+            # TODO: Remove -  Windell math implementation
+            # c, s = math.cos(math.radians(bi["ang"])), math.sin(math.radians(bi["ang"]))
+            # Numpy implementation
+            # Calculate cosine (c) and sine (s) of the angle stored in bi["ang"]
+            c, s = np.cos(np.radians(bi["ang"])), np.sin(np.radians(bi["ang"]))
+
+            dyp = -s*dx + c*dy
+            perp_thr = max(perp_k * 0.5 * (bi["b"] + bj["b"]), perp_min)
+            if abs(dyp) > perp_thr:
+                return False
+
+            return True
+
+        def union_find(n):
+            parent = list(range(n))
+            rank = [0]*n
+            def find(x):
+                while parent[x] != x:
+                    parent[x] = parent[parent[x]]
+                    x = parent[x]
+                return x
+            def union(x, y):
+                rx, ry = find(x), find(y)
+                if rx == ry:
+                    return
+                if rank[rx] < rank[ry]:
+                    parent[rx] = ry
+                elif rank[rx] > rank[ry]:
+                    parent[ry] = rx
+                else:
+                    parent[ry] = rx; rank[rx] += 1
+            return find, union
+
+        # --- 1) Extract ellipses from the mask (your gates) ---
+        AREA_MIN, MAJOR_MIN, MINOR_MIN, ASPECT_MIN = 10, 12.0, 2.0, 1.7
+        mask01 = (mask_u8 > 0).astype(np.uint8)
+        contours, _ = cv2.findContours(mask01, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+        blobs = []
+        for cnt in contours:
+            if len(cnt) < 5:
+                continue
+            area = float(cv2.contourArea(cnt))
+            if area < AREA_MIN:
+                continue
+            fe = fit_ellipse_from_contour(cnt)
+            if fe is None:
+                continue
+            cx, cy, a, b, ang = fe
+            if a*2.0 < MAJOR_MIN or b*2.0 < MINOR_MIN:
+                continue
+            aspect = a / max(b, 1e-6)
+            if aspect < ASPECT_MIN:
+                continue
+            blobs.append({"cx":cx,"cy":cy,"a":a,"b":b,"ang":ang,"area":area,"contour":cnt})
+
+        H, W = mask01.shape
+        if not blobs:
+            return "not-streaked", {"N": 0, "R_star_w": 0.0, "L_med_norm": 0.0}, None
+
+        # --- 2) Merge (axis–axis + collinearity + perpendicular) ---
+        find, union = union_find(len(blobs))
+        for i in range(len(blobs)):
+            for j in range(i+1, len(blobs)):
+                if should_merge_axis_axis(blobs[i], blobs[j], W):
+                    union(i, j)
+
+        groups = {}
+        for i in range(len(blobs)):
+            r = find(i)
+            groups.setdefault(r, []).append(i)
+
+        merged = []
+        for idxs in groups.values():
+            pts = np.vstack([blobs[i]["contour"] for i in idxs]).reshape(-1,1,2)
+            fe = fit_ellipse_from_contour(pts)
+            if fe is None:
+                cx = float(np.mean([blobs[i]["cx"] for i in idxs]))
+                cy = float(np.mean([blobs[i]["cy"] for i in idxs]))
+                a  = float(np.median([blobs[i]["a"] for i in idxs]))
+                b  = float(np.median([blobs[i]["b"] for i in idxs]))
+                ang= float(np.median([blobs[i]["ang"] for i in idxs]))
+            else:
+                cx, cy, a, b, ang = fe
+            area = float(sum(blobs[i]["area"] for i in idxs))
+            merged.append({"cx":cx,"cy":cy,"a":a,"b":b,"ang":ang,"area":area,"members":idxs})
+
+        # Optional: 3×MAD outlier reject on major axis
+        a_arr = np.array([b["a"] for b in merged], float)
+        med = float(np.median(a_arr))
+        mad = float(1.4826*np.median(np.abs(a_arr - med)) + 1e-9)
+        merged = [b for b in merged if abs(b["a"] - med) <= 3.0*mad]
+        if not merged:
+            return "not-streaked", {"N": 0, "R_star_w": 0.0, "L_med_norm": 0.0}, None
+
+        a_arr = np.array([b["a"] for b in merged], dtype=float)  # semi-major (px)
+        th_arr = np.array([b["ang"] for b in merged], dtype=float)  # angle (deg)
+        N = len(merged)
+
+        # Length-weighted double-angle coherence (R*_w)
+        th2 = np.deg2rad(2.0 * th_arr)
+        C = float(np.sum(a_arr * np.cos(th2)))
+        S = float(np.sum(a_arr * np.sin(th2)))
+        R_star_w = float(np.hypot(C, S) / (np.sum(a_arr) + 1e-12))
+
+        # Aliases used below
+        w = a_arr
+        theta = th_arr
+
+        # --- 3) Metrics ---
+        # --- 4) Length gate that does NOT scale with N ---
+        # Dominant direction φ (deg) from length-weighted double-angle vector
+        # Build arrays for metrics
+        N = len(merged)
+        th_arr = np.array([b["ang"] for b in merged], dtype=float)   # angle (deg)
+
+        # Length-weighted double-angle coherence
+        th2 = np.deg2rad(2.0 * th_arr)
+        C = float(np.sum(a_arr * np.cos(th2)))
+        S = float(np.sum(a_arr * np.sin(th2)))
+        R_star_w = float(np.hypot(C, S) / (np.sum(a_arr) + 1e-12))
+
+        # Aliases used below
+        w = a_arr
+        theta = th_arr
+
+        phi = 0.5 * np.degrees(np.arctan2(
+            np.sum(w * np.sin(np.deg2rad(2.0 * theta))),
+            np.sum(w * np.cos(np.deg2rad(2.0 * theta)))
+        )) % 180.0
+
+        # Project only if orientation is at least mildly coherent (R* ≥ 0.30) and we have enough blobs
+        use_proj = (N >= 3 and R_star_w >= 0.30)
+        a_eff = w * np.abs(np.cos(np.deg2rad(theta - phi))) if use_proj else w
+
+        # Per-streak size gate (median of effective **major diameter**, normalized by width)
+        # a_eff are semi-majors (px); convert to major diameters (2a) then normalize by W
+        L_med_major_px = float(np.median(2.0 * a_eff))
+        L_med_norm = L_med_major_px / float(W)
+
+        # Decision thresholds (resolution-independent): 12 px major diameter at this width
+        N_MIN = 3
+        RSTARW_THR = 0.50
+        L_MED_NORM_THR = (12.0 / float(W))
+
+        is_streaked = (N >= N_MIN) and (R_star_w >= RSTARW_THR) and (L_med_norm >= L_MED_NORM_THR)
+        label = "streaked" if is_streaked else "not-streaked"
+
+        # --- 5) Overlay (unchanged below) ---
+        # (keep your existing overlay code here)
+
+        # Metrics to report (replace prior dict)
+
+        metrics = {
+            "N": int(N),
+            "R_star_w": float(R_star_w),
+            "L_med_major_px": float(L_med_major_px),
+            "L_med_norm": float(L_med_norm),
+            "phi_deg": float(phi),
+            "used_projection": bool(use_proj),
+        }
+        overlay = locals().get("overlay", None)
+        return label, metrics, overlay
+
 
     @staticmethod
     def get_solver_name(solver_key):
@@ -126,6 +879,100 @@ class Astrometry:
         self.t3.generate_database(
             star_catalog=star_catalog, max_fov=max_fov, star_max_magnitude=star_max_magnitude, save_as=output_name
         )
+
+    def log_trail_classifier_metrics(
+            self,
+            mask_u8,
+            label: str,
+            streak_metrics: dict,
+            *,
+            N_MIN: int = 3,
+            RSTARW_THR: float = 0.5,
+            L_MED_NORM_PX: float = 12.0,
+            streak_conf: float | None = None,
+            logger=None,
+    ):
+        """
+        Always prints to screen, even if a logger is present.
+        """
+        import numpy as np
+
+        H, W = mask_u8.shape[:2]
+        L_MED_NORM_THR = L_MED_NORM_PX / float(W)
+
+        N = int(streak_metrics.get("N", -1))
+        R_star_w = float(streak_metrics.get("R_star_w", -1.0))
+        L_med_norm = float(streak_metrics.get("L_med_norm", -1.0))
+        L_med_px = float(streak_metrics.get("L_med_major_px", L_med_norm * float(W)))
+        phi_deg = streak_metrics.get("phi_deg", None)
+        used_proj = streak_metrics.get("used_projection", None)
+
+        n_init = streak_metrics.get("n_init", "?")
+        n_groups = streak_metrics.get("n_groups", "?")
+        n_merges = streak_metrics.get("n_merges", "?")
+
+        try:
+            mask_fill = float((mask_u8 > 0).sum()) / float(mask_u8.size)
+        except Exception:
+            mask_fill = float("nan")
+
+        label_str = "STREAKED" if label == "streaked" else "STILL"
+        try:
+            conf = R_star_w if R_star_w >= 0 else float(streak_conf)
+        except Exception:
+            conf = float("nan")
+
+        fails = []
+        if N < N_MIN:
+            fails.append(f"too few streaks: N={N} < {N_MIN}")
+        if L_med_norm < L_MED_NORM_THR:
+            fails.append(f"streaks too short: L_med≈{L_med_px:.1f}px < {L_MED_NORM_PX:.1f}px")
+        if R_star_w < RSTARW_THR:
+            fails.append(f"poor orientation coherence: R*_w={R_star_w:.2f} < {RSTARW_THR:.2f}")
+        reason_str = "OK (passed all gates)" if not fails else "FAIL → " + " | ".join(fails)
+
+        # Construct message
+        msg = (
+            f"[Classifier] {label_str} | "
+            f"N (streak count)={N} (≥{N_MIN}), L_med_norm={L_med_norm:.3f} (≥{L_MED_NORM_THR:.3f}), "
+            f"R*_w={R_star_w:.3f} (≥{RSTARW_THR:.3f}) | "
+            f"mask_fill={mask_fill:.3%} | "
+            f"conf={conf:.2f} | {reason_str}"
+        )
+
+        extras = []
+        extras.append(f"L_med_px≈{L_med_px:.1f}")
+        if phi_deg is not None:
+            extras.append(f"phi≈{float(phi_deg):.1f}°")
+        if used_proj is not None:
+            extras.append(f"proj={'Y' if used_proj else 'N'}")
+        if extras:
+            msg += " | " + ", ".join(extras)
+
+        # ✅ Always print to console
+        print(msg, flush=True)
+
+        # Log (optional)
+        if logger is None and hasattr(self, "log"):
+            logger = self.log
+        if logger is not None:
+            try:
+                logger.info(msg)
+            except Exception:
+                pass
+
+        return {
+            "label": label,
+            "N": N,
+            "R_star_w": R_star_w,
+            "L_med_norm": L_med_norm,
+            "L_med_major_px": L_med_px,
+            "mask_fill": mask_fill,
+            "phi_deg": phi_deg,
+            "used_projection": used_proj,
+            "reasons": fails,
+            "message": msg,
+        }
 
     def tetra3_solver(
             self,
@@ -353,7 +1200,7 @@ class Astrometry:
                 # timestamp_string = "2023-09-06 10:00:00"
                 timestamp_string = current_timestamp()
                 omega = (0.0, 0.0, 0.0)
-                display_overlay_info(contours_img, timestamp_string, astrometry, omega, scale_factors=scale_factors,
+                display_overlay_info(img, timestamp_string, astrometry, omega, scale_factors=scale_factors,
                                      resize_mode=resize_mode)
 
                 for key in curr_params.keys():
@@ -396,7 +1243,9 @@ class Astrometry:
                 return_partial_images=False,
                 dilate_mask_iterations=dilate_mask_iterations,
                 level_filter=level_filter,
-                ring_filter_type=ring_filter_type
+                ring_filter_type=ring_filter_type,
+                frame_tag = None,
+                export_centroids_mean_path = None,
             )
             set_RMSE.append(astrometry["RMSE"])
         curr_best_params["RMSE"] = sum(set_RMSE) / len(set_RMSE)
@@ -565,6 +1414,7 @@ class Astrometry:
                 - precomputed_star_centroids (np.ndarray): An array of computed centroids for detected sources.
                 - contours_img (np.ndarray): An image with drawn contours for detected sources.
         """
+        cleaned_img = None
 
         def get_params():
             return {
@@ -607,22 +1457,19 @@ class Astrometry:
             distortion_calibration_params = {}
         # read image in array format. From camera
         if is_array:
+            print(f"is_array = TRUE. Creating img_bgr.")
             # Scale the 16-bit values to 8-bit (0-255) range
             # The scale_factor = 2**14 - 1 = 16383.0
             scale_factor = float(2 ** self.cfg.pixel_well_depth) - 1
-            scaled_data = ((img / scale_factor) * 255).astype(np.uint8)
-            # scaled_data = img
-            # img = scaled_data
+            scaled_data = ((img / scale_factor) * 255).astype('uint8')
             # Create a BGR image
             img_bgr = cv2.merge([scaled_data, scaled_data, scaled_data])
-            # img_bgr = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
         # read image from file. For debugging using png/tif
         if not is_array:
-            print(f'Reading Image: {img}')
+            print(f"is_array = FALSE. converting to grayscale")
             # img_bgr = read_image_BGR(img)
             img = read_image_grayscale(img)
-
             img_bgr = cv2.merge([img, img, img])
 
         print_img_info(img)
@@ -638,10 +1485,10 @@ class Astrometry:
             cv2.imwrite(os.path.join(partial_results_path, "0 - Input Image-img.png"), img)
 
         # Source finder
-        print(f"--------Subtract background--------")
         # global background estimation
         total_exec_time = 0.0
         if subtract_global_bkg:
+            print(f"--------Subtract global background--------")
             global_cleaned_img, global_exec_time = timed_function(
                 global_background_estimation, img, sigma_clipped_sigma, return_partial_images, partial_results_path
             )
@@ -699,63 +1546,315 @@ class Astrometry:
                 #####
 
                 # source finder pipeline
-                (masked_image, sources_mask, sources_contours), source_finder_exec_time = timed_function(
-                    source_finder,
-                    img,
-                    log_file_path,
-                    leveling_filter_downscale_factor,
-                    fast,
-                    bkg_threshold,
-                    local_sigma_cell_size,
-                    src_kernal_size_x,
-                    src_kernal_size_y,
-                    src_sigma_x,
-                    src_dst,
-                    number_sources,
-                    min_size,
-                    max_size,
-                    dilate_mask_iterations,
-                    is_trail,
-                    return_partial_images,
-                    partial_results_path,
-                    level_filter,
-                    ring_filter_type
-                )
+                if False:  # THis is orig cal via timed_function wrapper
+                    (masked_image, sources_mask, sources_contours), source_finder_exec_time = timed_function(
+                        source_finder,
+                        img,
+                        log_file_path,
+                        leveling_filter_downscale_factor,
+                        fast,
+                        bkg_threshold,
+                        local_sigma_cell_size,
+                        src_kernal_size_x,
+                        src_kernal_size_y,
+                        src_sigma_x,
+                        src_dst,
+                        number_sources,
+                        min_size,
+                        max_size,
+                        dilate_mask_iterations,
+                        is_trail,
+                        return_partial_images,
+                        partial_results_path,
+                        level_filter,
+                        ring_filter_type
+                    )
+                else: # Direct call to show exception on source_finder
+                    source_finder_exec_time = time.monotonic()
+                    masked_image, sources_mask, sources_contours = source_finder(
+                        self.cfg,
+                        img,
+                        log_file_path,
+                        leveling_filter_downscale_factor,
+                        fast,
+                        bkg_threshold,
+                        local_sigma_cell_size,
+                        src_kernal_size_x,
+                        src_kernal_size_y,
+                        src_sigma_x,
+                        src_dst,
+                        number_sources,
+                        min_size,
+                        max_size,
+                        dilate_mask_iterations,
+                        is_trail,
+                        return_partial_images,
+                        partial_results_path,
+                        level_filter,
+                        ring_filter_type,
+                        # NEW: pass config
+                        noise_pair_sep_full=int(self.cfg.noise_pair_sep_full),
+                        simple_threshold_k=float(self.cfg.simple_threshold_k),
+                        hyst_k_high=float(self.cfg.hyst_k_high),
+                        hyst_k_low=float(self.cfg.hyst_k_low),
+                        hyst_min_area=int(self.cfg.hyst_min_area),
+                        hyst_close_kernel=int(self.cfg.hyst_close_kernel),
+                        hyst_sigma_gauss=float(self.cfg.hyst_sigma_gauss),
+                        merge_min_area=int(self.cfg.merge_min_area),
+                        merge_gap_along=int(self.cfg.merge_gap_along),
+                        merge_gap_cross=int(self.cfg.merge_gap_cross),
+                        merge_ang_tol=int(self.cfg.merge_ang_tol_deg),
+                    )
 
-                # Compute source centroids
-                # ast_is_trail = False in config.ini
-                if is_trail:
-                    # Highly experimental
+                    # TODO: Windell figure out the image naming (cleaned_img/masked_image)
+                    source_finder_exec_time = time.monotonic() - source_finder_exec_time
+######################
+                # --- Classify using EXISTING mask (no re-threshold) + allow override ---
+                print(f"--------Running classifier.--------")
+                mode = getattr(self.cfg, "ast_centroid_mode", "auto").strip().lower()
+
+                # in pueo_star_camera_operation_code.py after constructing Astrometry:
+
+                if mode == "auto":
+                    # ---- Build ellipse list from the mask (no merging here) ----
+                    mask_u8 = (sources_mask > 0).astype(np.uint8) * 255
+                    ell = self._fit_ellipses_from_mask(
+                        mask_u8,
+                        min_area=self.cfg.ellipse_min_area_px,
+                        min_major=self.cfg.ellipse_major_min_px,
+                    )
+                    print(f"[Classifier] contours={len(sources_contours)}  ell={len(ell)}")
+
+                    # ---- Classify frame as still vs streaked ----
+                    label, conf, M = self.classify_frame_still_biased(
+                        ell,
+                        ar_elong=self.cfg.ellipse_aspect_ratio_min,
+                        min_elong=self.cfg.min_elongated_count,
+                        min_L=self.cfg.min_median_major_px,
+                        min_R=self.cfg.min_orientation_coherence,
+                        min_frac=self.cfg.min_elongated_fraction,
+                        min_conf=self.cfg.min_confidence,
+                    )
+
+                    print(f"[Classifier] label={label}  conf={conf:.2f}  metrics={M}")
+                    print(f"label: {label}")
+
+                    is_trail = (label == "streaked")
+                    suggest_is_trail = (label == "streaked")
+                    mode_str = f"auto (classifier suggests is_trail = {suggest_is_trail})"
+                    print(f"[Astrometry] Centroid mode = {mode} → {mode_str}")
+
+                    # --- Estimate angular velocity from classifier ellipses (deg/s) ---
+                    if label == "streaked":
+                        try:
+                            plate_scale_arcsec_per_px = float(
+                                getattr(self.cfg, "plate_scale_arcsec_per_px", 0.0)
+                            )
+                            exposure_time_s = float(
+                                getattr(self.cfg, "exposure_time_s", 0.0)
+                            )
+
+                            if (
+                                    plate_scale_arcsec_per_px > 0.0
+                                    and exposure_time_s > 0.0
+                                    and len(ell) > 0
+                            ):
+                                omega_deg_s, diag_omega = self._estimate_omega_from_ellipses_plate_scale(
+                                    ell,
+                                    plate_scale_arcsec_per_px=plate_scale_arcsec_per_px,
+                                    exposure_time_s=exposure_time_s,
+                                    image_shape=img.shape[:2],
+                                    ar_min=float(self.cfg.ellipse_aspect_ratio_min),
+                                    L_min_px=float(self.cfg.min_median_major_px),
+                                    area_min_px=float(self.cfg.ellipse_min_area_px),
+                                )
+                                if omega_deg_s is not None:
+                                    wx_deg, wy_deg, wz_deg = omega_deg_s
+                                    w_mag = float((wx_deg ** 2 + wy_deg ** 2 + wz_deg ** 2) ** 0.5)
+                                    print(
+                                        f"\n[Trail Omega] (Auto mode) "
+                                        f"plate_scale={plate_scale_arcsec_per_px:.6f} arcsec/px, "
+                                        f"texp={exposure_time_s:.4f} s, "
+                                        f"wx={wx_deg:.4f} deg/s, "
+                                        f"wy={wy_deg:.4f} deg/s, "
+                                        f"wz={wz_deg:.4f} deg/s, "
+                                        f"N={diag_omega.get('N_used', 0)}, "
+                                        f"rms={diag_omega.get('resid_rms_deg_s', float('nan')):.4g} deg/s "
+                                        f"w_mag_deg_s : {w_mag:.4f}\n"
+                                    )
+                                    with open(log_file_path, "a") as file:
+                                        file.write(f"\n[Trail Omega] (Auto mode)\n")
+                                        file.write(f"plate_scale={plate_scale_arcsec_per_px:.6f} arcsec/px\n")
+                                        file.write(f"texp={exposure_time_s:.3f} s\n")
+                                        file.write(f"wx={wx_deg:.4f} deg/s\n")
+                                        file.write(f"wy={wy_deg:.4f} deg/s\n")
+                                        file.write(f"wz={wz_deg:.4f} deg/s\n")
+                                        file.write(f"N={diag_omega.get('N_used', 0)}\n")
+                                        file.write(f"rms={diag_omega.get('resid_rms_deg_s', float('nan')):.4g} deg/s\n")
+                                        file.write(f"w_mag_deg_s : {w_mag:.4f}\n")
+                                else:
+                                    print(
+                                        "[Trail Omega] Not enough valid ellipses to solve for angular velocity"
+                                    )
+                            else:
+                                print(
+                                    "[Trail Omega] Skipped: plate_scale_arcsec_per_px or exposure_time_s "
+                                    "not set (>0) in cfg or no ellipses"
+                                )
+                        except Exception as e:
+                            print(f"[Trail Omega] ERROR estimating angular velocity: {e}")
+
+                    # ---- Choose centroid path based on classifier ----
+                    if suggest_is_trail:
+                        (precomputed_star_centroids, contours_img), centroids_exec_time = timed_function(
+                            self._trail_ellipse_adapter,
+                            masked_image=masked_image,
+                            sources_mask=sources_mask,
+                            original_image=img_bgr,
+                            min_area_px=int(self.cfg.ellipse_min_area_px),
+                            aspect_ratio_min=float(self.cfg.ellipse_aspect_ratio_min),
+                            use_uniform_length=bool(self.cfg.ellipse_use_uniform_length),
+                            uniform_length_mode=str(self.cfg.ellipse_uniform_length_mode),
+                            return_partial_images=return_partial_images,
+                            partial_results_path=partial_results_path,
+                        )
+                    else:
+                        (precomputed_star_centroids, contours_img), centroids_exec_time = timed_function(
+                            compute_centroids_from_still,
+                            masked_image=masked_image,
+                            sources_contours=sources_contours,
+                            img=img_bgr,
+                            log_file_path=log_file_path,
+                            return_partial_images=return_partial_images,
+                            partial_results_path=partial_results_path,
+                        )
+                elif mode == "trail":
+                    # NO classifier, NO metrics printing outside auto
+                    suggest_is_trail = True
+                    mode_str = "override to trail mode"
+                    print(f"[Astrometry] Centroid mode = {mode} → {mode_str}")
+                    # --- Estimate angular velocity from ellipses (forced trail mode) ---
+                    try:
+                        # Build ellipse list from the current mask (same as auto branch)
+                        mask_u8 = (sources_mask > 0).astype(np.uint8) * 255
+                        ell = self._fit_ellipses_from_mask(
+                            mask_u8,
+                            min_area=int(self.cfg.ellipse_min_area_px),
+                            min_major=int(self.cfg.ellipse_major_min_px),
+                        )
+                        plate_scale_arcsec_per_px = float(
+                            getattr(self.cfg, "plate_scale_arcsec_per_px", 0.0)
+                        )
+                        exposure_time_s = float(
+                            getattr(self.cfg, "exposure_time_s", 0.0)
+                        )
+                        if (
+                                plate_scale_arcsec_per_px > 0.0
+                                and exposure_time_s > 0.0
+                                and len(ell) > 0
+                        ):
+                            omega_deg_s, diag_omega = self._estimate_omega_from_ellipses_plate_scale(
+                                ell,
+                                plate_scale_arcsec_per_px=plate_scale_arcsec_per_px,
+                                exposure_time_s=exposure_time_s,
+                                image_shape=img_bgr.shape[:2],
+                                ar_min=float(self.cfg.ellipse_aspect_ratio_min),
+                                L_min_px=float(self.cfg.min_median_major_px),
+                                area_min_px=float(self.cfg.ellipse_min_area_px),
+                            )
+                            if omega_deg_s is not None:
+                                wx_deg, wy_deg, wz_deg = omega_deg_s
+                                w_mag = float((wx_deg ** 2 + wy_deg ** 2 + wz_deg ** 2) ** 0.5)
+                                print(
+                                    f"[Trail Omega] (forced mode) "
+                                    f"plate_scale={plate_scale_arcsec_per_px:.6f} arcsec/px, "
+                                    f"texp={exposure_time_s:.4f} s, "
+                                    f"wx={wx_deg:.4f} deg/s, "
+                                    f"wy={wy_deg:.4f} deg/s, "
+                                    f"wz={wz_deg:.4f} deg/s, "
+                                    f"N={diag_omega.get('N_used', 0)}, "
+                                    f"rms={diag_omega.get('resid_rms_deg_s', float('nan')):.4g} deg/s "
+                                    f"w_mag_deg_s : {w_mag:.4f}\n"
+                                )
+                                with open(log_file_path, "a") as file:
+                                    file.write(f"\n[Trail Omega] (forced mode)\n")
+                                    file.write(f"plate_scale={plate_scale_arcsec_per_px:.6f} arcsec/px\n")
+                                    file.write(f"texp={exposure_time_s:.3f} s\n")
+                                    file.write(f"wx={wx_deg:.4f} deg/s\n")
+                                    file.write(f"wy={wy_deg:.4f} deg/s\n")
+                                    file.write(f"wz={wz_deg:.4f} deg/s\n")
+                                    file.write(f"N={diag_omega.get('N_used', 0)}\n")
+                                    file.write(f"rms={diag_omega.get('resid_rms_deg_s', float('nan')):.4g} deg/s\n")
+                                    file.write(f"w_mag_deg_s : {w_mag:.4f}\n")
+                            else:
+                                print(
+                                    "[Trail Omega] (forced mode) "
+                                    "Not enough valid ellipses to solve for angular velocity"
+                                )
+                        else:
+                            print(
+                                "[Trail Omega] (forced mode) skipped: "
+                                "missing plate_scale_arcsec_per_px/exposure_time_s or no ellipses"
+                            )
+                    except Exception as e:
+                        print(f"[Trail Omega] (forced mode) ERROR estimating angular velocity: {e}")
                     (precomputed_star_centroids, contours_img), centroids_exec_time = timed_function(
-                        compute_centroids_from_trail,
-                        masked_image,
-                        sources_mask,
-                        img=img_bgr,
-                        log_file_path=log_file_path,
+                        self._trail_ellipse_adapter,
+                        masked_image=masked_image,
+                        sources_mask=sources_mask,
+                        original_image=img_bgr,
+                        min_area_px=int(self.cfg.ellipse_min_area_px),
+                        aspect_ratio_min=float(self.cfg.ellipse_aspect_ratio_min),
+                        use_uniform_length=bool(self.cfg.ellipse_use_uniform_length),
+                        uniform_length_mode=str(self.cfg.ellipse_uniform_length_mode),
                         return_partial_images=return_partial_images,
                         partial_results_path=partial_results_path,
                     )
-                else:
-                    # Will be using this
+                elif mode == "still":
+                    # NO classifier, NO metrics printing outside auto
+                    suggest_is_trail = False
+                    mode_str = "override to still mode"
+                    print(f"[Astrometry] Centroid mode = {mode} → {mode_str}")
                     (precomputed_star_centroids, contours_img), centroids_exec_time = timed_function(
                         compute_centroids_from_still,
-                        masked_image,
-                        sources_contours,
+                        masked_image=masked_image,
+                        sources_contours=sources_contours,
                         img=img_bgr,
                         log_file_path=log_file_path,
                         return_partial_images=return_partial_images,
                         partial_results_path=partial_results_path,
                     )
+
+                else:
+                    # Unknown → behave like still; NO classifier or metrics printing
+                    suggest_is_trail = False
+                    mode_str = f"unknown '{mode}' → defaulting to still"
+                    print(f"[Astrometry] Centroid mode = {mode} → {mode_str}")
+
+                    (precomputed_star_centroids, contours_img), centroids_exec_time = timed_function(
+                        compute_centroids_from_still,
+                        masked_image=masked_image,
+                        sources_contours=sources_contours,
+                        img=img_bgr,
+                        log_file_path=log_file_path,
+                        return_partial_images=return_partial_images,
+                        partial_results_path=partial_results_path,
+                    )
+
                 total_exec_time += (
                         float(source_finder_exec_time)
                         + float(centroids_exec_time)
                 )
 
-                # Save centroids
-
         if self.solver == 'solver2':
             solver2_t0 = time.monotonic()
+            # The contours_img does NOT exist in solver2 path therefor we just copy orig image as contours_img
             contours_img = img_bgr
+
+            # TODO: Windell code DOES NOT WORK!!!
+            # if contours_img is None or not isinstance(contours_img, np.ndarray):
+            #     contours_img = img_bgr
+
             self.cedar.tetra3_solver = self.tetra3_solver
             self.cedar.solver_name = self.solver_name
             self.cedar.test = self.test
@@ -811,7 +1910,7 @@ class Astrometry:
                         output_dir=self.cfg.partial_results_path  # "./astrometry_results"
                     )
 
-                    cprint(f"Processing successful: {astrometry['success']}, color='green")
+                    cprint(f"Processing successful: {astrometry['success']}")
                     if astrometry['success']:
                         self.log.debug("Solution files created:")
                         for name, path in astrometry['solution_files'].items():
@@ -821,6 +1920,7 @@ class Astrometry:
                     print(f"Stack trace:\n{traceback.format_exc()}")
                     self.log.error(f"Error processing centroids: {e}")
                     self.log.error(f"Stack trace:\n{traceback.format_exc()}")
+                print("Done with solver3!")
             else:
                 pass
 
@@ -958,7 +2058,7 @@ class Astrometry:
         omega = (0.0, 0.0, 0.0)
         # display_overlay_info(img, timestamp_string, astrometry, omega, display=True, image_filename=None, downscale_factors=(8, 8)):
         display_overlay_info(
-            contours_img,
+            img,
             timestamp_string,
             astrometry,
             omega,

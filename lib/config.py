@@ -75,6 +75,8 @@ class Config(Dynamic):
     # microseconds
     # 100000 = 109ms
     lab_best_exposure = 100000
+    exposure_time_s = lab_best_exposure/1e6
+
     autofocus_max_deviation = 0.1
     focus_tolerance_percentage = 2.5 # Percentage
 
@@ -95,6 +97,7 @@ class Config(Dynamic):
     delta_gain = 5
 
     # [CAMERA]
+    autogain_mode = "hardware" # Added new, setting default!
     asi_gama = 50
     asi_exposure = 9000
     asi_gain = 100
@@ -107,6 +110,8 @@ class Config(Dynamic):
     camera_id_vendor = 0x03c3
     camera_id_product = 0x294a
     pixel_well_depth = 14
+    plate_scale_arcsec_per_px = 9.4
+
 
     sbc_dio_camera_pin = 4
     sbc_dio_focuser_pin = 5
@@ -121,7 +126,7 @@ class Config(Dynamic):
 
     # [SOURCES]
     # img_bkg_threshold = 3.1
-    img_bkg_threshold = 8.0
+    img_bkg_threshold = 6.0
     img_number_sources = 40
     img_min_size = 20
     img_max_size = 600
@@ -160,12 +165,12 @@ class Config(Dynamic):
     # [ASTROMETRY]
     ast_t3_database = 'data/default_database.npz'
     ast_is_array = True
-    ast_is_trail = False
+    ast_centroid_mode = "auto"
     ast_use_photoutils = False
     ast_subtract_global_bkg = False
     ast_fast = False
     # ast_bkg_threshold = 3.1
-    ast_bkg_threshold = 8.0
+    ast_bkg_threshold = 6.0
     ast_number_sources = 20
     ast_min_size = 4
     ast_max_size = 200
@@ -255,6 +260,46 @@ class Config(Dynamic):
     run_chamber = False
     run_test = False
 
+    # ===== Defaults for THRESHOLDING (hyst_*), ELLIPSE_FILTERS, MERGE_MASK =====
+    # --- THRESHOLDING (canonical hyst_* names) ---
+    hyst_k_high = 8.0
+    hyst_k_low = 7.0
+    hyst_min_area = 10
+    hyst_close_kernel = 3
+    hyst_sigma_floor = 1e-6
+    hyst_sigma_gauss = 0.0
+    simple_threshold_k = 8.0  # not "hyst_*" but used with this block
+
+    # --- TRAIL_DETECTION ---
+    ellipse_min_area_px = 10
+    ellipse_major_min_px = 12
+    ellipse_aspect_ratio_min = 1.70
+    min_elongated_count = 5
+    min_median_major_px = 12
+    min_orientation_coherence = 0.60
+    min_elongated_fraction = 0.60
+    min_confidence = 0.60
+    ellipse_use_uniform_length = True
+    ellipse_uniform_length_mode = 'median'
+
+    # --- MERGE_MASK ---
+    merge_min_area = 10
+    merge_gap_along = 20
+    merge_gap_cross = 3
+    merge_ang_tol_deg = 15.0
+
+    # --- Noise Estimation ---
+    noise_pair_sep_full = 5
+
+    # --- Visualization / Debugging ---
+    partial_flux_min_val = 0
+    partial_flux_max_val = 65535
+    still_radius_divisor = 50
+
+    # --- STILL / SOURCE FILTERING DEFAULTS ---
+    still_compactness_min = 0.45
+    still_axial_ratio_max = 1.8
+
     # [PATHS]
     auto_gain_image_path_tmpl = r'/home/windell/PycharmProjects/version_5/{timestamp_string}_auto_gain_exposure_images/'
     focus_image_path_tmpl = r'/home/windell/PycharmProjects/version_5/{timestamp_string}_coarse_focus_images/'
@@ -302,6 +347,27 @@ class Config(Dynamic):
 
 
     # Member functions
+    def _get_tristate_boolean(self, cfg, section, option, *, fallback=None):
+        """
+        Parse a config value that may be true/false/auto/none.
+        Returns True, False, or None.
+        """
+        raw = cfg.get(section, option, fallback=None)
+        if raw is None:
+            return fallback
+        # strip inline comments
+        import re
+        raw = re.split(r'[;#]', str(raw), 1)[0]
+        s = raw.strip().lower()
+
+        if s in ("1", "true", "yes", "on"):
+            return True
+        if s in ("0", "false", "no", "off"):
+            return False
+        if s in ("auto", "none", "null", ""):
+            return None
+        raise ValueError(f"Invalid tri-state boolean for {section}.{option}: {raw}")
+
     def __init__(self, config_file="conf/config.ini", dynamic_file="conf/dynamic.ini"):
         """
         Reads configuration values from a specified file.
@@ -420,6 +486,12 @@ class Config(Dynamic):
         self.lens_focus_homed = self._config.getboolean('LENS_FOCUS_CONSTANTS', 'lens_focus_homed',
                                                        fallback=self.lens_focus_homed)
         self.exposure_time = self._config.getint('LENS_FOCUS_CONSTANTS', 'exposure_time', fallback=self.exposure_time)
+        # Derived: exposure time in seconds for angular-velocity estimation
+        try:
+            self.exposure_time_s = float(self.exposure_time) / 1e6
+        except Exception:
+            self.exposure_time_s = 0.0
+
         self.pixel_bias = self._config.getint('LENS_FOCUS_CONSTANTS', 'pixel_bias', fallback=self.pixel_bias)
 
         env_filename = self._config.get('LENS_FOCUS_CONSTANTS', 'env_filename', fallback=self.env_filename)
@@ -482,6 +554,7 @@ class Config(Dynamic):
         self.delta_gain = self._config.getint('LENS_FOCUS_CONSTANTS', 'delta_gain', fallback=self.delta_gain)
 
         # [CAMERA] section
+        self.autogain_mode = self._config.get('CAMERA', 'autogain_mode', fallback=self.autogain_mode)
         self.asi_gama = self._config.getint('CAMERA', 'asi_gama', fallback=self.asi_gama)
         self.asi_exposure = self._config.getint('CAMERA', 'asi_exposure', fallback=self.asi_exposure)
         self.asi_gain = self._config.getint('CAMERA', 'asi_gain', fallback=self.asi_gain)
@@ -498,7 +571,7 @@ class Config(Dynamic):
         camera_id_product_hex = self._config.get('CAMERA', 'camera_id_product', fallback=hex(self.camera_id_product))
         self.camera_id_product = int(camera_id_product_hex, 16)
         self.pixel_well_depth = self._config.getint('CAMERA', 'pixel_well_depth', fallback=self.pixel_well_depth)
-
+        self.plate_scale_arcsec_per_px = self._config.getfloat('CAMERA', 'plate_scale_arcsec_per_px', fallback=self.plate_scale_arcsec_per_px)
         self.sbc_dio_camera_pin = self._config.getint('CAMERA', 'sbc_dio_camera_pin', fallback=self.sbc_dio_camera_pin)
         self.sbc_dio_focuser_pin = self._config.getint('CAMERA', 'sbc_dio_focuser_pin',
                                                       fallback=self.sbc_dio_focuser_pin)
@@ -562,7 +635,7 @@ class Config(Dynamic):
         # [ASTROMETRY]
         self.ast_t3_database = self._config.get('ASTROMETRY', 'ast_t3_database', fallback=self.ast_t3_database)
         self.ast_is_array = self._config.getboolean('ASTROMETRY', 'ast_is_array', fallback=self.ast_is_array)
-        self.ast_is_trail = self._config.getboolean('ASTROMETRY', 'ast_is_trail', fallback=self.ast_is_trail)
+        self.ast_centroid_mode = self._config.get('ASTROMETRY', 'ast_centroid_mode', fallback=self.ast_centroid_mode)
         self.ast_use_photoutils = self._config.getboolean('ASTROMETRY', 'ast_use_photoutils',
                                                          fallback=self.ast_use_photoutils)
         self.ast_subtract_global_bkg = self._config.getboolean('ASTROMETRY', 'ast_subtract_global_bkg',
@@ -622,6 +695,59 @@ class Config(Dynamic):
         self.an_new_fits = self._config.getboolean('ASTROMETRY.NET', 'new_fits', fallback=self.an_new_fits)
         self.an_match = self._config.getboolean('ASTROMETRY.NET', 'match', fallback=self.an_match)
         self.an_solved = self._config.getboolean('ASTROMETRY.NET', 'solved', fallback=self.an_solved)
+
+        # MERGE_MASK
+        self.merge_min_area = self._config.getint('MERGE_MASK', 'merge_min_area', fallback=self.merge_min_area)
+        self.merge_gap_along = self._config.getint('MERGE_MASK', 'merge_gap_along', fallback=self.merge_gap_along)
+        self.merge_gap_cross = self._config.getint('MERGE_MASK', 'merge_gap_cross', fallback=self.merge_gap_cross)
+        self.merge_ang_tol_deg = self._config.getint('MERGE_MASK', 'merge_ang_tol_deg', fallback=self.merge_ang_tol_deg)
+
+        # STILL_FILTERS
+        self.still_compactness_min = self._config.getfloat('STILL_FILTERS', 'still_compactness_min',
+                                                           fallback=self.still_compactness_min)
+        self.still_axial_ratio_max = self._config.getfloat('STILL_FILTERS', 'still_axial_ratio_max',
+                                                           fallback=self.still_axial_ratio_max)
+
+        # NOISE_ESTIMATION
+        self.noise_pair_sep_full = self._config.getint('NOISE_ESTIMATION', 'noise_pair_sep_full',
+                                                       fallback=self.noise_pair_sep_full)
+
+        # THRESHOLDING (canonical hyst_* variables)
+        self.hyst_k_high = self._config.getfloat('THRESHOLDING', 'hyst_k_high', fallback=self.hyst_k_high)
+        self.hyst_k_low = self._config.getfloat('THRESHOLDING', 'hyst_k_low', fallback=self.hyst_k_low)
+        self.hyst_min_area = self._config.getint('THRESHOLDING', 'hyst_min_area', fallback=self.hyst_min_area)
+        self.hyst_close_kernel = self._config.getint('THRESHOLDING', 'hyst_close_kernel',
+                                                     fallback=self.hyst_close_kernel)
+        self.hyst_sigma_floor = self._config.getfloat('THRESHOLDING', 'hyst_sigma_floor',
+                                                      fallback=getattr(self, 'hyst_sigma_floor', 1e-6))
+        self.hyst_sigma_gauss = self._config.getfloat('THRESHOLDING', 'hyst_sigma_gauss',
+                                                      fallback=self.hyst_sigma_gauss)
+        self.simple_threshold_k = self._config.getfloat('THRESHOLDING', 'simple_threshold_k',
+                                                        fallback=self.simple_threshold_k)
+
+        # TRAIL_DETECTION
+        self.ellipse_min_area_px = self._config.getint('TRAIL_DETECTION', 'ellipse_min_area_px',
+                                                       fallback=self.ellipse_min_area_px)
+        self.ellipse_aspect_ratio_min = self._config.getfloat('TRAIL_DETECTION', 'ellipse_aspect_ratio_min',
+                                                              fallback=self.ellipse_aspect_ratio_min)
+        self.ellipse_major_min_px = self._config.getint('TRAIL_DETECTION', 'ellipse_major_min_px',
+                                                       fallback=self.ellipse_major_min_px)
+        self.min_elongated_count  = self._config.getint('TRAIL_DETECTION', 'min_elongated_count ',
+                                                              fallback=self.min_elongated_count )
+        self.min_median_major_px = self._config.getint('TRAIL_DETECTION', 'min_median_major_px',
+                                                       fallback=self.min_median_major_px)
+        self.min_orientation_coherence = self._config.getfloat('TRAIL_DETECTION', 'min_orientation_coherence',
+                                                              fallback=self.min_orientation_coherence)
+        self.min_elongated_fraction  = self._config.getfloat('TRAIL_DETECTION', 'min_elongated_fraction',
+                                                       fallback=self.min_elongated_fraction )
+        self.min_confidence = self._config.getfloat('TRAIL_DETECTION', 'min_confidence',
+                                                              fallback=self.min_confidence)
+        self.ellipse_use_uniform_length = self._config.getboolean('TRAIL_DETECTION', 'ellipse_use_uniform_length',
+                                                    fallback=self.ellipse_use_uniform_length)
+        self.ellipse_uniform_length_mode = (
+            self._config.get('TRAIL_DETECTION', 'ellipse_uniform_length_mode', fallback=self.ellipse_uniform_length_mode).strip().lower()
+        )
+
 
         # [IMAGES]
         self.png_compression = self._config.getint('IMAGES', 'png_compression', fallback=self.png_compression)
@@ -792,6 +918,7 @@ class Config(Dynamic):
             'camera_id_vendor': hex(self.camera_id_vendor),
             'camera_id_product': hex(self.camera_id_product),
             'pixel_well_depth': self.pixel_well_depth,
+            'plate_scale_arcsec_per_px': self.plate_scale_arcsec_per_px,
             'sbc_dio_camera_pin': self.sbc_dio_camera_pin,
             'sbc_dio_focuser_pin': self.sbc_dio_focuser_pin,
             'sbc_dio_default': self.sbc_dio_default,
@@ -839,6 +966,7 @@ class Config(Dynamic):
             'ast_t3_database': self.ast_t3_database,
             'ast_is_array': self.ast_is_array,
             'ast_is_trail': self.ast_is_trail,
+            'ast_centroid_mode': self.ast_centroid_mode,
             'ast_use_photoutils': self.ast_use_photoutils,
             'ast_subtract_global_bkg': self.ast_subtract_global_bkg,
             'ast_fast': self.ast_fast,

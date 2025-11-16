@@ -3,9 +3,11 @@ import time
 import logging
 import os
 import datetime
+from datetime import timezone
 from pathlib import Path
 from typing import Union, List, Tuple
 from contextlib import suppress
+from typing import Optional
 
 # External imports
 from astropy.io import fits
@@ -19,6 +21,29 @@ from lib.common import get_dt, current_timestamp
 
 # Initialize logging
 log = logging.getLogger('pueo')
+
+
+def get_current_utc_timestamp() -> Tuple[datetime.datetime, datetime.datetime, float]:
+    """
+    Retrieves the current Coordinated Universal Time (UTC) as a Unix timestamp (seconds since epoch).
+
+    The function ensures the resulting datetime object is explicitly set to UTC
+    before converting it to a timestamp, guaranteeing accuracy regardless of
+    the system's local timezone settings.
+
+    Returns:
+        float: The current UTC timestamp (seconds since 1970-01-01 00:00:00 UTC).
+    """
+    # Get the current time, automatically set to the system's timezone.
+    dt = datetime.datetime.now(timezone.utc)
+
+    # 🌟 Refinement: Ensure the timezone is explicitly set to UTC before getting the timestamp.
+    # While datetime.datetime.now(timezone.utc) already returns a timezone-aware object,
+    # this pattern is robust and often necessary for older or complex datetime creation paths.
+    utc_time = dt.replace(tzinfo=timezone.utc)
+
+    curr_utc_timestamp = utc_time.timestamp()
+    return dt, utc_time, curr_utc_timestamp
 
 
 def timed_function(func, *args, **kwargs):
@@ -377,6 +402,7 @@ def print_img_info(img, msg='img'):
     return
     print(f'  Image size: {msg} {img.shape[0]}x{img.shape[1]} {img.dtype} {img.size} ndim: {img.ndim}')
 
+
 def convert_to_3d(img):
     """
     Converts a 2D grayscale image into a 3D image with three identical channels (e.g., RGB/BGR).
@@ -392,6 +418,7 @@ def convert_to_3d(img):
     else:
         # The image is already 3D
         return img
+
 
 def image_downscale_orig(img, downscale_factors, image_filename, overlay=None, downscale_mode = 'resize'):
     t0 = time.monotonic()
@@ -469,12 +496,26 @@ def save_as_jpeg_with_stretch(img_16bit, jpeg_path, quality=80, lower_percentile
         upper_percentile (float): Upper percentile for stretching (e.g., 99%).
     """
     # Calculate percentiles to ignore outliers (e.g., hot pixels)
-    low_val = np.percentile(img_16bit, lower_percentile)
-    high_val = np.percentile(img_16bit, upper_percentile)
+    low_val = float(np.nanpercentile(img_16bit, lower_percentile))
+    high_val = float(np.nanpercentile(img_16bit, upper_percentile))
 
-    # Stretch contrast to [0, 255] and convert to 8-bit
-    img_stretched = np.clip((img_16bit - low_val) * (255.0 / (high_val - low_val)), 0, 255)
-    img_8bit = img_stretched.astype(np.uint8)
+    # Guard against collapsed or NaN range
+    img = img_16bit.astype(np.float32, copy=False)
+    den = high_val - low_val
+    if not np.isfinite(den) or den <= 0.0:
+        # Fallback: robust median±3*MAD window
+        med = float(np.nanmedian(img))
+        mad = float(np.nanmedian(np.abs(img - med)))
+        lo, hi = med - 3.0 * mad, med + 3.0 * mad
+        den2 = hi - lo
+        if not np.isfinite(den2) or den2 <= 0.0:
+            img_8bit = np.zeros(img.shape, np.uint8)
+        else:
+            img_stretched = np.clip((img - lo) * (255.0 / den2), 0, 255)
+            img_8bit = img_stretched.astype(np.uint8)
+    else:
+        img_stretched = np.clip((img - low_val) * (255.0 / den), 0, 255)
+        img_8bit = img_stretched.astype(np.uint8)
 
     # Save as JPEG into .temp file then renaming to target filename
 
@@ -488,6 +529,7 @@ def save_as_jpeg_with_stretch(img_16bit, jpeg_path, quality=80, lower_percentile
     with suppress(OSError):
         os.rename(temp_path, jpeg_path)
 
+
 def save_as_jp2(image, jp2path, compression_x1000=1000):
     # Define compression parameters for JPEG 2000
     compression_params = [
@@ -499,6 +541,7 @@ def save_as_jp2(image, jp2path, compression_x1000=1000):
     success = cv2.imwrite(jp2path, image, compression_params)
     if not success:
         raise ValueError("Failed to write the image. Check compression parameters or OpenCV backend.")
+
 
 def create_symlink(path, filename, symlink_name='last_inspection_image.jpg', use_relative_path=True):
     """
@@ -743,6 +786,7 @@ def image_resize(img, scale_factors, image_filename, overlay=None, resize_mode='
 
     return resized_img.shape
 
+
 def save_raws(img, ssd_path="", sd_card_path="", image_name="",
               scale_factors=(16, 16), resize_mode='downscale',
               raw_scale_factors=(8,8),  raw_resize_mode='downscale',
@@ -806,6 +850,63 @@ def split_path(filename: str) -> tuple:
     path, filename = os.path.split(filename)
     filename, extension = os.path.splitext(filename)
     return path, filename, extension
+
+
+def delete_files(*file_paths_input: Union[str, List[Optional[str]]]) -> int:
+    """
+    Processes a variable number of arguments (files) or a single list argument
+    containing paths/None, and attempts to delete each one.
+
+    Logs successful deletions using log.debug. Logs failures using log.error.
+
+    Args:
+        *file_paths_input: A variable number of arguments. Can be single strings
+                           (paths) or a single list containing paths/None.
+
+    Returns:
+        int: The count of files that were successfully deleted.
+    """
+    successful_deletions = 0
+    paths_to_process: List[Optional[str]] = []
+
+    # 1. Normalize input: Consolidate all arguments into a single list of strings/None
+    if len(file_paths_input) == 1 and isinstance(file_paths_input[0], list):
+        # Case 1: Called with a single list argument (e.g., delete_files(file_list))
+        paths_to_process = file_paths_input[0]
+    else:
+        # Case 2: Called with multiple positional arguments (e.g., delete_files(f1, f2, f3))
+        # *file_paths_input is a tuple of the arguments; we convert it to a list.
+        paths_to_process = list(file_paths_input)
+
+    # 2. Iterate and delete
+    for file_path in paths_to_process:
+        # Cast item to str or handle None explicitly to ensure robustness
+        if file_path is None:
+            continue
+
+        # Ensure the item is treated as a string path
+        file_path_str = str(file_path)
+
+        # Use pathlib for robust and platform-independent path handling
+        file_to_delete = Path(file_path_str)
+
+        if not file_to_delete.exists():
+            continue
+
+        try:
+            if file_to_delete.is_file():
+                os.remove(file_to_delete)
+                log.debug(f"Successfully deleted file: '{file_path_str}'")
+                successful_deletions += 1
+            else:
+                log.error(f"Cannot delete: '{file_path_str}' is a directory, not a file.")
+
+        except PermissionError:
+            log.error(f"Permission denied: Cannot delete file '{file_path_str}'.")
+        except OSError as e:
+            log.error(f"An OS error occurred while deleting '{file_path_str}': {e}")
+
+    return successful_deletions
 
 if __name__ == '__main__':
     ts_orig = '250106_094041.794214'

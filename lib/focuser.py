@@ -2,6 +2,10 @@
 import logging
 import serial
 import time
+from typing import List
+from contextlib import suppress
+
+import numpy as np
 
 from lib.star_comm_bridge import DummyPueoServer
 from lib.common import logit, get_dt
@@ -143,34 +147,80 @@ class Focuser:
 
         return response
 
-    def generate_f_stops(self, f_min: str, num_stops: int, f_max: str):
+    def generate_f_stops(self, f_min: str, num_stops: int, f_max: str,
+                                     round_to_int: bool = True,
+                                     rounding_bias_epsilon: float = 0.4) -> List[str]:
         """
-        Generates a list of f-stops based on the minimum f-stop,
-        the number of stops, and the assumption that each stop is a
-        1/4 step between the minimum and maximum.
+        Generates a sequence of f-stops (positions) based on the logarithmic scale
+        used by cameras, spanning from f_min to f_max, using NumPy, and applies
+        an optional rounding bias to match non-standard hardware behavior.
 
         Args:
-            f_min (str): The minimum f-stop value as a string (e.g., "f14").
-            num_stops (int): The total number of stops in the series.
+            f_min (str): The minimum f-stop value as a string (e.g., "f28").
+            num_stops (int): The total number of logarithmic steps (intervals)
+                             between f_min and f_max (e.g., 28).
+            f_max (str): The maximum f-stop value as a string (e.g., "f320").
+            round_to_int (bool, optional): If True (default), f-stop values are
+                rounded to the nearest integer. If False, professional decimal
+                standards are used.
+            rounding_bias_epsilon (float, optional): A small value subtracted from
+                the calculated f-number before rounding to bias the result toward
+                the lower integer. Default is 0.4 (empirically chosen to shift the
+                rounding threshold). Set to 0.0 to omit the effect.
 
         Returns:
-            list: A list of f-stop values as strings (e.g., ["f14.0", "f14.25", ..., "f160.0"]).
-                  Returns an empty list if the input f_min_str is not in the expected format.
+            List[str]: A list of f-stop values as professionally formatted strings
+                       (total length = num_stops + 1).
         """
-        try:
-            f_min = float(f_min.replace("f", ""))
-            f_max = float(f_max.replace("f", ""))
-        except ValueError:
-            print(f"Error: Invalid f_min_str format: '{f_min}'. Expected 'f' followed by a number.")
+        if num_stops < 0:
             return []
 
-        f_stops = []
-        step_size = (f_max - f_min) / (num_stops - 1) if num_stops > 1 else 0
+        try:
+            f_min_val = float(f_min.replace("f", ""))
+            f_max_val = float(f_max.replace("f", ""))
+        except ValueError:
+            self.log.error(f"Error: Invalid f-stop format in f_min ('{f_min}') or f_max ('{f_max}').")
+            return []
 
-        for i in range(num_stops):
-            f_value = f_min + i * step_size
-            f_value_str = f"f{f_value:.0f}" if f_value*100 == int(f_value)*100 else f"f{f_value:.2f}"
-            f_stops.append(f_value_str)  # Format to two decimal places for clarity
+        # 1. Determine the total number of FULL stops
+        # 2 * log2(f_max / f_min)
+        total_full_stops = 2 * np.log2(f_max_val / f_min_val)
+
+        # 2. Determine the step multiplier
+        log_increment = total_full_stops / num_stops if num_stops > 0 else 0
+
+        f_stops = []
+        for i in range(num_stops + 1):
+            if i == 0:
+                f_value = f_min_val
+            else:
+                # Calculate the f-number at position i
+                exponent = (i * log_increment) / 2
+                f_value = f_min_val * (np.power(2, exponent))
+
+            # 3. Apply Bias and Rounding
+            # Subtract the bias (epsilon) to shift the number toward the lower integer.
+            # E.g., 30.6 - 0.4 = 30.2. Round(30.2) = 30.
+            f_value_biased = f_value - rounding_bias_epsilon
+
+            if round_to_int:
+                # Always round the biased value to the nearest integer
+                f_value_final = round(f_value_biased)
+                f_value_str = f"f{f_value_final:.0f}"
+            else:
+                # When not forcing int rounding, the bias is typically not wanted,
+                # but we must use it if the user specified it for fine-tuning.
+
+                # Check if the biased value is close enough to a whole number for professional formatting
+                if abs(f_value_biased - round(f_value_biased)) < 0.01:
+                    f_value_final = round(f_value_biased)
+                    f_value_str = f"f{f_value_final:.0f}"
+                else:
+                    # If not near a whole number, use one decimal place on the UNBIASED value
+                    # for accurate display of fractional stops.
+                    f_value_str = f"f{f_value:.1f}"
+
+            f_stops.append(f_value_str)
 
         return f_stops
 
@@ -198,7 +248,10 @@ class Focuser:
             # define aperture: -> fmin,num_stops,fmax
         cmd = 'da' + '\r'
         self.ser.write(cmd.encode('ascii'))
-        out = self.ser.readline()  # b'da\rOK\rf14,28,f160\r'
+        out = self.ser.readline()
+        # erin: b'da\rOK\rf14,28,f160\r'
+        # erintest: ['da', 'OK', 'f28,32,f452', '']
+
         parts = out.decode('ascii').split('\r')
         logit(f"Focuser DA (Define Aperture): {parts}", color='magenta')
         self.f_min, self.num_stops, self.f_max, *_ = parts[2].split(',')
@@ -206,7 +259,9 @@ class Focuser:
         # curr_focus_pos = int(parts[-2])
         self.num_stops = int(self.num_stops)
         logit(f'  f_min: {self.f_min} num_stops: {self.num_stops} f_max: {self.f_max}', color='yellow')
-        self.f_stops = self.f_stop_sequence # self.generate_f_stops(self.f_min, self.num_stops, self.f_max)
+        self.f_stops = self.f_stop_sequence
+        with suppress(Exception):
+            self.f_stops = self.generate_f_stops(self.f_min, self.num_stops, self.f_max, round_to_int=False, rounding_bias_epsilon=0.0)
         logit(f'  f stops: {self.f_stops}', color='yellow')
 
     def initialize_aperture(self):
@@ -617,6 +672,22 @@ if __name__ == "__main__":
         # ... (your application logic) ...
         results = focuser.check_lens_focus()
         print(results)
+
+        # Erin TEST!!
+        f_min: str= 'f28'
+        num_stops: int = 32
+        f_max: str= 'f452'
+        f_stops = focuser.generate_f_stops(f_min, num_stops, f_max)
+        print(f'f_stops: {f_stops}')
+
+        da = 'f14, 28, f160'
+        print(f'ERINs: {da}')
+        f_stops = focuser.generate_f_stops('f14', 28, 'f160',True, 0.0)
+        f_stops1 = focuser.generate_f_stops('f14', 28, 'f160', False)
+        print(f'f_stops gene: {f_stops}')
+        print(f'f_stops gene: {f_stops1}')
+        print(f'f_stops hard: {focuser.f_stop_sequence}')
+
 
     except Exception as e:
         logit(f"Error: {e}")

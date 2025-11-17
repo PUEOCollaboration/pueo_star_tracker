@@ -2503,7 +2503,8 @@ class PueoStarCameraOperation:
                 self.log.debug('Running software_autogain_maintenance in MAIN thread.')
                 new_gain, gain_exec = timed_function(self.software_autogain_maintenance, camera_settings)
                 self.logit(f'Software autogain completed: interval={self.cfg.autogain_update_interval} current gain: {current_gain} new gain: {new_gain} in {gain_exec:.4f} seconds.', color='cyan')
-            elif self.cfg.autogain_mode == "hardware":
+            # TODO: Windell, the hardware autogain is not happening here but above in the capture image!!! The next elif MUST never run!!!
+            elif self.cfg.autogain_mode == "hardware" and False:
                 if is_threaded_autogain_maintenance:
                     if self._autogain_thread is None or not self._autogain_thread.is_alive():
                         self.log.debug('Running hardware autogain_maintenance in a NEW thread.')
@@ -2615,7 +2616,7 @@ class PueoStarCameraOperation:
                 self.is_flight)
 
 
-            # Create/update symlink to last info file
+            # Create/update symlink to last foi file
             create_symlink(self.cfg.web_path, self.foi_scaled_name, 'last_final_overlay_image_downscaled.png')
 
             if self.cfg.enable_gui_data_exchange and self.foi_scaled_name is not None:

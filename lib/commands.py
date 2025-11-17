@@ -150,9 +150,14 @@ class Command:
                     'min': 0,
                     'max': 9000
                 },
-                'aperture_position': {
+                'aperture': {
                     'type': 'list',
                     'values': ['open', 'close']
+                },
+                'aperture_position': {
+                    'type': 'inst',
+                    'min': 0,
+                    'max': 32
                 },
                 'exposure_time': {
                     'type': 'int',
@@ -230,7 +235,7 @@ class Command:
                 'aperture_position': {
                     'type': 'int',
                     'min': 0,
-                    'max': 28
+                    'max': 32
                 }
             }
         },

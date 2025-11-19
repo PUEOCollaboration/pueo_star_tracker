@@ -2,23 +2,23 @@
 from contextlib import suppress
 import logging
 import traceback
-import sys
+# import sys
 import time
-from time import perf_counter as precision_timestamp
+# from time import perf_counter as precision_timestamp
 import os
 from pathlib import Path
 # External imports
-import matplotlib.pyplot as plt
+# import matplotlib.pyplot as plt
 import cv2
 import numpy as np
-from scipy.optimize import linear_sum_assignment
-from skimage.color.rgb_colors import silver
+# from scipy.optimize import linear_sum_assignment
+# from skimage.color.rgb_colors import silver
 
-from tqdm import tqdm
+# from tqdm import tqdm
 
 # Custom imports
 from lib.config import Config
-from lib.common import current_timestamp, cprint, get_dt, logit
+from lib.common import current_timestamp, logit
 from lib.utils import read_image_grayscale, read_image_BGR, display_overlay_info, timed_function, print_img_info
 from lib.source_finder import global_background_estimation, source_finder
 # from lib.source_finder import global_background_estimation, local_levels_background_estimation, \
@@ -154,8 +154,8 @@ class Astrometry:
                                     ell,
                                     ar_elong=1.70,
                                     min_elong=5,
-                                    min_L=12.0,
-                                    min_R=0.60,
+                                    min_L=7.0,
+                                    min_R=0.50,
                                     min_frac=0.60,
                                     min_conf=0.65):   # NEW: confidence gate
         M = self._ellipse_metrics_ar(ell, ar_elong=ar_elong)
@@ -855,8 +855,7 @@ class Astrometry:
 
     @property
     def t3(self):
-        self.log.debug(f'Serving astro solver: {self.solver}')
-        cprint(f'Serving astro solver: {self.solver}', 'cyan')
+        logit(f'Serving astro solver: {self.solver}', color='cyan')
         return self.t3_genuine if self.solver == 'solver1' else self.t3_cedar
 
     def tetra3_generate_database(
@@ -1014,7 +1013,7 @@ class Astrometry:
         # number of pattern checking stars used
         # TODO: Done 15 min_pattern_checking_stars; Implemented min_pattern_checking_stars as input param on functions: tetra3_solver, optimize_calibration_parameters, do_astrometry, config.ini
         pattern_checking_stars = min(min_pattern_checking_stars, len(precomputed_star_centroids))
-        cprint(f"Solving: pattern_checking_stars: {min_pattern_checking_stars}, precomputed_star_centroids: {len(precomputed_star_centroids)}", color='cyan')
+        logit(f"Solving: pattern_checking_stars: {min_pattern_checking_stars}, precomputed_star_centroids: {len(precomputed_star_centroids)}", color='cyan')
         # Solving using centroids
         result = self.t3.solve_from_centroids(
             star_centroids=precomputed_star_centroids,
@@ -1042,7 +1041,7 @@ class Astrometry:
         #         return_matches=False,
         #         return_visual=False,
 
-        print(f"solve_from_centroids : done")
+        logit(f"solve_from_centroids : done")
         # plt.imshow(result['visual'])
         # plt.show(block=True)
         return result
@@ -1135,7 +1134,7 @@ class Astrometry:
                             key, value = line.split(":")
                             prev_params[key.strip()] = [float(v.strip()) for v in value.split(",")]
             except FileNotFoundError:
-                print("Error: Distortion calibration file not found.")
+                logit("Error: Distortion calibration file not found.")
 
             # update current calibration with new images
             curr_params = prev_params
@@ -1151,16 +1150,16 @@ class Astrometry:
                         prev_best_params[key.strip()] = float(value.strip())
                         default_best_params = prev_best_params
         except FileNotFoundError:
-            print("Error: Distortion calibration file not found.")
+            logit("Error: Distortion calibration file not found.")
 
         # Check if the directory is empty
         if not os.listdir(calibration_images_dir):
-            print(f"The distortion calibration images directory {calibration_images_dir} is empty.")
+            logit(f"The distortion calibration images directory {calibration_images_dir} is empty.")
             if prev_best_params != {}:
-                print(f"returning previous calibration params.")
+                logit(f"returning previous calibration params.")
                 return prev_best_params
             else:
-                print(f"returning default calibration params.")
+                logit(f"returning default calibration params.")
                 return default_best_params
         else:
             # get calibration params from the new set of images
@@ -1194,14 +1193,15 @@ class Astrometry:
                     level_filter=level_filter,
                     ring_filter_type=ring_filter_type
                 )
-                print(f"Astrometry : {astrometry}")
+                logit(f"Astrometry : {astrometry}")
                 # display overlay image
                 # TODO: Done timestamp_string should be the current timestamp; Milan: Implemented current_timestamp() added to utils.py and updated code there
                 # timestamp_string = "2023-09-06 10:00:00"
                 timestamp_string = current_timestamp()
                 omega = (0.0, 0.0, 0.0)
-                display_overlay_info(img, timestamp_string, astrometry, omega, scale_factors=scale_factors,
-                                     resize_mode=resize_mode)
+                # TODO: Removed by Windell ???!!!
+                # display_overlay_info(img, timestamp_string, astrometry, omega, scale_factors=scale_factors,
+                #                      resize_mode=resize_mode)
 
                 for key in curr_params.keys():
                     curr_params[key].append(astrometry[key])
@@ -1280,21 +1280,21 @@ class Astrometry:
         """Wrapper function that handles both direct calls and multiprocessing pool calls"""
         # TODO: Set to False for PRODUCTION
         if self.test:
-            print(f"DEBUG: args received: {args}")
-            print(f"DEBUG: kwargs received: {kwargs}")
+            logit(f"DEBUG: args received: {args}")
+            logit(f"DEBUG: kwargs received: {kwargs}")
 
             # Get the original function's parameter names
             import inspect
             sig = inspect.signature(self._do_astrometry)
             param_names = list(sig.parameters.keys())[1:]  # Skip 'self'
 
-            print(f"DEBUG: _do_astrometry expects parameters: {param_names}")
-            # print(f"DEBUG: Number of args passed: {len(args)}")
-            # print(f"DEBUG: Number of kwargs passed: {len(kwargs)}")
+            logit(f"DEBUG: _do_astrometry expects parameters: {param_names}")
+            # logit(f"DEBUG: Number of args passed: {len(args)}")
+            # logit(f"DEBUG: Number of kwargs passed: {len(kwargs)}")
 
-            print(f"\n{'-' * 60}")
-            print(f"DO_ASTROMETRY PARAMETERS")
-            print(f"{'-' * 60}")
+            logit(f"\n{'-' * 60}")
+            logit(f"DO_ASTROMETRY PARAMETERS")
+            logit(f"{'-' * 60}")
 
             max_name_length = 32
             for idx, param_name in enumerate(param_names):
@@ -1305,7 +1305,7 @@ class Astrometry:
                     formatted_value = f"'{param_value}'"
                 else:
                     formatted_value = str(param_value)
-                print(f"{param_name:>{max_name_length}} : {formatted_value}")
+                logit(f"{param_name:>{max_name_length}} : {formatted_value}")
 
         return self._do_astrometry(*args, **kwargs)
 
@@ -1316,9 +1316,9 @@ class Astrometry:
 
         max_name_length = max(len(name) for name in parameters.keys())
 
-        print(f"\n{'-' * 60}")
-        print(f"{func_name.upper()} PARAMETERS")
-        print(f"{'-' * 60}")
+        logit(f"\n{'-' * 60}")
+        logit(f"{func_name.upper()} PARAMETERS")
+        logit(f"{'-' * 60}")
 
         max_name_length = 32
         for param_name, param_value in parameters.items():
@@ -1329,9 +1329,9 @@ class Astrometry:
             else:
                 formatted_value = str(param_value)
 
-            print(f"{param_name:>{max_name_length}} : {formatted_value}")
+            logit(f"{param_name:>{max_name_length}} : {formatted_value}")
 
-        print(f"{'-' * 60}\n")
+        logit(f"{'-' * 60}\n")
 
 
     def _do_astrometry(
@@ -1416,6 +1416,10 @@ class Astrometry:
         """
         cleaned_img = None
 
+        # Defaults for 99.5th percentile values
+        p995_original = None
+        p995_masked_original = None
+
         def get_params():
             return {
                 'is_array': is_array,
@@ -1448,16 +1452,15 @@ class Astrometry:
         solver_exec_time = 0.0
         # Capture local params, but remove image
         cedar_data = {}
-
         resize_factor = 1.0
 
         self.solver = solver
-        print(f'solver: {self.solver}')
+        logit(f'solver: {self.solver}')
         if distortion_calibration_params is None:
             distortion_calibration_params = {}
         # read image in array format. From camera
         if is_array:
-            print(f"is_array = TRUE. Creating img_bgr.")
+            logit(f"is_array = TRUE. Creating img_bgr.")
             # Scale the 16-bit values to 8-bit (0-255) range
             # The scale_factor = 2**14 - 1 = 16383.0
             scale_factor = float(2 ** self.cfg.pixel_well_depth) - 1
@@ -1467,7 +1470,7 @@ class Astrometry:
 
         # read image from file. For debugging using png/tif
         if not is_array:
-            print(f"is_array = FALSE. converting to grayscale")
+            logit(f"is_array = FALSE. converting to grayscale")
             # img_bgr = read_image_BGR(img)
             img = read_image_grayscale(img)
             img_bgr = cv2.merge([img, img, img])
@@ -1488,7 +1491,7 @@ class Astrometry:
         # global background estimation
         total_exec_time = 0.0
         if subtract_global_bkg:
-            print(f"--------Subtract global background--------")
+            logit(f"--------Subtract global background--------")
             global_cleaned_img, global_exec_time = timed_function(
                 global_background_estimation, img, sigma_clipped_sigma, return_partial_images, partial_results_path
             )
@@ -1497,43 +1500,10 @@ class Astrometry:
 
         # This is False in config.ini as ast_use_photoutils param
         # TODO: This is forced for now until cedar detect is implemented
+        p995_original = None
+        p995_masked_original = None
         if self.solver in ['solver1', 'solver3']: #  or True:
-            if use_photutils:
-                # Local background estimation
-                (cleaned_img, background_img), local_exec_time = timed_function(
-                    # median_background_estimation,
-                    sextractor_background_estimation,
-                    img,
-                    return_partial_images=return_partial_images,
-                    partial_results_path=partial_results_path,
-                )
-                # Find sources
-                (masked_image, segment_map), find_sources_exec_time = timed_function(
-                    find_sources_photutils, img, background_img
-                )
-                if segment_map is None:
-                    return None, None, img_bgr  # astrometry, precomputed_star_centroids, contours_img
-                # Select top sources
-                (masked_image, sources_mask, sources_contours), top_sources_exec_time = timed_function(
-                    select_top_sources_photutils,
-                    img,
-                    masked_image,
-                    segment_map,
-                    number_sources=number_sources,
-                    return_partial_images=return_partial_images,
-                    partial_results_path=partial_results_path,
-                )
-                # Compute centroids
-                (precomputed_star_centroids, contours_img), centroids_exec_time = timed_function(
-                    compute_centroids_photutils, cleaned_img, img_bgr, segment_map, number_sources
-                )
-                total_exec_time += (
-                        float(local_exec_time)
-                        + float(find_sources_exec_time)
-                        + float(top_sources_exec_time)
-                        + float(centroids_exec_time)
-                )
-            else:
+            if True:
                 ##### Uncomment the following lines to use the source-finding functions independently
                 # (cleaned_img, background_img), local_exec_time = timed_function(local_levels_background_estimation, img, log_file_path, leveling_filter_downscale_factor, return_partial_images, partial_results_path)    # cleaned_img, background_img = sextractor_background_estimation(img, return_partial_images)
                 # (masked_image, estimated_noise), find_sources_exec_time = timed_function(find_sources, img, background_img,fast, bkg_threshold, local_sigma_cell_size,
@@ -1544,34 +1514,11 @@ class Astrometry:
                 #                                                             return_partial_images=return_partial_images, partial_results_path=partial_results_path)
                 # source_finder_exec_time = int(local_exec_time) + int(find_sources_exec_time) + int(top_sources_exec_time)
                 #####
-
                 # source finder pipeline
-                if False:  # THis is orig cal via timed_function wrapper
-                    (masked_image, sources_mask, sources_contours), source_finder_exec_time = timed_function(
-                        source_finder,
-                        img,
-                        log_file_path,
-                        leveling_filter_downscale_factor,
-                        fast,
-                        bkg_threshold,
-                        local_sigma_cell_size,
-                        src_kernal_size_x,
-                        src_kernal_size_y,
-                        src_sigma_x,
-                        src_dst,
-                        number_sources,
-                        min_size,
-                        max_size,
-                        dilate_mask_iterations,
-                        is_trail,
-                        return_partial_images,
-                        partial_results_path,
-                        level_filter,
-                        ring_filter_type
-                    )
-                else: # Direct call to show exception on source_finder
+                if True:
+                    # Direct call to show exception on source_finder
                     source_finder_exec_time = time.monotonic()
-                    masked_image, sources_mask, sources_contours = source_finder(
+                    masked_image, sources_mask, sources_contours, p995_original, p995_masked_original = source_finder(
                         self.cfg,
                         img,
                         log_file_path,
@@ -1605,13 +1552,13 @@ class Astrometry:
                         merge_gap_cross=int(self.cfg.merge_gap_cross),
                         merge_ang_tol=int(self.cfg.merge_ang_tol_deg),
                     )
-
                     # TODO: Windell figure out the image naming (cleaned_img/masked_image)
                     source_finder_exec_time = time.monotonic() - source_finder_exec_time
+
 ######################
                 # --- Classify using EXISTING mask (no re-threshold) + allow override ---
-                print(f"--------Running classifier.--------")
-                mode = getattr(self.cfg, "ast_centroid_mode", "auto").strip().lower()
+                logit(f"--------Running classifier.--------", color='cyan')
+                mode = self.cfg.ast_centroid_mode
 
                 # in pueo_star_camera_operation_code.py after constructing Astrometry:
 
@@ -1623,7 +1570,7 @@ class Astrometry:
                         min_area=self.cfg.ellipse_min_area_px,
                         min_major=self.cfg.ellipse_major_min_px,
                     )
-                    print(f"[Classifier] contours={len(sources_contours)}  ell={len(ell)}")
+                    logit(f"[Classifier] contours={len(sources_contours)}  ell={len(ell)}")
 
                     # ---- Classify frame as still vs streaked ----
                     label, conf, M = self.classify_frame_still_biased(
@@ -1636,23 +1583,20 @@ class Astrometry:
                         min_conf=self.cfg.min_confidence,
                     )
 
-                    print(f"[Classifier] label={label}  conf={conf:.2f}  metrics={M}")
-                    print(f"label: {label}")
+                    logit(f"[Classifier] label={label}  conf={conf:.2f}  metrics={M}", color='cyan')
+                    logit(f"label: {label}")
 
                     is_trail = (label == "streaked")
                     suggest_is_trail = (label == "streaked")
                     mode_str = f"auto (classifier suggests is_trail = {suggest_is_trail})"
-                    print(f"[Astrometry] Centroid mode = {mode} → {mode_str}")
+                    logit(f"[Astrometry] Centroid mode = {mode} → {mode_str}", color='cyan')
 
                     # --- Estimate angular velocity from classifier ellipses (deg/s) ---
                     if label == "streaked":
                         try:
-                            plate_scale_arcsec_per_px = float(
-                                getattr(self.cfg, "plate_scale_arcsec_per_px", 0.0)
-                            )
-                            exposure_time_s = float(
-                                getattr(self.cfg, "exposure_time_s", 0.0)
-                            )
+                            plate_scale_arcsec_per_px = self.cfg.plate_scale_arcsec_per_px
+                            # TODO: This should not be in cfg!
+                            exposure_time_s = self.cfg.exposure_time_s
 
                             if (
                                     plate_scale_arcsec_per_px > 0.0
@@ -1671,7 +1615,7 @@ class Astrometry:
                                 if omega_deg_s is not None:
                                     wx_deg, wy_deg, wz_deg = omega_deg_s
                                     w_mag = float((wx_deg ** 2 + wy_deg ** 2 + wz_deg ** 2) ** 0.5)
-                                    print(
+                                    logit(
                                         f"\n[Trail Omega] (Auto mode) "
                                         f"plate_scale={plate_scale_arcsec_per_px:.6f} arcsec/px, "
                                         f"texp={exposure_time_s:.4f} s, "
@@ -1693,16 +1637,14 @@ class Astrometry:
                                         file.write(f"rms={diag_omega.get('resid_rms_deg_s', float('nan')):.4g} deg/s\n")
                                         file.write(f"w_mag_deg_s : {w_mag:.4f}\n")
                                 else:
-                                    print(
-                                        "[Trail Omega] Not enough valid ellipses to solve for angular velocity"
-                                    )
+                                    logit("[Trail Omega] Not enough valid ellipses to solve for angular velocity")
                             else:
-                                print(
+                                logit(
                                     "[Trail Omega] Skipped: plate_scale_arcsec_per_px or exposure_time_s "
                                     "not set (>0) in cfg or no ellipses"
                                 )
                         except Exception as e:
-                            print(f"[Trail Omega] ERROR estimating angular velocity: {e}")
+                            logit(f"[Trail Omega] ERROR estimating angular velocity: {e}")
 
                     # ---- Choose centroid path based on classifier ----
                     if suggest_is_trail:
@@ -1732,7 +1674,7 @@ class Astrometry:
                     # NO classifier, NO metrics printing outside auto
                     suggest_is_trail = True
                     mode_str = "override to trail mode"
-                    print(f"[Astrometry] Centroid mode = {mode} → {mode_str}")
+                    logit(f"[Astrometry] Centroid mode = {mode} → {mode_str}")
                     # --- Estimate angular velocity from ellipses (forced trail mode) ---
                     try:
                         # Build ellipse list from the current mask (same as auto branch)
@@ -1742,12 +1684,9 @@ class Astrometry:
                             min_area=int(self.cfg.ellipse_min_area_px),
                             min_major=int(self.cfg.ellipse_major_min_px),
                         )
-                        plate_scale_arcsec_per_px = float(
-                            getattr(self.cfg, "plate_scale_arcsec_per_px", 0.0)
-                        )
-                        exposure_time_s = float(
-                            getattr(self.cfg, "exposure_time_s", 0.0)
-                        )
+                        plate_scale_arcsec_per_px = self.cfg.plate_scale_arcsec_per_px
+                        exposure_time_s = self.cfg.exposure_time_s
+
                         if (
                                 plate_scale_arcsec_per_px > 0.0
                                 and exposure_time_s > 0.0
@@ -1765,7 +1704,7 @@ class Astrometry:
                             if omega_deg_s is not None:
                                 wx_deg, wy_deg, wz_deg = omega_deg_s
                                 w_mag = float((wx_deg ** 2 + wy_deg ** 2 + wz_deg ** 2) ** 0.5)
-                                print(
+                                logit(
                                     f"[Trail Omega] (forced mode) "
                                     f"plate_scale={plate_scale_arcsec_per_px:.6f} arcsec/px, "
                                     f"texp={exposure_time_s:.4f} s, "
@@ -1787,17 +1726,17 @@ class Astrometry:
                                     file.write(f"rms={diag_omega.get('resid_rms_deg_s', float('nan')):.4g} deg/s\n")
                                     file.write(f"w_mag_deg_s : {w_mag:.4f}\n")
                             else:
-                                print(
+                                logit(
                                     "[Trail Omega] (forced mode) "
                                     "Not enough valid ellipses to solve for angular velocity"
                                 )
                         else:
-                            print(
+                            logit(
                                 "[Trail Omega] (forced mode) skipped: "
                                 "missing plate_scale_arcsec_per_px/exposure_time_s or no ellipses"
                             )
                     except Exception as e:
-                        print(f"[Trail Omega] (forced mode) ERROR estimating angular velocity: {e}")
+                        logit(f"[Trail Omega] (forced mode) ERROR estimating angular velocity: {e}")
                     (precomputed_star_centroids, contours_img), centroids_exec_time = timed_function(
                         self._trail_ellipse_adapter,
                         masked_image=masked_image,
@@ -1811,10 +1750,10 @@ class Astrometry:
                         partial_results_path=partial_results_path,
                     )
                 elif mode == "still":
-                    # NO classifier, NO metrics printing outside auto
+                    # NO classifier, NO metrics logiting outside auto
                     suggest_is_trail = False
                     mode_str = "override to still mode"
-                    print(f"[Astrometry] Centroid mode = {mode} → {mode_str}")
+                    logit(f"[Astrometry] Centroid mode = {mode} → {mode_str}")
                     (precomputed_star_centroids, contours_img), centroids_exec_time = timed_function(
                         compute_centroids_from_still,
                         masked_image=masked_image,
@@ -1829,7 +1768,7 @@ class Astrometry:
                     # Unknown → behave like still; NO classifier or metrics printing
                     suggest_is_trail = False
                     mode_str = f"unknown '{mode}' → defaulting to still"
-                    print(f"[Astrometry] Centroid mode = {mode} → {mode_str}")
+                    logit(f"[Astrometry] Centroid mode = {mode} → {mode_str}")
 
                     (precomputed_star_centroids, contours_img), centroids_exec_time = timed_function(
                         compute_centroids_from_still,
@@ -1879,9 +1818,8 @@ class Astrometry:
         height, width = img.shape
         image_size = (int(height / resize_factor), int(width / resize_factor))
         if isinstance(precomputed_star_centroids, np.ndarray) and precomputed_star_centroids.shape[0]:
-            print("--------Get direction in the sky using solver of tetra3/astrometry.net --------")
-            print(
-                f'Image: {img.shape[0]}x{img.shape[1]} {img.dtype} {img.size} distortion: {distortion_calibration_params}')
+            logit("--------Get direction in the sky using solver of tetra3/astrometry.net --------")
+            logit(f'Image: {img.shape[0]}x{img.shape[1]} {img.dtype} {img.size} distortion: {distortion_calibration_params}')
 
             max_c = 0 or precomputed_star_centroids.shape[0]
             if distortion_calibration_params and solver == 'solver1':
@@ -1910,17 +1848,17 @@ class Astrometry:
                         output_dir=self.cfg.partial_results_path  # "./astrometry_results"
                     )
 
-                    cprint(f"Processing successful: {astrometry['success']}")
+                    logit(f"Processing successful: {astrometry['success']}", color='green')
                     if astrometry['success']:
                         self.log.debug("Solution files created:")
                         for name, path in astrometry['solution_files'].items():
                             self.log.debug(f"  {name}: {path}")
                 except Exception as e:
-                    cprint(f"Error processing centroids: {e}", color='red')
-                    print(f"Stack trace:\n{traceback.format_exc()}")
+                    logit(f"Error processing centroids: {e}", color='red')
+                    logit(f"Stack trace:\n{traceback.format_exc()}")
                     self.log.error(f"Error processing centroids: {e}")
                     self.log.error(f"Stack trace:\n{traceback.format_exc()}")
-                print("Done with solver3!")
+                logit("Done with solver3!")
             else:
                 pass
 
@@ -1932,8 +1870,11 @@ class Astrometry:
             astrometry["solver_exec_time"] = solver_exec_time
             astrometry['solver'] = self.solver
             astrometry['solver_name'] = self.solver_name
+            # This is OK!!!
+            astrometry['p995_original'] = p995_original
+            astrometry['p995_masked_original'] = p995_masked_original
 
-            print("Astrometry: " + str(astrometry))
+            logit(f"Astrometry: {str(astrometry)}")
 
             # Draw valid matched star contours (Green)
             color_green = (0, 255, 0)  # Green
@@ -1984,17 +1925,23 @@ class Astrometry:
                     self.log.error(f"Failed to compute RMS: {e}")
                     self.log.error(f"Exception type: {type(e).__name__}")
                     self.log.error(f"Stack trace:\n{traceback.format_exc()}")
-                    print(f"Stack trace:\n{traceback.format_exc()}")
+                    logit(f"Stack trace:\n{traceback.format_exc()}")
         else:
-            cprint('No centroids found, skipping astrometry solving.', color='red')
+            logit('No centroids found, skipping astrometry solving.', color='red')
             astrometry = {}
             # These are required for the overlay.
             astrometry['solver'] = self.solver
             astrometry['solver_name'] = self.solver_name
+            # Regardless of solution we still want to return
+            astrometry['p995_original'] = p995_original
+            astrometry['p995_masked_original'] = p995_masked_original
+            # Example combined:
+            # astrometry['p995'] = (p995_original, p995_masked_original)
+            # Access: p995_original = astrometry['p995'][0]
 
         total_exec_time = time.monotonic() - t0
         astrometry["total_exec_time"] = total_exec_time if astrometry else None
-        print(f'  do_astrometry completed in {total_exec_time:.2f}s.')
+        logit(f'  do_astrometry completed in {total_exec_time:.2f}s.')
         return astrometry, precomputed_star_centroids, contours_img
 
     def test_astrometry(self, img_path, display=False):
@@ -2077,9 +2024,9 @@ class Astrometry:
                 if file.lower().endswith((".jpg", ".jpeg", ".png", ".tif", ".tiff")):
                     # image specific paths
                     img_path = os.path.join(dir_path, file)
-                    print("#####################################################")
-                    print(f"Processing : {img_path}")
-                    print("#####################################################")
+                    logit("#####################################################")
+                    logit(f"Processing : {img_path}")
+                    logit("#####################################################")
                     self.test_astrometry(img_path, display)
         else:
             if img_path.lower().endswith((".jpg", ".jpeg", ".png", ".tif", ".tiff")):

@@ -60,9 +60,8 @@ from lib.compute import Compute
 from lib.focuser import Focuser
 from lib.star_comm_bridge import StarCommBridge
 from lib.utils import read_image_grayscale, read_image_BGR, display_overlay_info, save_raws, image_resize, timed_function, create_symlink, get_current_utc_timestamp, delete_files
-from lib.source_finder import global_background_estimation,  ring_mean_background_estimation, subtract_background, estimate_noise_pairs,  threshold_with_noise
+from lib.source_finder import global_background_estimation,  ring_mean_background_estimation, subtract_background, estimate_noise_pairs,  threshold_with_noise, source_finder
 # from lib.astrometry import do_astrometry, optimize_calibration_parameters
-from lib.astrometry import Astrometry
 from lib.start_tracker_body_rates import StarTrackerBodyRates
 from lib.telemetry import Telemetry
 from lib.commands import Command
@@ -396,11 +395,12 @@ class PueoStarCameraOperation:
         if vals.size == 0:
             return 0.0
 
-        if 0.0 < top_frac < 1.0:
-            k = max(32, int(vals.size * top_frac))
-            if k < vals.size:
-                idx = np.argpartition(vals, -k)[-k:]
-                vals = vals[idx]
+        # TODO: Commented out by Windell, remove if not needed.
+        #if 0.0 < top_frac < 1.0:
+        #    k = max(32, int(vals.size * top_frac))
+        #    if k < vals.size:
+        #        idx = np.argpartition(vals, -k)[-k:]
+        #        vals = vals[idx]
 
         return float(vals.mean())
 
@@ -936,6 +936,97 @@ class PueoStarCameraOperation:
         self.logit(f'do_auto_gain_routine completed in {get_dt(t0)}.', color='cyan')
         return new_gain_value
 
+    def software_gain_from_metric(
+            self,
+            bright_value: int | None,
+            old_gain_value: int,
+            min_gain_step: int | None = None,
+    ) -> int:
+        """
+        Convert a brightness metric (e.g. sw_bright_value from source_finder)
+        into a new gain value using calculate_gain_adjustment().
+
+        bright_value:
+            Brightness metric in ADU (e.g. 99.5th percentile of masked star pixels).
+        old_gain_value:
+            Current camera gain (cB).
+        min_gain_step:
+            Minimum |Δgain| required to actually change the gain.
+            If None, uses cfg.software_autogain_min_step (if present) or 1.
+
+        Returns
+        -------
+        int
+            New gain value (or old_gain_value if no change / invalid input).
+        """
+
+        cfg = self.cfg
+
+        # If metric is missing, bail out
+        if bright_value is None:
+            self.logit("software_gain_from_metric: bright_value is None; keeping current gain.")
+            return int(old_gain_value)
+
+        desired_max_pix_value = self.desired_max_pix_value
+        pixel_count_tolerance = self.pixel_count_tolerance
+
+        # Already good enough?
+        diff = desired_max_pix_value - float(bright_value)
+        self.logit(
+            f"software_gain_from_metric: bright={bright_value}, "
+            f"desired={desired_max_pix_value}, tol={pixel_count_tolerance}, diff={diff:.1f}"
+        )
+        if abs(diff) <= float(pixel_count_tolerance):
+            self.logit("software_gain_from_metric: within tolerance; no gain change.")
+            return int(old_gain_value)
+
+        # Use existing analytic gain mapping
+        try:
+            new_gain = self.calculate_gain_adjustment(
+                old_gain_value=old_gain_value,
+                high_pix_value=float(bright_value),
+                desired_max_pix_value=float(desired_max_pix_value),
+            )
+        except Exception as e:
+            self.logit(
+                f"software_gain_from_metric: calculate_gain_adjustment failed ({e}); "
+                "keeping current gain."
+            )
+            return int(old_gain_value)
+
+        # Clamp to allowed range
+        new_gain = int(max(cfg.min_gain_setting, min(cfg.max_gain_setting, int(new_gain))))
+
+        # Choose min step
+        if min_gain_step is None:
+            min_gain_step = self.cfg.software_autogain_min_step
+        else:
+            min_gain_step = int(min_gain_step)
+
+        # Deadband in gain space
+        step = new_gain - int(old_gain_value)
+        if abs(step) < min_gain_step:
+            self.logit(
+                f"software_gain_from_metric: gain change {step} < {min_gain_step}; skipping."
+            )
+            return int(old_gain_value)
+
+        # Actually set the camera gain here
+        try:
+            camera_settings = self.camera.get_control_values()
+            self.camera.set_control_value(asi.ASI_GAIN, int(new_gain))
+            current_gain = camera_settings['Gain']
+            self.logit(f"Software adjust NEW camera gain (cB) : {current_gain}")
+        except Exception as e:
+            self.logit(
+                f"software_gain_from_metric: failed to set camera gain ({e}); "
+                "keeping old gain."
+            )
+            return int(old_gain_value)
+
+        self.logit(f"software_gain_from_metric: gain {old_gain_value} -> {new_gain}")
+        return int(new_gain)
+
     def calculate_gain_adjustment(self, old_gain_value, high_pix_value, desired_max_pix_value):
         # Constants from config
         max_gain = self.cfg.max_gain_setting  # e.g., 570
@@ -948,11 +1039,14 @@ class PueoStarCameraOperation:
             self.logit(f"old_electrons_per_ADU_gain: {old_electrons_per_ADU_gain}")
             self.logit(f"old_ADU_per_electrons_gain: {old_ADU_per_electrons_gain}")
 
+            high_pix_value = max(high_pix_value, 1e-6)
+
             # Step 2: Calculate gain multiplier
-            gain_multiplier = (desired_max_pix_value - self.cfg.pixel_bias) / (high_pix_value - self.cfg.pixel_bias)
+            gain_multiplier = desired_max_pix_value / high_pix_value
             self.logit(f"gain_multiplier: {gain_multiplier}")
 
             # Step 3: Compute new gain values
+            # TODO: Rename the vars with upper letters; Don't use upper case at all cost!
             new_ADU_per_electrons_gain = gain_multiplier * old_ADU_per_electrons_gain
             new_electrons_per_ADU_gain = 1 / new_ADU_per_electrons_gain
             self.logit(f"new_electrons_per_ADU_gain: {new_electrons_per_ADU_gain}")
@@ -1230,7 +1324,7 @@ class PueoStarCameraOperation:
             residual_img = subtract_background(cleaned_img, final_local_levels)
 
             # threshold using hysteresis
-            print("Creating mask using hystersis thresholding.")
+            self.logit("Creating mask using hysteresis thresholding.")
             sources_mask, sources_mask_u8 = threshold_with_noise(
                 residual_img,
                 sigma_map=estimated_noise,
@@ -1243,31 +1337,27 @@ class PueoStarCameraOperation:
                 sigma_floor=float(self.cfg.hyst_sigma_floor),
             )
 
-            # We intend to calculate both scores using sequence_diameter and sequence_contrast
-            diameters = self.get_centroid_diameters(
-                img=sources_mask,
-                is_array=True,
-                log_file_path=log_file_path
-            )
 
-            # Handle failure or sentinel [-1]
-            if (diameters is None or
-                    (hasattr(diameters, "__len__") and len(diameters) == 1 and float(diameters[0]) < 0)):
+            masked_image = cv2.bitwise_and(cleaned_img, cleaned_img, mask=sources_mask_u8)
+
+            equiv_diameters = self.get_centroid_diameters(masked_image, is_array=True)
+
+            if (equiv_diameters is None or
+                    (hasattr(equiv_diameters, "__len__") and len(equiv_diameters) == 1 and float(
+                        equiv_diameters[0]) < 0)):
                 self.logit("No valid diameters at this focus position; assigning penalty diameter score.")
-                diameter_score = 1e6  # very bad focus for sequence_diameter mode
+                diameter_score = 1e6
             else:
-                diameter_score = self.robust_avg_diameter(diameters)
-                if diameter_score is None:
-                    diameter_score = float(np.mean(diameters))
+                diameter_score = float(np.mean(equiv_diameters))
 
-            self.logit(f'Average star diameter (robust): {diameter_score:.3f} px')
-            self.logit(f'Number of diameters: {len(diameters)}')
+            self.logit(f'Mean star diameter: {diameter_score:.3f} px')
+            self.logit(f'Number of diameters: {len(equiv_diameters)}')
 
             # Store for diameter-based autofocus (sequence_diameter)
             diameter_scores.append(diameter_score)
 
             # Edge-contrast metric on your background-subtracted image
-            edge_score = self.focus_score_starfield_edge(cleaned_img, top_frac=0.08)
+            edge_score = self.focus_score_starfield_edge(masked_image, top_frac=1.0)
             self.logit(f'Edge-contrast Focus score: {edge_score:.6g}')
 
             # Store for contrast-based autofocus (sequence_contrast)
@@ -1374,7 +1464,7 @@ class PueoStarCameraOperation:
             #set definition of pixel saturated value bases on camera settings
             self.pixel_saturated_value = self.cfg.pixel_saturated_value_raw16
 
-            #define the target max pixel value and the toleranace of this target
+            #define the target max pixel value and the tolerance of this target
             self.desired_max_pix_value = int(0.90 * self.pixel_saturated_value)
             self.pixel_count_tolerance = int(2 * (self.pixel_saturated_value - self.desired_max_pix_value))
 
@@ -1649,298 +1739,6 @@ class PueoStarCameraOperation:
                 self.server.close()
                 return
 
-    def software_autogain(self, img: np.ndarray, old_gain_value: int, min_gain_step: int = 1) -> int:
-        """
-        SOFTWARE AUTO-GAIN (single-frame)
-
-        Steps:
-          1) Background subtraction (ring-mean perimeter filter)
-          2) Noise estimation (estimate_noise_pairs)
-          3) Hysteresis thresholding to get a star mask
-          4) Mask the *original* image
-          5) Measure bright masked pixels (99.5 percentile)
-          6) Compute new gain using calculate_gain_adjustment()
-          7) Apply only if |Δgain| >= min_gain_step
-
-        Designed to be called periodically (e.g., every N images).
-
-        Returns:
-            int → new gain (or old_gain_value if unchanged)
-        """
-        cfg = self.cfg
-
-        if img is None or img.size == 0:
-            self.logit("software_autogain: empty image; keeping current gain.")
-            return old_gain_value
-
-        if img.ndim != 2:
-            self.logit("software_autogain: expected 2D grayscale; keeping current gain.")
-            return old_gain_value
-
-        H, W = img.shape
-        img_f = img.astype(np.float32, copy=False)
-
-        pixel_saturated_value = self.pixel_saturated_value
-        desired_max_pix_value = self.desired_max_pix_value
-        pixel_count_tolerance = self.pixel_count_tolerance
-
-        # --- 1) Local background via ring-mean ---
-        d = int(cfg.level_filter)
-        if d < 3:
-            d = 3
-
-        downscale_factor = int(cfg.leveling_filter_downscale_factor)
-        if downscale_factor < 1:
-            downscale_factor = 1
-
-        if downscale_factor > 1:
-            ds_W = max(1, W // downscale_factor)
-            ds_H = max(1, H // downscale_factor)
-            downsampled_img = cv2.resize(img_f, (ds_W, ds_H), interpolation=cv2.INTER_AREA)
-            d_small = max(3, d // downscale_factor)
-        else:
-            downsampled_img = img_f
-            d_small = d
-
-        local_levels_small = ring_mean_background_estimation(downsampled_img, d_small)
-
-        if downscale_factor > 1:
-            local_levels = cv2.resize(local_levels_small, (W, H), interpolation=cv2.INTER_LINEAR)
-        else:
-            local_levels = local_levels_small
-
-        # --- 2) Background-subtracted image ---
-        cleaned_img = subtract_background(img_f, local_levels)
-
-        # --- 3) Global noise ---
-        try:
-            noise_sep = int(cfg.noise_pair_sep_full)
-            if noise_sep < 1:
-                noise_sep = 1
-            sigma_g = estimate_noise_pairs(cleaned_img, sep=noise_sep)
-        except Exception as e:
-            self.logit(f"software_autogain: noise estimation failed ({e}); keeping current gain.")
-            return old_gain_value
-
-        estimated_noise = np.full_like(cleaned_img, sigma_g, dtype=np.float32)
-
-        # --- 4) Residual + hysteresis mask ---
-        residual_img = subtract_background(cleaned_img, local_levels)
-
-        self.logit("software_autogain: creating hysteresis mask.")
-        sources_mask_bool, _ = threshold_with_noise(
-            residual_img,
-            sigma_map=estimated_noise,
-            k_high=float(cfg.hyst_k_high),
-            k_low=float(cfg.hyst_k_low),
-            use_hysteresis=True,
-            min_area=int(cfg.hyst_min_area),
-            close_kernel=int(cfg.hyst_close_kernel),
-            sigma_gauss=float(cfg.hyst_sigma_gauss),
-            sigma_floor=float(cfg.hyst_sigma_floor),
-        )
-
-        mask_u8 = (sources_mask_bool > 0).astype(np.uint8) * 255
-        n_mask_px = int(mask_u8.sum() // 255)
-        self.logit(f"software_autogain: mask covers ~{n_mask_px} pixels.")
-
-        if n_mask_px == 0:
-            self.logit("software_autogain: no mask pixels; keeping current gain.")
-            return old_gain_value
-
-        # --- 5) Mask the ORIGINAL image ---
-        masked_original = cv2.bitwise_and(img, img, mask=mask_u8)
-        star_pixels = masked_original[mask_u8 > 0].astype(np.int64)
-
-        if star_pixels.size == 0:
-            self.logit("software_autogain: no masked pixels; keeping current gain.")
-            return old_gain_value
-
-        # Drop saturated pixels
-        unsat = star_pixels[star_pixels < pixel_saturated_value]
-        if unsat.size == 0:
-            self.logit("software_autogain: masked pixels saturated; using all.")
-            unsat = star_pixels
-
-        # --- 6) Brightness metric ---
-        bright_value = int(np.percentile(unsat, 99.5))
-        self.logit(f"software_autogain: bright={bright_value}, desired={desired_max_pix_value}")
-
-        if abs(desired_max_pix_value - bright_value) <= pixel_count_tolerance:
-            self.logit("software_autogain: within tolerance; no gain change.")
-            return old_gain_value
-
-        # --- 7) Use your existing gain equation ---
-        new_gain = self.calculate_gain_adjustment(
-            old_gain_value,
-            bright_value,
-            desired_max_pix_value,
-        )
-
-        # clamp
-        new_gain = max(cfg.min_gain_setting, min(cfg.max_gain_setting, new_gain))
-
-        if abs(new_gain - old_gain_value) < min_gain_step:
-            self.logit(f"software_autogain: gain change < {min_gain_step}; skipping.")
-            return old_gain_value
-
-        # Apply to camera
-        try:
-            self.camera.set_control_value(asi.ASI_GAIN, int(new_gain))
-        except Exception as e:
-            self.logit(f"software_autogain: failed to set gain ({e}); keeping old gain.")
-            return old_gain_value
-
-        self.logit(f"software_autogain: gain {old_gain_value} -> {new_gain}")
-        return int(new_gain)
-
-    def software_autogain(self, img: np.ndarray, old_gain_value: int, min_gain_step: int = 1) -> int:
-        """
-        SOFTWARE AUTO-GAIN (single-frame)
-
-        Uses:
-          - ring-mean background subtraction
-          - hysteresis thresholding on residual
-          - mask applied to ORIGINAL image
-          - bright percentile of unsaturated masked pixels
-        Then uses calculate_gain_adjustment() and only applies the new gain
-        if |Δgain| >= min_gain_step.
-        """
-        cfg = self.cfg
-
-        if img is None or img.size == 0 or img.ndim != 2:
-            self.logit("software_autogain: invalid image; keeping current gain.")
-            return old_gain_value
-
-        H, W = img.shape
-        img_f = img.astype(np.float32, copy=False)
-
-        pixel_saturated_value = self.pixel_saturated_value
-        desired_max_pix_value = self.desired_max_pix_value
-        pixel_count_tolerance = self.pixel_count_tolerance
-
-        # 1) Local background (ring-mean, possibly downsampled)
-        d = max(3, int(cfg.level_filter))
-        downscale_factor = max(1, int(cfg.leveling_filter_downscale_factor))
-
-        if downscale_factor > 1:
-            ds_W = max(1, W // downscale_factor)
-            ds_H = max(1, H // downscale_factor)
-            downsampled = cv2.resize(img_f, (ds_W, ds_H), interpolation=cv2.INTER_AREA)
-            d_small = max(3, d // downscale_factor)
-        else:
-            downsampled = img_f
-            d_small = d
-
-        local_levels_small = ring_mean_background_estimation(downsampled, d_small)
-        if downscale_factor > 1:
-            local_levels = cv2.resize(local_levels_small, (W, H), interpolation=cv2.INTER_LINEAR)
-        else:
-            local_levels = local_levels_small
-
-        # 2) Background-subtracted image
-        cleaned = subtract_background(img_f, local_levels)
-
-        # 3) Global noise
-        try:
-            noise_sep = max(1, int(cfg.noise_pair_sep_full))
-            sigma_g = estimate_noise_pairs(cleaned, sep=noise_sep)
-        except Exception as e:
-            self.logit(f"software_autogain: noise estimation failed ({e}); keeping current gain.")
-            return old_gain_value
-
-        sigma_map = np.full_like(cleaned, sigma_g, dtype=np.float32)
-
-        # 4) Residual + hysteresis threshold
-        residual = subtract_background(cleaned, local_levels)
-
-        self.logit("software_autogain: creating hysteresis mask.")
-        mask_bool, _ = threshold_with_noise(
-            residual,
-            sigma_map=sigma_map,
-            k_high=float(cfg.hyst_k_high),
-            k_low=float(cfg.hyst_k_low),
-            use_hysteresis=True,
-            min_area=int(cfg.hyst_min_area),
-            close_kernel=int(cfg.hyst_close_kernel),
-            sigma_gauss=float(cfg.hyst_sigma_gauss),
-            sigma_floor=float(cfg.hyst_sigma_floor),
-        )
-
-        mask_u8 = (mask_bool > 0).astype(np.uint8) * 255
-        n_mask_px = int(mask_u8.sum() // 255)
-        self.logit(f"software_autogain: mask covers ~{n_mask_px} pixels.")
-
-        if n_mask_px == 0:
-            self.logit("software_autogain: no mask pixels; keeping current gain.")
-            return old_gain_value
-
-        # 5) Mask ORIGINAL image
-        masked_original = cv2.bitwise_and(img, img, mask=mask_u8)
-        star_pixels = masked_original[mask_u8 > 0].astype(np.int64)
-
-        if star_pixels.size == 0:
-            self.logit("software_autogain: no masked pixels; keeping current gain.")
-            return old_gain_value
-
-        unsat = star_pixels[star_pixels < pixel_saturated_value]
-        if unsat.size == 0:
-            unsat = star_pixels
-
-        # 6) Brightness metric
-        bright_value = int(np.percentile(unsat, 99.5))
-        self.logit(
-            f"software_autogain: bright={bright_value}, "
-            f"desired={desired_max_pix_value}, tol={pixel_count_tolerance}"
-        )
-
-        if abs(desired_max_pix_value - bright_value) <= pixel_count_tolerance:
-            self.logit("software_autogain: within tolerance; no gain change.")
-            return old_gain_value
-
-        # 7) Gain equation
-        new_gain = self.calculate_gain_adjustment(
-            old_gain_value,
-            bright_value,
-            desired_max_pix_value,
-        )
-
-        # clamp
-        new_gain = max(cfg.min_gain_setting, min(cfg.max_gain_setting, new_gain))
-
-        # software-only deadband
-        if abs(new_gain - old_gain_value) < min_gain_step:
-            self.logit(
-                f"software_autogain: gain change {new_gain - old_gain_value} < {min_gain_step}; skipping."
-            )
-            return old_gain_value
-
-        try:
-            self.camera.set_control_value(asi.ASI_GAIN, int(new_gain))
-        except Exception as e:
-            self.logit(f"software_autogain: failed to set gain ({e}); keeping old gain.")
-            return old_gain_value
-
-        self.logit(f"software_autogain: gain {old_gain_value} -> {new_gain}")
-        return int(new_gain)
-
-    def software_autogain_maintenance(self, camera_settings):
-        """
-        Periodic software autogain called every N images
-        when autogain_mode = 'software'.
-        """
-        current_gain = camera_settings['Gain']
-        min_step = self.cfg.software_autogain_min_step
-
-        new_gain = self.software_autogain(
-            self.curr_img,
-            old_gain_value=current_gain,
-            min_gain_step=min_step,
-        )
-
-        return int(new_gain)
-
-
     def autogain_maintenance(self, camera_settings):
         """
         Comment by Windell: dont only want to do this when in autonomous mode. It should be done whenever it is asked to.
@@ -1978,37 +1776,6 @@ class PueoStarCameraOperation:
         self.logit(
             f'Single image autogain completed: interval: {self.cfg.autogain_update_interval} current gain: {current_gain} new gain: {new_gain} in {gain_exec:.4f} seconds.',
             color='cyan')
-
-    def info_add_image_info_old(self, camera_settings, curr_utc_timestamp):
-        unique_pixel_values = np.unique(self.curr_img)  # Get distinct pixel values
-        median_pixel_value = np.median(unique_pixel_values)  # Median of unique counts
-
-        with open(self.info_file, "a", encoding='utf-8') as file:
-            file.write("Image type : Single standard operating image\n")
-            file.write(f"system timestamp : {curr_utc_timestamp}\n")
-            # Removing the serial timestamp  -  not required.
-            # file.write(f"serial timestamp : {curr_serial_utc_timestamp}\n")
-            file.write(f"exposure time (us) : {camera_settings['Exposure']}\n")
-            file.write(f"gain (cB) : {camera_settings['Gain']}\n")
-            file.write(f"focus position : {self.focuser.focus_position}\n")
-            file.write(f"aperture position : {self.focuser.aperture_pos}, {self.focuser.aperture_f_val}\n")
-            file.write(f"min/max pixel value (counts) : {np.min(self.curr_img)} / {np.max(self.curr_img)}\n")
-            file.write(f"mean/median pixel value (counts) : {np.mean(self.curr_img):.1f} / {median_pixel_value:.1f}\n")
-            # file.write(f"median pixel value (counts) : {median_pixel_value:.1f}\n")
-            # file.write(f"min pixel value (counts) : {np.min(self.curr_img)}\n")
-            file.write(f"detector temperature : {camera_settings['Temperature']/10} °C\n")
-
-            # write cpu temp
-            cpu_temp = self.telemetry.get_cpu_temp()
-            file.write(f"CPU Temperature: {cpu_temp} °C\n")
-
-            # write estimated calibration parameters to log
-            file.write("estimated distortion parameters:\n")
-            for key, value in self.distortion_calibration_params.items():
-                # Write the key-value pair to the file
-                file.write(f"{key}: {value}\n")
-            else:
-                file.write("Distortion calibration file not found.\n")
 
     def info_add_image_info(self, camera_settings, curr_utc_timestamp):
         """
@@ -2373,6 +2140,164 @@ class PueoStarCameraOperation:
 
         return np.degrees(wdt / dt)  # [ωx, ωy, ωz] in deg/s (camera frame)
 
+    def adjust_exposure_gain(self, astrometry):
+        """
+        Single-step combined autogain (fine knob: GAIN) + autoexposure (coarse knob: EXPOSURE).
+
+        Exposure units: microseconds (µs).
+        Gain units: camera gain setting (e.g., cB).
+
+        All configuration comes from [CAMERA]:
+
+            self.cfg.min_gain_setting
+            self.cfg.max_gain_setting
+            self.cfg.camera_exposure_min_us
+            self.cfg.camera_exposure_max_us
+
+            self.cfg.autogain_enable
+            self.cfg.autogain_desired_max_pixel_value
+            self.cfg.autogain_mid_gain_setting
+            self.cfg.autogain_min_gain_step
+            self.cfg.autogain_max_exp_factor_up
+            self.cfg.autogain_max_exp_factor_down
+            self.cfg.autogain_use_masked_p995
+            self.cfg.autogain_min_mask_pixels
+        """
+
+        # --- 0. Master switch ---
+        if self.cfg.autogain_enable == 0:
+            self.logit("adjust_exposure_gain: autogain_enable=0; skipping.")
+            return
+
+        # --- 1. Read p99.5 metrics from astrometry dict ---
+        p995_original = astrometry.get('p995_original')
+        p995_masked = astrometry.get('p995_masked_original')
+        n_mask_pixels = astrometry.get('n_mask_pixels')  # optional
+
+        # Prefer masked p995 if enabled and mask is reasonably populated
+        if (
+            self.cfg.autogain_use_masked_p995
+            and p995_masked is not None
+            and p995_masked > 0
+            and (n_mask_pixels is None or n_mask_pixels >= self.cfg.autogain_min_mask_pixels)
+        ):
+            high_pix_value = p995_masked
+            src_name = "p995_masked_original"
+        else:
+            high_pix_value = p995_original
+            src_name = "p995_original"
+
+        desired_max_pix_value = self.cfg.autogain_desired_max_pixel_value
+
+        # Sanity check
+        if (
+            high_pix_value is None or
+            high_pix_value <= 0 or
+            desired_max_pix_value is None or
+            desired_max_pix_value <= 0
+        ):
+            self.logit("adjust_exposure_gain: invalid p995 or target; no change.")
+            return
+
+        # --- 2. Current camera settings ---
+        camera_settings = self.camera.get_control_values()
+        old_exposure = camera_settings['Exposure']      # µs
+        old_gain_value = camera_settings['Gain']        # cB
+
+        # --- 3. Limits and knobs from [CAMERA] ---
+
+        # Gain hardware limits
+        max_gain_hw = self.cfg.max_gain_setting
+        min_gain_hw = self.cfg.min_gain_setting
+
+        # Exposure limits (ONLY THIS RANGE, no separate autogain copy)
+        exp_min = self.cfg.camera_exposure_min_us
+        exp_max = self.cfg.camera_exposure_max_us
+
+        # Autogain behavior parameters
+        mid_gain = self.cfg.autogain_mid_gain_setting
+        min_gain_step = self.cfg.autogain_min_gain_step
+        max_exp_factor_up = self.cfg.autogain_max_exp_factor_up
+        max_exp_factor_down = self.cfg.autogain_max_exp_factor_down
+
+        self.logit(
+            f"adjust_exposure_gain: using {src_name}={high_pix_value:.1f}, "
+            f"target={desired_max_pix_value:.1f}, "
+            f"exp_range=[{exp_min},{exp_max}] µs, "
+            f"gain_range=[{min_gain_hw},{max_gain_hw}]"
+        )
+
+        # --- 4. GAIN as fine knob ---
+
+        proposed_gain_value = self.calculate_gain_adjustment(
+            old_gain_value,
+            high_pix_value,
+            desired_max_pix_value
+        )
+
+        too_dark = high_pix_value < desired_max_pix_value
+        too_bright = high_pix_value > desired_max_pix_value
+
+        # Gain "railed in wrong direction"
+        railed_high_and_dark = (proposed_gain_value >= max_gain_hw) and too_dark
+        railed_low_and_bright = (proposed_gain_value <= min_gain_hw) and too_bright
+        railed_in_wrong_direction = railed_high_and_dark or railed_low_and_bright
+
+        # Case A: gain can fix it → adjust gain only
+        if not railed_in_wrong_direction:
+            delta_gain = proposed_gain_value - old_gain_value
+
+            if abs(delta_gain) < self.cfg.autogain_min_gain_step:
+                self.logit(
+                    f"  adjust_exposure_gain (fine): |Δgain|={delta_gain:.2f} < "
+                    f"min_gain_step={min_gain_step}; no change.",
+                    color='yellow'
+                )
+                return
+
+            new_gain_value = proposed_gain_value
+            new_exposure_value = old_exposure
+
+            self.logit(
+                f"  adjust_exposure_gain (fine): gain {old_gain_value} -> {new_gain_value}, "
+                f"exposure stays {old_exposure} µs",
+                color='yellow'
+            )
+
+            self.camera.set_control_value(asi.ASI_GAIN, int(round(new_gain_value)))
+            self.camera.set_control_value(asi.ASI_EXPOSURE, int(round(new_exposure_value)))
+            return
+
+        # Case B: gain railed → adjust exposure and recenter gain
+
+        ratio = desired_max_pix_value / float(high_pix_value)  # >1 => too dark, <1 => too bright
+
+        if ratio > 1.0:
+            exp_factor = min(ratio, max_exp_factor_up)
+        else:
+            exp_factor = max(ratio, max_exp_factor_down)
+
+        new_exposure_value = old_exposure * exp_factor
+
+        # after you compute new_exposure_value (in µs)
+        exposure_ms = new_exposure_value / 1000.0
+        new_exposure_value = int(round(exposure_ms) * 1000)
+        new_gain_value = int(round(mid_gain))
+
+        self.logit(
+            "adjust_exposure_gain (coarse): gain railed; adjusting exposure and recentering gain. "
+            f"p995={high_pix_value:.1f}, target={desired_max_pix_value:.1f}, "
+            f"ratio={ratio:.3f}, exp_factor={exp_factor:.3f}, "
+            f"exposure {old_exposure} -> {new_exposure_value} µs, "
+            f"gain {old_gain_value} -> {new_gain_value}"
+        )
+
+        if new_exposure_value >= exp_max and ratio > 1.0:
+            self.logit("adjust_exposure_gain: hit exposure cap (CAMERA limits); image may remain underexposed.")
+
+        self.camera.set_control_value(asi.ASI_GAIN, int(round(new_gain_value)))
+        self.camera.set_control_value(asi.ASI_EXPOSURE, int(round(new_exposure_value)))
+
     def camera_take_image(self, cmd=None, is_operation=False, is_test=False):
         """
         Take camera image and
@@ -2498,13 +2423,7 @@ class PueoStarCameraOperation:
                 # and hw_autogain_enabled
         ):
             self.logit(f"Autogain mode: {self.cfg.autogain_mode}", color="cyan")
-            if self.cfg.autogain_mode == "software":
-                # self.logit("software autogain iteration.")
-                self.log.debug('Running software_autogain_maintenance in MAIN thread.')
-                new_gain, gain_exec = timed_function(self.software_autogain_maintenance, camera_settings)
-                self.logit(f'Software autogain completed: interval={self.cfg.autogain_update_interval} current gain: {current_gain} new gain: {new_gain} in {gain_exec:.4f} seconds.', color='cyan')
-            # TODO: Windell, the hardware autogain is not happening here but above in the capture image!!! The next elif MUST never run!!!
-            elif self.cfg.autogain_mode == "hardware" and False:
+            if self.cfg.autogain_mode == "hardware" and False: # Let's not do this at the moment
                 if is_threaded_autogain_maintenance:
                     if self._autogain_thread is None or not self._autogain_thread.is_alive():
                         self.log.debug('Running hardware autogain_maintenance in a NEW thread.')
@@ -2518,6 +2437,9 @@ class PueoStarCameraOperation:
                     self.log.debug('Running autogain_maintenance in MAIN thread.')
                     new_gain, gain_exec = timed_function(self.autogain_maintenance, camera_settings)
                     self.logit(f'Single image autogain completed: interval={self.cfg.autogain_update_interval} current gain: {current_gain} new gain: {new_gain} in {gain_exec:.4f} seconds.', color='cyan')
+            elif self.cfg.autogain_mode == "software":
+                self.log.debug('Running software autogain.')
+
 
         # Perform astrometry
         image_file = timestamp_string
@@ -2590,6 +2512,12 @@ class PueoStarCameraOperation:
             self.log.warning(f'No solution for astrometry.')
             self.server.write(f'Solving of image (do_astrometry) did not produce any solutions.', 'warning')
             return position
+        else:
+            self.logit(f"p995_masked_image value: {self.astrometry.get('p995_masked_original', '-')}")
+            self.logit(f"p995_original image value: {self.astrometry.get('p995_original', '-')}")
+
+            if self.cfg.autogain_mode == 'software':
+                self.adjust_exposure_gain(self.astrometry)
 
         # Append additional image metadata log to a file.
         self.info_add_astro_info()

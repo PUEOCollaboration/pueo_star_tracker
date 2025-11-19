@@ -314,19 +314,15 @@ def source_finder(
             - sources_mask (numpy.ndarray): A binary mask highlighting the top selected sources, if `is_trail` is True.
             - top_contours (list): A list of contours for the top selected sources.
     """
-    ########
-    # Background Estimation
-    ########
-
     d = int(local_sigma_cell_size)
     if d < 3:
         raise ValueError("d must be >= 3")
 
     # Downscale image
-    print("Downscaling image.")
+    logit("Downscaling image.")
     downscale_factor = leveling_filter_downscale_factor
     if downscale_factor > 1:
-        print(f"downscale_factor: {downscale_factor}")
+        logit(f"downscale_factor: {downscale_factor}")
         downsampled_img = cv2.resize(img, (img.shape[1] // downscale_factor, img.shape[0] // downscale_factor),
                                      interpolation=cv2.INTER_AREA)
         d_small = max(3, d // downscale_factor)  # shrink kernel accordingly
@@ -335,12 +331,12 @@ def source_finder(
         d_small = d
 
     milliseconds0 = int(time.time() * 1000)
-    print("Estimating initial local levels from downscaled image.")
+    logit("Estimating initial local levels from downscaled image.")
     initial_local_levels = ring_mean_background_estimation(downsampled_img, d_small)
-    print("Time in milliseconds since epoch", (int(time.time() * 1000) - milliseconds0))
+    logit(f"Time in milliseconds since epoch {int(time.time() * 1000) - milliseconds0}")
 
     # Upscale back with interpolation
-    print("Upscaling initial local levels.")
+    logit("Upscaling initial local levels.")
     if downscale_factor > 1:
         initial_local_levels = cv2.resize(initial_local_levels, (img.shape[1], img.shape[0]),
                                           interpolation=cv2.INTER_LINEAR)
@@ -351,13 +347,13 @@ def source_finder(
         file.write(f"Initial background level mean : {np.mean(initial_local_levels)}\n")
         file.write(f"Initial background level stdev : {np.std(initial_local_levels)}\n")
 
-    print("Leveling image.")
+    logit("Leveling image.")
     # --- Build cleaned image once (residual) ---
     #######
     cleaned_img = subtract_background(img, initial_local_levels)
 
     if return_partial_images:
-        print("Writing cleaned_img (leveled image) to disk.")
+        logit("Writing cleaned_img (leveled image) to disk.")
         cv2.imwrite(os.path.join(partial_results_path, "initial_cleaned_image.png"), cleaned_img)
 
     # Downscale image
@@ -371,7 +367,7 @@ def source_finder(
         downsampled_img = cleaned_img
         d_small = d
 
-    print("Estimating final local levels for stats calculation.")
+    logit("Estimating final local levels for stats calculation.")
     final_local_levels = ring_mean_background_estimation(downsampled_img, d_small)
 
     # Upscale back with cubic spline
@@ -385,34 +381,28 @@ def source_finder(
         file.write(f"Final background level mean : {np.mean(final_local_levels)}\n")
         file.write(f"Final pass background level stdev : {np.std(final_local_levels)}\n")
 
-    print("Estimating noise from leveled image.")
-    # estimate noise for image
+    logit("Estimating noise from leveled image.")
 
     milliseconds0 = int(time.time() * 1000)
-    print("Fast mode noise using estimate_noise_pairs_function")
+    logit("Fast mode noise using estimate_noise_pairs_function")
     sigma_g = estimate_noise_pairs(cleaned_img, sep=int(noise_pair_sep_full))
     estimated_noise = np.full_like(cleaned_img, sigma_g, dtype=np.float32)
     with open(log_file_path, "a") as file:
         file.write("\n--- Noise Estimation ---\n")
         file.write(f"sigma_estimate : {float(sigma_g):.6f}\n")
 
-    print("Time in milliseconds since epoch", (int(time.time() * 1000) - milliseconds0))
+    logit(f"Time in milliseconds since epoch {int(time.time() * 1000) - milliseconds0}")
 
-    print("resizing noise image.")
+    logit("resizing noise image.")
     estimated_noise = cv2.resize(estimated_noise, (img.shape[1], img.shape[0]), interpolation=cv2.INTER_LINEAR)
 
     # Build leveled residual for hysteresis thresholding
-    residual_img = subtract_background(cleaned_img, final_local_levels)
-
-    # smooth the residual_image
+    residual_img = subtract_background(cleaned_img,final_local_levels)
 
     if return_partial_images:
-        print("Writing leveled_image.")
-        cv2.imwrite(os.path.join(partial_results_path, "residual_img.png"), residual_img)
+        logit("Writing leveled_image.")
+        cv2.imwrite(os.path.join(partial_results_path, "residual_img.png"), residual_img)\
 
-    # threshold using hysteresis
-    milliseconds0 = int(time.time() * 1000)
-    print("Creating mask using hystersis thresholding.")
     sources_mask, sources_mask_u8 = threshold_with_noise(
         residual_img,
         sigma_map=estimated_noise,
@@ -424,41 +414,42 @@ def source_finder(
         sigma_gauss=float(cfg.hyst_sigma_gauss),
         sigma_floor=float(cfg.hyst_sigma_floor),
     )
-
-    sources_mask = ((sources_mask > 0).astype(np.uint8) * 255)
-    print("Time in milliseconds since epoch", (int(time.time() * 1000) - milliseconds0))
-
     if return_partial_images:
-        print("writing hysteresis sources mask to disk.")
-        cv2.imwrite(os.path.join(partial_results_path, "hyst_sources_mask.png"), sources_mask)
+        logit("writing hysteresis sources mask to disk.")
+        cv2.imwrite(os.path.join(partial_results_path, "hyst_sources_mask.png"), sources_mask_u8)
 
-    print("Creating masked_image.")
+    logit("Creating cleaned masked_image. Using hysteresis.")
     # Apply mask to the cleaned image for downstream display/photometry
-    sources_mask_u8 = sources_mask if sources_mask.dtype == np.uint8 else ((sources_mask > 0).astype(np.uint8) * 255)
-    masked_image = cv2.bitwise_and(cleaned_img, cleaned_img, mask=sources_mask_u8)
+    masked_clean_image = cv2.bitwise_and(cleaned_img, cleaned_img, mask=sources_mask_u8)
 
-    if return_partial_images:
-        print("Writing masked_image")
-        cv2.imwrite(os.path.join(partial_results_path, "masked_image_predilation_premerge.png"), masked_image)
+    #create simple mask for autogain autoexposure thresholding
+    simple_sources_mask = residual_img > (float(cfg.hyst_k_low)*estimated_noise)
+    simple_sources_mask_u8 = (simple_sources_mask.astype(np.uint8) * 255)
 
-    # save masked sources image before dilation or angle aware merge
-    sources_mask_raw = sources_mask.copy()  # full pre–top-N mask for the classifier
+    logit("Creating cleaned masked_image. Using hysteresis mask. For autogain/exposure.")
+    masked_original_image = cv2.bitwise_and(img, img, mask=simple_sources_mask_u8)
+
+    p995_original = np.percentile(img, 99.5)
+    p995_masked_original = np.percentile(masked_original_image, 99.5)
+
+    logit(f"p995_original: {p995_original}")
+    logit(f"p995_masked_original: {p995_masked_original}")
 
     # Defer trail/still decision to astrometry.py classifier; only honor explicit override
     use_trail_mode = bool(is_trail) if is_trail is not None else False
     is_trail = use_trail_mode
 
-    contours, _ = cv2.findContours(sources_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours, _ = cv2.findContours(sources_mask_u8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if return_partial_images:
         bg_vis_16 = initial_local_levels.astype(np.uint16)
         cv2.imwrite(os.path.join(partial_results_path, "1.3 - Local Estimated Background.png"),
                         bg_vis_16)
         cv2.imwrite(os.path.join(partial_results_path, "1.4 - Local Background subtracted image.png"), cleaned_img)
-        cv2.imwrite(os.path.join(partial_results_path, "1.5 - Masked image STILL.png"), masked_image)
-        cv2.imwrite(os.path.join(partial_results_path, "1.7 - Merged Mask.png"), sources_mask)
+        cv2.imwrite(os.path.join(partial_results_path, "1.5 - Masked image STILL.png"), masked_clean_image)
+        cv2.imwrite(os.path.join(partial_results_path, "1.7 - Merged Mask.png"), sources_mask_u8)
 
     # Calculate fluxes
-    print("Filtering sources.")
+    logit("Filtering sources.")
     fluxes = {}
     for label, contour in enumerate(contours):
         if cv2.contourArea(contour) < min_size or cv2.contourArea(contour) > max_size:
@@ -467,45 +458,14 @@ def source_finder(
         # Calculate enclosing Rectangle
         x, y, w, h = cv2.boundingRect(contour)
         x1, y1, x2, y2 = (x, y, x + w, y + h)
-        roi = masked_image[y1:y2, x1:x2]
+        roi = masked_clean_image[y1:y2, x1:x2]
         shifted_contour = contour - [x, y]
         # Extract a masked ROI from the cleaned image containing each segement
         mask = np.zeros((h, w), dtype=np.uint8)
         cv2.drawContours(mask, [shifted_contour], -1, (255), thickness=cv2.FILLED)
         filtered_roi = cv2.bitwise_and(roi, roi, mask=mask)
-        # filter out sources based on number of pixels
-        # --- Compactness filter (point mode only): reject elongated/wispy blobs ---
-        # C = 4*pi*A / P^2, where A=area, P=perimeter; C≈1 for circles, →0 for elongated.
-        if not is_trail:
-            area = float(cv2.contourArea(contour))
-            perim = float(cv2.arcLength(contour, True))
-            compactness = float((4.0 * np.pi * area) / (perim * perim))
-            C_MIN = float(cfg.still_compactness_min)
-            if compactness < C_MIN:
-                fluxes[label] = -1
-                continue
-            # --- Axial-ratio guard (point mode only): reject highly elongated shapes ---
-            # Compute covariance from central moments and take sqrt(lambda_max / lambda_min).
-            m = cv2.moments(contour)
-            if m["m00"] <= 0:
-                fluxes[label] = -1
-                continue
-            mu20 = m["mu20"] / m["m00"]
-            mu02 = m["mu02"] / m["m00"]
-            mu11 = m["mu11"] / m["m00"]
-            tr = mu20 + mu02
-            disc = max(tr * tr - 4.0 * (mu20 * mu02 - mu11 * mu11), 0.0) ** 0.5
-            lam1 = 0.5 * (tr + disc)
-            lam2 = max(1e-12, 0.5 * (tr - disc))
-            axial_ratio = float(np.sqrt(lam1 / lam2))
-            R_MAX = float(cfg.still_axial_ratio_max)  # tune: 1.5–1.8 typical; lower rejects more elongation
-            if axial_ratio > R_MAX:
-                fluxes[label] = -1
-                continue
-        else:
-            pass
         fluxes[label] = int(np.sum(filtered_roi.astype(np.int64)))
-    print("sorting fluxes.")
+    logit("sorting fluxes.")
     # Sort sources based on flux
     fluxes_sorted = list(sorted(fluxes.items(), key=lambda item: item[1], reverse=True))
 
@@ -513,13 +473,12 @@ def source_finder(
     if len(fluxes_sorted) < number_sources:
         number_sources = len(fluxes_sorted)
 
-    print("taking top contours.")
+    logit("Taking only top contours. Chopping rest off.")
     # keep only top sources
     top_sources = []
     for i in range(len(fluxes_sorted) if is_trail else number_sources):
         if fluxes_sorted[i][1] != -1:
             top_sources.append(fluxes_sorted[i][0])
-
     top_contours = [contours[i] for i in top_sources]
 
     # --- For TRAIL frames: compute "brightness" as MEAN intensity inside each merged streak ---
@@ -531,7 +490,7 @@ def source_finder(
             cnt_roi[:, 0, 0] -= x
             cnt_roi[:, 0, 1] -= y
 
-            roi = masked_image_trail[y:y + h, x:x + w]
+            roi = masked_clean_image[y:y + h, x:x + w]
             mask = np.zeros((h, w), np.uint8)
             # Use merged contour footprint (exact union shape)
             cv2.drawContours(mask, [cnt_roi], -1, 255, thickness=cv2.FILLED)
@@ -545,16 +504,15 @@ def source_finder(
         # In TRAIL mode: keep only the top-N merged streaks by MEAN intensity
         keep_n = min(number_sources, len(brightness_sorted)) if is_trail else len(brightness_sorted)
         order = [i for (i, _) in brightness_sorted[:keep_n]]
-
         # Reorder (and slice, in trail mode) so downstream overlay/exports follow this order
         top_contours = [top_contours[i] for i in order]
 
     if return_partial_images:
-        sources_mask_tmp = np.zeros_like(masked_image, dtype=np.uint8)
+        sources_mask_tmp = np.zeros_like(masked_clean_image, dtype=np.uint8)
         cv2.drawContours(sources_mask_tmp, top_contours, -1, (0, 255, 255), thickness=cv2.FILLED)
         # mask sources based on flux
         cv2.imwrite(os.path.join(partial_results_path, "2 - Contoured Source Mask.png"), sources_mask_tmp)
-    print(f"is_trail: {is_trail}")
+    logit(f"is_trail: {is_trail}")
 
     if is_trail:
         # Log detection summary (trailed)
@@ -568,6 +526,6 @@ def source_finder(
                 file.write(f"median_length_px : {float(np.median(lengths)):.1f}\n")
                 file.write(f"median_area_px : {float(np.median([cv2.contourArea(c) for c in contours])):.1f}\n")
 
-    return masked_image, sources_mask, top_contours
+    return masked_clean_image, sources_mask, top_contours, p995_original, p995_masked_original
 
 

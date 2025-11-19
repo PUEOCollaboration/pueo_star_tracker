@@ -17,7 +17,7 @@ def compute_centroids_from_trails_ellipse_method(
     image: np.ndarray,
     sources_mask: np.ndarray,
     *,
-    min_area_px: int = 20,
+    min_area_px: int = 10,
     aspect_ratio_min: float = 2.0,          # reject fat/round blobs
     use_uniform_length: bool = True,
     uniform_length_mode: str = "median",    # "median" | "mean" | "value"
@@ -303,7 +303,9 @@ def compute_centroids_from_still(
         file.write(f"number of filtered sources : {len(filtered_sources)}\n")
         file.write(f"number of rejected sources : {len(detected_sources) - len(filtered_sources)}\n")
         mean_d = float(np.mean(diameters)) if diameters else 0.0
+        median_d = float(np.median(diameters)) if diameters else 0.0
         file.write(f"mean centroid diameter : {mean_d}\n")
+        file.write(f"median centroid diameter : {median_d}\n")
 
     # Draw circle around valid source
     # (OpenCV uses BGR)

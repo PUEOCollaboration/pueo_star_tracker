@@ -756,7 +756,7 @@ def image_resize(img, scale_factors, image_filename, overlay=None, resize_mode='
         jp2_filename = os.path.join(inspection_path, jp2_basename)  # Full path
 
         save_as_jpeg_with_stretch(resized_img, jpeg_filename, quality, lower_percentile, upper_percentile)
-        # TODO: Revisit using JPEG2000 - Disabled.
+        # TODO: Revisit using JPEG2000 - Disabled. Requested by Windell.
         if save_as_jp2 and False:
             save_as_jp2(resized_img, jp2_filename,500) # Target ~10:1 compression
 

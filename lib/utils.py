@@ -756,8 +756,8 @@ def image_resize(img, scale_factors, image_filename, overlay=None, resize_mode='
         jp2_filename = os.path.join(inspection_path, jp2_basename)  # Full path
 
         save_as_jpeg_with_stretch(resized_img, jpeg_filename, quality, lower_percentile, upper_percentile)
-        # TODO: Revisit using JPEG2000
-        if save_as_jp2:
+        # TODO: Revisit using JPEG2000 - Disabled.
+        if save_as_jp2 and False:
             save_as_jp2(resized_img, jp2_filename,500) # Target ~10:1 compression
 
         # Create symlink to the latest image
@@ -812,7 +812,10 @@ def save_raws(img, ssd_path="", sd_card_path="", image_name="",
     # NOTE: The SD version of image will be CREATED for exchange with GUI!!! AND  deleted in .write if preflight mode
     image_resized_filename = f"{sd_card_path}/{image_name}-raw-ds.png"
     jpeg_settings = jpeg_settings if jpeg_settings else {}
-    image_resized_shape = image_resize(img1, scale_factors, image_resized_filename, 'Raw Image',
+
+    overlay_sd_card = None # Was: "Raw Image"
+    image_resized_shape = image_resize(img1, scale_factors, image_resized_filename,
+                                       overlay=overlay_sd_card,
                                        resize_mode=resize_mode, png_compression=png_compression,
                                        is_inspection=True, jpeg_settings=jpeg_settings)
     log.debug(f'Saved downscaled image to sd path: {image_resized_filename} in {get_dt(t0)}.')

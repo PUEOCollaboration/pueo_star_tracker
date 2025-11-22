@@ -388,9 +388,11 @@ class StarCommBridge:
                 self.server.camera_pause()
                 ret = Status.get_status(Status.SUCCESS, "Paused.")
             elif commands == Commands.RUN_AUTOFOCUS:
-                # self.server.camera_run_autofocus(cmd) # Note this is autofocus only! Shall not be used standalone.
-                self.server.camera_autofocus(cmd) # Note this is full autofocus/autogain
-                ret = Status.get_status(Status.SUCCESS, "Autofocus/autogain initiated.")
+                if self.server.operation_enabled:
+                    ret = Status.get_status(Status.ERROR,f"Warning: Cannot run autofocus in autonomous mode.")
+                else:
+                    self.server.camera_autofocus(cmd) # Note this is full autofocus/autogain
+                    ret = Status.get_status(Status.SUCCESS, "Autofocus/autogain initiated.")
             elif commands == Commands.SET_GAIN:
                 self.server.camera_set_gain(cmd)
                 ret = Status.get_status(Status.SUCCESS, "Gain set.")

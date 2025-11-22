@@ -2144,8 +2144,9 @@ class PueoStarCameraOperation:
         """
         Single-step combined autogain (fine knob: GAIN) + autoexposure (coarse knob: EXPOSURE).
 
-        Exposure units: microseconds (µs).
-        Gain units: camera gain setting (e.g., cB).
+        Exposure units (internal): microseconds (µs).
+        Exposure units (logging): milliseconds (ms).
+        Gain units: camera gain setting (cB).
 
         All configuration comes from [CAMERA]:
 
@@ -2154,19 +2155,24 @@ class PueoStarCameraOperation:
             self.cfg.camera_exposure_min_us
             self.cfg.camera_exposure_max_us
 
+            self.cfg.camera_exposure_lab_best_us   # used when exposure is "locked"
+
             self.cfg.autogain_enable
             self.cfg.autogain_desired_max_pixel_value
             self.cfg.autogain_mid_gain_setting
             self.cfg.autogain_min_gain_step
-            self.cfg.autogain_max_exp_factor_up
-            self.cfg.autogain_max_exp_factor_down
-            self.cfg.autogain_use_masked_p995
+            self.cfg.autogain_max_exp_factor_up    # if both up & down are 1.0 → exposure lock
+            self.cfg.autogain_max_exp_factor_down  # "
+            self.cfg.autogain_use_masked_p995      # 0=never, 1=auto, 2=force
             self.cfg.autogain_min_mask_pixels
         """
 
         # --- 0. Master switch ---
         if self.cfg.autogain_enable == 0:
-            self.logit("adjust_exposure_gain: autogain_enable=0; skipping.")
+            self.logit(
+                "autogain/autoexposure: autogain_enable:0, skipping.",
+                color='yellow'
+            )
             return
 
         # --- 1. Read p99.5 metrics from astrometry dict ---
@@ -2174,13 +2180,31 @@ class PueoStarCameraOperation:
         p995_masked = astrometry.get('p995_masked_original')
         n_mask_pixels = astrometry.get('n_mask_pixels')  # optional
 
-        # Prefer masked p995 if enabled and mask is reasonably populated
-        if (
-            self.cfg.autogain_use_masked_p995
-            and p995_masked is not None
-            and p995_masked > 0
-            and (n_mask_pixels is None or n_mask_pixels >= self.cfg.autogain_min_mask_pixels)
-        ):
+        # --- Decide whether to use masked or unmasked p995 ---
+
+        mode = self.cfg.autogain_use_masked_p995  # 0=never, 1=auto, 2=force
+        min_mask_pixels = self.cfg.autogain_min_mask_pixels
+
+        mode_str_map = {
+            0: "never_masked",
+            1: "auto_masked_if_enough_pixels",
+            2: "force_masked_when_valid",
+        }
+        mode_str = mode_str_map.get(mode, f"unknown_mode_{mode}")
+
+        use_masked = False
+
+        if p995_masked is not None and p995_masked > 0:
+            if mode == 2:
+                # FORCE mode: always use masked p995 if it exists and is positive
+                use_masked = True
+            elif mode == 1:
+                # AUTO mode: only use masked p995 if there are enough pixels in the mask
+                if (n_mask_pixels is not None) and (n_mask_pixels >= min_mask_pixels):
+                    use_masked = True
+            # mode == 0 -> never use masked
+
+        if use_masked:
             high_pix_value = p995_masked
             src_name = "p995_masked_original"
         else:
@@ -2189,20 +2213,27 @@ class PueoStarCameraOperation:
 
         desired_max_pix_value = self.cfg.autogain_desired_max_pixel_value
 
-        # Sanity check
+        # Sanity check on brightness metrics and target
         if (
-            high_pix_value is None or
-            high_pix_value <= 0 or
-            desired_max_pix_value is None or
-            desired_max_pix_value <= 0
+                high_pix_value is None or
+                high_pix_value <= 0 or
+                desired_max_pix_value is None or
+                desired_max_pix_value <= 0
         ):
-            self.logit("adjust_exposure_gain: invalid p995 or target; no change.")
+            msg = (
+                "autogain/autoexposure: status:HUNTING, action:invalid_p995\n"
+                f"  src:{src_name}, mode:{mode}({mode_str}), use_masked:{use_masked}, "
+                f"n_mask_pixels:{n_mask_pixels}\n"
+                f"  p995:{high_pix_value}, target:{desired_max_pix_value}, "
+                "note:no_change_applied"
+            )
+            self.logit(msg, color='yellow')
             return
 
         # --- 2. Current camera settings ---
         camera_settings = self.camera.get_control_values()
-        old_exposure = camera_settings['Exposure']      # µs
-        old_gain_value = camera_settings['Gain']        # cB
+        old_exposure = camera_settings['Exposure']  # µs
+        old_gain_value = camera_settings['Gain']  # cB
 
         # --- 3. Limits and knobs from [CAMERA] ---
 
@@ -2210,7 +2241,7 @@ class PueoStarCameraOperation:
         max_gain_hw = self.cfg.max_gain_setting
         min_gain_hw = self.cfg.min_gain_setting
 
-        # Exposure limits (ONLY THIS RANGE, no separate autogain copy)
+        # Exposure limits (µs)
         exp_min = self.cfg.camera_exposure_min_us
         exp_max = self.cfg.camera_exposure_max_us
 
@@ -2220,12 +2251,23 @@ class PueoStarCameraOperation:
         max_exp_factor_up = self.cfg.autogain_max_exp_factor_up
         max_exp_factor_down = self.cfg.autogain_max_exp_factor_down
 
-        self.logit(
-            f"adjust_exposure_gain: using {src_name}={high_pix_value:.1f}, "
-            f"target={desired_max_pix_value:.1f}, "
-            f"exp_range=[{exp_min},{exp_max}] µs, "
-            f"gain_range=[{min_gain_hw},{max_gain_hw}]"
+        # --- 3a. Exposure lock detection and lab_best exposure ---
+
+        # max_exp_factor_up == max_exp_factor_down == 1.0 → lock exposure to lab_best
+        exposure_lock = (
+                abs(max_exp_factor_up - 1.0) < 1e-6 and
+                abs(max_exp_factor_down - 1.0) < 1e-6
         )
+
+        lab_best_exposure = None
+        if exposure_lock:
+            lab_best_exposure = getattr(self.cfg, "camera_exposure_lab_best_us", old_exposure)
+            if lab_best_exposure > exp_max:
+                lab_best_exposure = exp_max
+            elif lab_best_exposure < exp_min:
+                lab_best_exposure = exp_min
+            lab_best_100us = lab_best_exposure / 100.0
+            lab_best_exposure = int(round(lab_best_100us) * 100)
 
         # --- 4. GAIN as fine knob ---
 
@@ -2238,65 +2280,152 @@ class PueoStarCameraOperation:
         too_dark = high_pix_value < desired_max_pix_value
         too_bright = high_pix_value > desired_max_pix_value
 
+        # Initial brightness classification
+        if too_bright:
+            brightness_state = "TOO_BRIGHT"
+        elif too_dark:
+            brightness_state = "TOO_DARK"
+        else:
+            brightness_state = "NEAR_TARGET"
+
         # Gain "railed in wrong direction"
         railed_high_and_dark = (proposed_gain_value >= max_gain_hw) and too_dark
         railed_low_and_bright = (proposed_gain_value <= min_gain_hw) and too_bright
         railed_in_wrong_direction = railed_high_and_dark or railed_low_and_bright
 
-        # Case A: gain can fix it → adjust gain only
+        # If exposure is locked, never trigger coarse exposure branch
+        if exposure_lock:
+            railed_in_wrong_direction = False
+
+        # --- Summary state we'll fill then log once ---
+
+        action = "none"  # "fine_gain", "coarse_exposure", "no_change_small_delta", "lock_exp_only"
+        ratio = None  # desired / measured brightness
+        exp_factor = 1.0
+        new_gain_value = old_gain_value
+        new_exposure_value = old_exposure
+        changed = False
+
+        # --- Case A: gain can fix it (or exposure is locked) ---
         if not railed_in_wrong_direction:
             delta_gain = proposed_gain_value - old_gain_value
 
-            if abs(delta_gain) < self.cfg.autogain_min_gain_step:
-                self.logit(
-                    f"  adjust_exposure_gain (fine): |Δgain|={delta_gain:.2f} < "
-                    f"min_gain_step={min_gain_step}; no change.",
-                    color='yellow'
-                )
-                return
+            if abs(delta_gain) < min_gain_step:
+                action = "no_change_small_delta"
 
-            new_gain_value = proposed_gain_value
-            new_exposure_value = old_exposure
+                if exposure_lock and (lab_best_exposure is not None) and (old_exposure != lab_best_exposure):
+                    action = "lock_exp_only"
+                    new_exposure_value = lab_best_exposure
+                    new_gain_value = old_gain_value
+                    changed = True
+            else:
+                action = "fine_gain"
+                new_gain_value = proposed_gain_value
 
-            self.logit(
-                f"  adjust_exposure_gain (fine): gain {old_gain_value} -> {new_gain_value}, "
-                f"exposure stays {old_exposure} µs",
-                color='yellow'
-            )
+                if exposure_lock and (lab_best_exposure is not None):
+                    new_exposure_value = lab_best_exposure
+                else:
+                    new_exposure_value = old_exposure
 
-            self.camera.set_control_value(asi.ASI_GAIN, int(round(new_gain_value)))
-            self.camera.set_control_value(asi.ASI_EXPOSURE, int(round(new_exposure_value)))
-            return
+                changed = True
 
-        # Case B: gain railed → adjust exposure and recenter gain
-
-        ratio = desired_max_pix_value / float(high_pix_value)  # >1 => too dark, <1 => too bright
-
-        if ratio > 1.0:
-            exp_factor = min(ratio, max_exp_factor_up)
         else:
-            exp_factor = max(ratio, max_exp_factor_down)
+            # --- Case B: gain railed → adjust exposure and recenter gain (UNLOCKED ONLY) ---
+            action = "coarse_exposure"
+            ratio = desired_max_pix_value / float(high_pix_value)  # >1 => too dark, <1 => too bright
 
-        new_exposure_value = old_exposure * exp_factor
+            if ratio > 1.0:
+                exp_factor = min(ratio, max_exp_factor_up)
+            else:
+                exp_factor = max(ratio, max_exp_factor_down)
 
-        # after you compute new_exposure_value (in µs)
-        exposure_ms = new_exposure_value / 1000.0
-        new_exposure_value = int(round(exposure_ms) * 1000)
-        new_gain_value = int(round(mid_gain))
+            new_exposure_value = old_exposure * exp_factor
 
-        self.logit(
-            "adjust_exposure_gain (coarse): gain railed; adjusting exposure and recentering gain. "
-            f"p995={high_pix_value:.1f}, target={desired_max_pix_value:.1f}, "
-            f"ratio={ratio:.3f}, exp_factor={exp_factor:.3f}, "
-            f"exposure {old_exposure} -> {new_exposure_value} µs, "
-            f"gain {old_gain_value} -> {new_gain_value}"
+            # Clamp to exposure range
+            if new_exposure_value > exp_max:
+                new_exposure_value = exp_max
+            elif new_exposure_value < exp_min:
+                new_exposure_value = exp_min
+
+            # Snap exposure to nearest 100 µs
+            exposure_100us = new_exposure_value / 100.0
+            new_exposure_value = int(round(exposure_100us) * 100)
+
+            # Recenter gain
+            new_gain_value = int(round(mid_gain))
+            changed = True
+
+        # --- Decide HUNTING vs CONVERGED ---
+        status = "CONVERGED" if not changed else "HUNTING"
+        if status == "CONVERGED":
+            brightness_state = "NEAR_TARGET"
+
+        # --- Helper to build ASCII bars + percentages (scaled down to 45 slots) ---
+
+        def _make_bar_and_pct(val, vmin, vmax, slots=45):
+            """
+            Create a status bar like (--------|------------------------------)
+            and a percentage (0–100, with 2 decimal places) showing where `val`
+            lies between vmin and vmax.
+            """
+            try:
+                if vmax <= vmin:
+                    return "(---------------------------------------------)", 0.0
+                frac = (val - vmin) / float(vmax - vmin)
+            except Exception:
+                return "(---------------------------------------------)", 0.0
+
+            if frac < 0.0:
+                frac = 0.0
+            elif frac > 1.0:
+                frac = 1.0
+
+            idx = int(round(frac * (slots - 1)))
+            left = "-" * idx
+            right = "-" * (slots - 1 - idx)
+            pct = frac * 100.0
+            return f"({left}|{right})", pct
+
+        # Build bars using the applied values (after clamping/rounding)
+        exp_bar, exp_pct = _make_bar_and_pct(new_exposure_value, exp_min, exp_max)
+        gain_bar, gain_pct = _make_bar_and_pct(new_gain_value, min_gain_hw, max_gain_hw)
+
+        exp_pct_str = f"{exp_pct:.2f}%"
+        gain_pct_str = f"{gain_pct:.2f}%"
+
+        # For logging: convert exposures to milliseconds
+        old_exp_ms = old_exposure / 1000.0
+        new_exp_ms = new_exposure_value / 1000.0
+        exp_min_ms = exp_min / 1000.0
+        exp_max_ms = exp_max / 1000.0
+
+        # --- Build verbose summary log (4 lines) ---
+
+        ratio_str = f"{ratio:.3f}" if ratio is not None else "n/a"
+        exp_factor_str = f"{exp_factor:.3f}" if action == "coarse_exposure" else "1.000"
+
+        msg = (
+            f"autogain/autoexposure: status:{status}, brightness:{brightness_state}, "
+            f"action:{action}, exp_lock:{exposure_lock}\n"
+            f"  src:{src_name}, mode:{mode}({mode_str}), use_masked:{use_masked}, "
+            f"n_mask_pixels:{n_mask_pixels}, p995:{high_pix_value:.1f}, "
+            f"target:{desired_max_pix_value:.1f}, ratio:{ratio_str}, exp_factor:{exp_factor_str}\n"
+            f"  gain_old:{old_gain_value} cB, gain_new:{new_gain_value} cB, "
+            f"exp_old:{old_exp_ms:.3f} ms, exp_new:{new_exp_ms:.3f} ms, "
+            f"gain_range:[{min_gain_hw},{max_gain_hw}] cB, "
+            f"exp_range:[{exp_min_ms:.3f},{exp_max_ms:.3f}] ms, changed:{changed}\n"
+            f"  bars:exp:[{exp_min_ms:.3f} ms]{exp_bar}[{exp_max_ms:.3f} ms], "
+            f"pos:{new_exp_ms:.3f} ms,{exp_pct_str}, "
+            f"gain:[{min_gain_hw} cB]{gain_bar}[{max_gain_hw} cB], "
+            f"pos:{new_gain_value} cB,{gain_pct_str}"
         )
 
-        if new_exposure_value >= exp_max and ratio > 1.0:
-            self.logit("adjust_exposure_gain: hit exposure cap (CAMERA limits); image may remain underexposed.")
+        self.logit(msg, color='yellow')
 
-        self.camera.set_control_value(asi.ASI_GAIN, int(round(new_gain_value)))
-        self.camera.set_control_value(asi.ASI_EXPOSURE, int(round(new_exposure_value)))
+        # --- Apply settings if they changed ---
+        if changed:
+            self.camera.set_control_value(asi.ASI_GAIN, int(round(new_gain_value)))
+            self.camera.set_control_value(asi.ASI_EXPOSURE, int(round(new_exposure_value)))
 
     def camera_take_image(self, cmd=None, is_operation=False, is_test=False):
         """
@@ -2666,6 +2795,7 @@ class PueoStarCameraOperation:
 
         # focus_type is one of 'covariance', 'source_diameter', 'two_step'
         self.logit('Commanded to refocus (take focus sequence).')
+
 
         focus_method = cmd.focus_method
 

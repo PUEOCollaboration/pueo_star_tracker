@@ -2210,21 +2210,17 @@ class PueoStarCameraOperation:
 
         desired_max_pix_value = self.cfg.autogain_desired_max_pixel_value
 
-        # Sanity check on brightness metrics and target
+        # --- Sanity check on brightness metrics and target ---
+        # NOTE: high_pix_value == 0.0 is allowed (means "no signal yet", very dark).
         if (
                 high_pix_value is None or
-                high_pix_value <= 0 or
                 desired_max_pix_value is None or
                 desired_max_pix_value <= 0
         ):
-            msg = (
-                "autogain/autoexposure: status:HUNTING, action:invalid_p995\n"
-                f"  src:{src_name}, mode:{mode}({mode_str}), use_masked:{use_masked}, "
-                f"n_mask_pixels:{n_mask_pixels}\n"
-                f"  p995:{high_pix_value}, target:{desired_max_pix_value}, "
-                "note:no_change_applied"
-            )
-            self.logit(msg, color='yellow')
+            self.logit(f"autogain/autoexposure: status:HUNTING, action:invalid_p995", color='cyan')
+            self.logit(f"  src: {src_name} mode: {mode}({mode_str}) use_masked: {use_masked} n_mask_pixels: {n_mask_pixels}", color='yellow')
+            self.logit(f"  p995: {high_pix_value}, target: {desired_max_pix_value}", color='yellow')
+            self.logit(f"Note: no_change_applied", color='white')
             return
 
         # --- 2. Current camera settings ---
@@ -2327,9 +2323,12 @@ class PueoStarCameraOperation:
                 changed = True
 
         else:
-            # --- Case B: gain railed → adjust exposure and recenter gain (UNLOCKED ONLY) ---
+            # --- Case B: gain railed → adjust exposure and adjust gain (UNLOCKED ONLY) ---
             action = "coarse_exposure"
-            ratio = desired_max_pix_value / float(high_pix_value)  # >1 => too dark, <1 => too bright
+
+            # Use a floor so we don't divide by zero; keep actual high_pix_value for logs.
+            high_for_ratio = max(high_pix_value, 1.0)
+            ratio = desired_max_pix_value / float(high_for_ratio)  # >1 => too dark, <1 => too bright
 
             if ratio > 1.0:
                 exp_factor = min(ratio, max_exp_factor_up)
@@ -2348,8 +2347,17 @@ class PueoStarCameraOperation:
             exposure_100us = new_exposure_value / 100.0
             new_exposure_value = int(round(exposure_100us) * 100)
 
-            # Recenter gain
-            new_gain_value = int(round(mid_gain))
+            # Gain behavior at exposure limits:
+            # - If too dark and already at max exposure → rail gain high and keep it there.
+            # - If too bright and already at min exposure → rail gain low and keep it there.
+            # - Otherwise → recenter to mid_gain to give room for fine adjustments.
+            if too_dark and new_exposure_value >= exp_max:
+                new_gain_value = max_gain_hw
+            elif too_bright and new_exposure_value <= exp_min:
+                new_gain_value = min_gain_hw
+            else:
+                new_gain_value = int(round(mid_gain))
+
             changed = True
 
         # --- Decide HUNTING vs CONVERGED ---

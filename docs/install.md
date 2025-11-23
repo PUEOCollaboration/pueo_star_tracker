@@ -587,22 +587,14 @@ sudo systemctl enable --now vl_install.service
 
 ```
 
-#### 2. **For User-Level Commands (cedar-detect-server & pueo_star_camera_operation_code.py)**  
+#### 2. **For User-Level Commands (cedar-detect-server & pueo_star_camera_operation_code.py & Web Server)**  
 Use the user's autostart directory to run these at login.
 
-1. Create a shell script to run the commands:
+1. Copy/Create a shell script to run the commands:
    ```bash
    mkdir -p ~/scripts
-   nano ~/scripts/startup_commands.sh
    ```
-   Add:
-   ```bash
-   #!/bin/bash
-   cd ~/Projects/pcc/lib/cedar-detect/python
-   cargo run --release --bin cedar-detect-server &
-
-   cd ~/Projects/pcc
-   ./.venv/bin/python pueo_star_camera_operation_code.py &
+   Add: Use file ```startup_commands.sh``` from GithubREPO setup/startup_commands.sh
    ```
    Make it executable:
    ```bash
@@ -614,14 +606,16 @@ Use the user's autostart directory to run these at login.
    mkdir -p ~/.config/autostart
    nano ~/.config/autostart/startup_commands.desktop
    ```
-   Add:
+   Add: (or use file from repo: ```setup/autostart/startup_commands.desktop```)
    ```ini
-   [Desktop Entry]
-   Type=Application
-   Name=Startup Commands
-   Exec=/home/pueo-star-tracker2/scripts/startup_commands.sh
-   Hidden=false
-   X-GNOME-Autostart-enabled=true
+    [Desktop Entry]
+    Type=Application
+    Name=Startup Commands
+    # Exec=/home/pst/scripts/startup_commands.sh
+    # Allow for a sleep before invoking the command.
+    Exec=bash -c "sleep 60 && /home/pst/scripts/startup_commands.sh"
+    Hidden=false
+    X-GNOME-Autostart-enabled=true
    ```
 
 ### C. Verify Permissions & Dependencies (Do VIA Sudo Rule next section)

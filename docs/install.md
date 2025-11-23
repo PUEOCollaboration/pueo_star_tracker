@@ -937,8 +937,15 @@ run_chamber = True
 # Use Pycharm or command line/terminal
 cd /home/pueo-star-tracker2/Projects/pcc
 
-# Run server:
+# Run server (Standalone):
 ./run.sh > ./logs/server-console.log &
+
+# Run server bundle (Production All Process3es PUEO, Cedar, Web)
+cd /home/pueo-star-tracker2/Projects/pcc/logs
+./status.sh start
+
+# Check status of running processes:
+./status.sh
 ```
 
 The **telemetry** is saved to the logs/telemetry.log of the server installation folder.

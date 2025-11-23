@@ -132,7 +132,7 @@ class Config(Dynamic):
     camera_exposure_max_us = 5000000
 
     # Master switch for software autogain/autoexposure
-    autogain_enable = 1
+    autogain_enable = True
 
     # Preferred "center" gain when exposure changes
     autogain_mid_gain_setting = 300
@@ -588,7 +588,7 @@ class Config(Dynamic):
         self.camera_exposure_max_us = self._config.getint('CAMERA', 'camera_exposure_max_us', fallback=self.camera_exposure_max_us)
 
         # Autogain / autoexposure knobs
-        self.autogain_enable = self._config.getint('CAMERA', 'autogain_enable', fallback=self.autogain_enable)
+        self.autogain_enable = self._config.getboolean('CAMERA', 'autogain_enable', fallback=self.autogain_enable)
 
         # TODO: This is a derived value, should not be here!!! autogain_mid_gain_setting is not defined in config.ini!!!
         self.autogain_mid_gain_setting = self._config.getfloat('CAMERA', 'autogain_mid_gain_setting', fallback=(self.min_gain_setting + self.max_gain_setting) / 2.0)

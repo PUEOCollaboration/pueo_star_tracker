@@ -2168,11 +2168,8 @@ class PueoStarCameraOperation:
         """
 
         # --- 0. Master switch ---
-        if self.cfg.autogain_enable == 0:
-            self.logit(
-                "autogain/autoexposure: autogain_enable:0, skipping.",
-                color='yellow'
-            )
+        if self.cfg.autogain_enable:
+            self.logit("autogain/autoexposure: autogain_enable:0, skipping.",color='yellow')
             return
 
         # --- 1. Read p99.5 metrics from astrometry dict ---
@@ -2404,28 +2401,46 @@ class PueoStarCameraOperation:
         ratio_str = f"{ratio:.3f}" if ratio is not None else "n/a"
         exp_factor_str = f"{exp_factor:.3f}" if action == "coarse_exposure" else "1.000"
 
-        msg = (
+        new_gain_value = int(round(new_gain_value))
+        new_exposure_value = int(round(new_exposure_value))
+
+        # Logging MUST be single line
+        self.logit(
             f"autogain/autoexposure: status:{status}, brightness:{brightness_state}, "
-            f"action:{action}, exp_lock:{exposure_lock}\n"
-            f"  src:{src_name}, mode:{mode}({mode_str}), use_masked:{use_masked}, "
-            f"n_mask_pixels:{n_mask_pixels}, p995:{high_pix_value:.1f}, "
-            f"target:{desired_max_pix_value:.1f}, ratio:{ratio_str}, exp_factor:{exp_factor_str}\n"
-            f"  gain_old:{old_gain_value} cB, gain_new:{new_gain_value} cB, "
-            f"exp_old:{old_exp_ms:.3f} ms, exp_new:{new_exp_ms:.3f} ms, "
-            f"gain_range:[{min_gain_hw},{max_gain_hw}] cB, "
-            f"exp_range:[{exp_min_ms:.3f},{exp_max_ms:.3f}] ms, changed:{changed}\n"
-            f"  bars:exp:[{exp_min_ms:.3f} ms]{exp_bar}[{exp_max_ms:.3f} ms], "
-            f"pos:{new_exp_ms:.3f} ms,{exp_pct_str}, "
-            f"gain:[{min_gain_hw} cB]{gain_bar}[{max_gain_hw} cB], "
-            f"pos:{new_gain_value} cB,{gain_pct_str}"
+            f"action:{action}, exp_lock:{exposure_lock}",
+            color='yellow'
         )
 
-        self.logit(msg, color='yellow')
+        self.logit(
+            f"src:{src_name}, mode:{mode}({mode_str}), use_masked:{use_masked}, "
+            f"n_mask_pixels:{n_mask_pixels}, p995:{high_pix_value:.1f}, "
+            f"target:{desired_max_pix_value:.1f}, ratio:{ratio_str}, "
+            f"exp_factor:{exp_factor_str}",
+            color='yellow'
+        )
+
+        self.logit(
+            f"gain_old:{old_gain_value} cB, gain_new:{new_gain_value} cB, "
+            f"exp_old:{old_exp_ms:.3f} ms, exp_new_ms:{new_exp_ms:.3f} ms, "
+            f"epn_new:{new_exposure_value}, "
+            f"gain_range:[{min_gain_hw},{max_gain_hw}] cB, "
+            f"exp_range:[{exp_min_ms:.3f},{exp_max_ms:.3f}] ms, "
+            f"changed:{changed}",
+            color='yellow'
+        )
+
+        self.logit(
+            f"bars: exp:[{exp_min_ms:.3f} ms]{exp_bar}[{exp_max_ms:.3f} ms], "
+            f"pos:{new_exp_ms:.3f} ms,{exp_pct_str}, "
+            f"gain:[{min_gain_hw} cB]{gain_bar}[{max_gain_hw} cB], "
+            f"pos:{new_gain_value} cB,{gain_pct_str}",
+            color='yellow'
+        )
 
         # --- Apply settings if they changed ---
         if changed:
-            self.camera.set_control_value(asi.ASI_GAIN, int(round(new_gain_value)))
-            self.camera.set_control_value(asi.ASI_EXPOSURE, int(round(new_exposure_value)))
+            self.camera.set_control_value(asi.ASI_GAIN, new_gain_value)
+            self.camera.set_control_value(asi.ASI_EXPOSURE, new_exposure_value)
 
     def camera_take_image(self, cmd=None, is_operation=False, is_test=False):
         """

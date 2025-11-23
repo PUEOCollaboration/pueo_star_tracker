@@ -594,7 +594,7 @@ Use the user's autostart directory to run these at login.
    ```bash
    mkdir -p ~/scripts
    ```
-   Add: Use file ```startup_commands.sh``` from GithubREPO setup/startup_commands.sh
+   Add: Use file ```startup_commands.sh``` from Github REPO setup/startup_commands.sh
    ```
    Make it executable:
    ```bash

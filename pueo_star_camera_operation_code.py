@@ -43,6 +43,8 @@ import cv2
 # from astropy import modeling
 from scipy.optimize import curve_fit
 from PIL import Image
+import matplotlib
+matplotlib.use('Agg')   # non-GUI backend — renders to files only
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -366,42 +368,34 @@ class PueoStarCameraOperation:
 
     def focus_score_starfield_edge(self, img, top_frac=0.08):
         """
-        Edge-contrast focus score for star fields.
+        Edge-contrast focus score for star fields (Laplacian version, no top-fraction).
 
         Steps:
         - Convert to float and normalize
         - Light Gaussian blur to suppress noise
-        - Sobel gradients -> magnitude
-        - Score = mean of top `top_frac` fraction of gradient magnitudes
+        - Laplacian (second derivative)
+        - Score = mean of |Laplacian| over the whole image
         """
         # 1) to float
         img_f = img.astype(np.float32, copy=False)
 
         # 2) normalize to [0, 1] by max (safe for 8- or 16-bit)
         m = float(img_f.max())
-        if m > 0:
-            img_f /= m
+        if m <= 0 or not np.isfinite(m):
+            return 0.0
+        img_f /= m
 
         # 3) light smoothing
         img_smooth = cv2.GaussianBlur(img_f, (3, 3), 0)
 
-        # 4) Sobel gradients + magnitude
-        gx = cv2.Sobel(img_smooth, cv2.CV_32F, 1, 0, ksize=3)
-        gy = cv2.Sobel(img_smooth, cv2.CV_32F, 0, 1, ksize=3)
-        mag = cv2.magnitude(gx, gy)
+        # 4) Laplacian (second derivative)
+        lap = cv2.Laplacian(img_smooth, cv2.CV_32F, ksize=3)
+        vals = np.abs(lap).ravel()  # magnitude of second derivative
 
-        # 5) robust pooling: mean of top X% magnitudes
-        vals = mag.ravel()
         if vals.size == 0:
             return 0.0
 
-        # TODO: Commented out by Windell, remove if not needed.
-        #if 0.0 < top_frac < 1.0:
-        #    k = max(32, int(vals.size * top_frac))
-        #    if k < vals.size:
-        #        idx = np.argpartition(vals, -k)[-k:]
-        #        vals = vals[idx]
-
+        # 5) simple pooling: mean of all magnitudes (no top_frac)
         return float(vals.mean())
 
     def robust_avg_diameter(self, diameters, min_px=1.5, max_px=30.0, trim_frac=0.10):
@@ -791,6 +785,11 @@ class PueoStarCameraOperation:
             if self.focuser.aperture_position == 'closed':
                 self.logit('Opening Aperture.')
                 self.focuser.open_aperture()
+
+        # Camera Setting required mode
+        self.camera.set_image_type(asi.ASI_IMG_RAW16)
+        # self.camera.set_roi(bins=self.cfg.roi_bins)
+
 
         self.logit("Starting autogain routine.")
         high_pix_value = 0
@@ -1295,7 +1294,7 @@ class PueoStarCameraOperation:
             if downscale_factor > 1:
                 initial_local_levels = cv2.resize(initial_local_levels, (img.shape[1], img.shape[0]),
                                                   interpolation=cv2.INTER_LINEAR)
-            #subtract background the first time.
+            # subtract background the first time.
             cleaned_img = subtract_background(img, initial_local_levels)
 
             # Downscale image
@@ -1337,7 +1336,6 @@ class PueoStarCameraOperation:
                 sigma_floor=float(self.cfg.hyst_sigma_floor),
             )
 
-
             masked_image = cv2.bitwise_and(cleaned_img, cleaned_img, mask=sources_mask_u8)
 
             equiv_diameters = self.get_centroid_diameters(masked_image, is_array=True)
@@ -1357,7 +1355,7 @@ class PueoStarCameraOperation:
             diameter_scores.append(diameter_score)
 
             # Edge-contrast metric on your background-subtracted image
-            edge_score = self.focus_score_starfield_edge(masked_image, top_frac=1.0)
+            edge_score = self.focus_score_starfield_edge(cleaned_img, top_frac=1.0)
             self.logit(f'Edge-contrast Focus score: {edge_score:.6g}')
 
             # Store for contrast-based autofocus (sequence_contrast)
@@ -1566,8 +1564,7 @@ class PueoStarCameraOperation:
         # best_focus = self.cfg.lab_best_focus
         self.best_focus, self.stdev = self.do_autofocus_routine(self.focus_image_path, coarse_start_focus_pos,
                                                                 coarse_stop_focus_pos, coarse_focus_step_count,
-                                                                self.max_focus_position,
-                                                                focus_method)
+                                                                self.max_focus_position)
 
         # change back to default image dynamic range and resolution.
         self.camera.set_image_type(asi.ASI_IMG_RAW16)
@@ -2045,7 +2042,6 @@ class PueoStarCameraOperation:
 
     def compute_angular_velocity(self):
         """Compute camera-frame angular velocity via SO(3) and log ECI LOS."""
-        import numpy as np
 
         # Δt
         delta_t_sec = float(self.curr_time - self.prev_time)
@@ -2079,7 +2075,6 @@ class PueoStarCameraOperation:
         return {'omega_x': float(omega_x), 'omega_y': float(omega_y), 'omega_z': float(omega_z)}
 
     def _radec_roll_to_R_eci_from_cam(self, ra_deg, dec_deg, roll_deg):
-        import numpy as np
         # Inputs are degrees
         α = np.deg2rad(float(ra_deg));
         δ = np.deg2rad(float(dec_deg));
@@ -2109,7 +2104,6 @@ class PueoStarCameraOperation:
         Angular velocity in the CAMERA frame [deg/s] via SO(3) log map between
         consecutive (RA, Dec, Roll) solutions. Camera frame == body frame here.
         """
-        import numpy as np
         # Pull consecutive solutions and Δt
         ra1 = self.astrometry.get('RA');
         dec1 = self.astrometry.get('Dec');

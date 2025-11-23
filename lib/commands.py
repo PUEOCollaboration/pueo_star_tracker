@@ -262,7 +262,7 @@ class Command:
                 'desired_max_pixel_value': {
                     'type': 'int',
                     'min': 0,
-                    'max': 16383
+                    'max': 65532
                 }
             }
         },
@@ -271,7 +271,7 @@ class Command:
                 'desired_max_pixel_value': {
                     'type': 'int',
                     'min': 0,
-                    'max': 16383
+                    'max': 65532
                 }
             }
         },

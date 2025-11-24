@@ -638,10 +638,10 @@ No `echo` or embedded heredoc output inside the script. You can include the inst
 
 ---
 
-**Step 1: Create PUEO Logs Directory**
+**Step 1: Ensure PUEO Logs Directory Exists**
 
 ```bash
-# Create logs directory for PUEO
+# Ensure the PUEO logs directory exists (should already be present)
 mkdir -p /home/pst/Projects/pcc/logs
 chown pst:pst /home/pst/Projects/pcc/logs
 ```

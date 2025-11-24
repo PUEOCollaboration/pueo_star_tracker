@@ -1,8 +1,8 @@
- [Desktop Entry]
- Type=Application
- Name=Startup Commands
- # Exec=/home/pst/scripts/startup_commands.sh
- # Allow for a sleep before invoking the command.
- Exec=bash -c "sleep 60 && /home/pst/scripts/startup_commands.sh"
- Hidden=false
- X-GNOME-Autostart-enabled=true
+[Desktop Entry]
+Type=Application
+Name=Startup Commands
+# Exec=/home/pst/scripts/startup_commands.sh
+# Allow for a sleep before invoking the command.
+Exec=bash -c "sleep 60 && /home/pst/scripts/startup_commands.sh"
+Hidden=false
+X-GNOME-Autostart-enabled=true

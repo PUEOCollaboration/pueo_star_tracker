@@ -469,7 +469,7 @@ sudo apt install smartmontools
 
 ```txt
 Given the ubuntu it is required to 
-  a. Autologin a user: pueo-star-tracker2
+  a. Autologin a user: pst
   b. Start a couple of scripts after each boot including a script that requires sudo.
 
 1. Install the VersaLogic API Package (the vldriver disapears after reboot), needs to run as sudo
@@ -606,16 +606,25 @@ Use the user's autostart directory to run these at login.
    mkdir -p ~/.config/autostart
    nano ~/.config/autostart/startup_commands.desktop
    ```
-   Add: (or use file from repo: ```setup/autostart/startup_commands.desktop```)
-   ```ini
-    [Desktop Entry]
-    Type=Application
-    Name=Startup Commands
-    # Exec=/home/pst/scripts/startup_commands.sh
-    # Allow for a sleep before invoking the command.
-    Exec=bash -c "sleep 60 && /home/pst/scripts/startup_commands.sh"
-    Hidden=false
-    X-GNOME-Autostart-enabled=true
+Add: (or use file from repo: ```setup/autostart/startup_commands.desktop```)
+```ini
+[Desktop Entry]
+Type=Application
+Name=Startup Commands
+# Exec=/home/pst/scripts/startup_commands.sh
+# Allow for a sleep before invoking the command.
+Exec=bash -c "sleep 60 && /home/pst/scripts/startup_commands.sh"
+Hidden=false
+X-GNOME-Autostart-enabled=true
+```
+   
+   Verify and validate:
+   ```bash
+   cat ~/.config/autostart/startup_commands.desktop
+   
+   desktop-file-validate ~/.config/autostart/startup_commands.desktop || echo "desktop-file invalid"
+   
+   ls -l ~/.config/autostart/startup_commands.desktop
    ```
 
 ### C. Verify Permissions & Dependencies (Do VIA Sudo Rule next section)
@@ -626,7 +635,7 @@ Use the user's autostart directory to run these at login.
   ```
   Add:
   ```
-  # pueo-star-tracker2 ALL=(ALL) NOPASSWD: /home/pueo-star-tracker2/Projects/install/vl_install.sh
+  # pst ALL=(ALL) NOPASSWD: /home/pst/Projects/install/vl_install.sh
   pst ALL=(ALL) NOPASSWD: /home/pst/Projects/install/vl_install.sh
   ```
 - Make sure `cargo` and Python dependencies are installed.
@@ -656,7 +665,7 @@ It's a good practice to use `/etc/sudoers.d/` for adding custom sudo rules rathe
 
 5. **Test the rule**:
    ```bash
-   sudo -u pueo-star-tracker2 sudo -l
+   sudo -u pst sudo -l
    ```
    (This should show that the user can run the script without a password.)
 
@@ -728,7 +737,7 @@ systemctl list-timers --all | grep logrotate
 ## How to Run the SERVER from Terminal
 Open terminal and navigate to the SBC pcc server folder. 
 ```bash
-cd /home/pueo-star-tracker2/Projects/pcc
+cd /home/pst/Projects/pcc
 
 # Only once after the installation
 chmod +x run.sh
@@ -902,7 +911,7 @@ sudo dmesg | grep ttyS
 
 ```ini
 # Camera ASI SDK Library
-env_filename = /home/pueo-star-tracker2/ASIStudio/libASICamera2.so
+env_filename = /home/pst/ASIStudio/libASICamera2.so
 # Focuser Port connected to hardware serial port
 focuser_port = /dev/ttyS1
 # Arduino Telemtry Temperature Sensors connected to USB2
@@ -929,13 +938,13 @@ run_chamber = True
 3. Run Server
 ```bash
 # Use Pycharm or command line/terminal
-cd /home/pueo-star-tracker2/Projects/pcc
+cd /home/pst/Projects/pcc
 
 # Run server (Standalone):
 ./run.sh > ./logs/server-console.log &
 
 # Run server bundle (Production All Process3es PUEO, Cedar, Web)
-cd /home/pueo-star-tracker2/Projects/pcc/logs
+cd /home/pst/Projects/pcc/logs
 ./status.sh start
 
 # Check status of running processes:

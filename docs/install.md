@@ -629,14 +629,8 @@ X-GNOME-Autostart-enabled=true
 
 #### 2. PUEO Server Startup Service (systemd user service)
 
-Absolutely — we can separate it cleanly into **two parts**:
-
 1. **Create logs directory**
 2. **Create and enable the systemd user service**
-
-No `echo` or embedded heredoc output inside the script. You can include the instructions in `install.md` with clear steps. Here’s a clean version:
-
----
 
 **Step 1: Ensure PUEO Logs Directory Exists**
 

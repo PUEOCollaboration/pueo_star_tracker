@@ -148,23 +148,30 @@ Reports VL installation state and CEDAR/PUEO process status with PIDs
   - Note: Server requires at least one image!
 4. **Restart server** (follow [Manual Restart](#manual-restart)).  
 
-### Mission Mode  
+### Preflight Checklist  
 1. **Edit `conf/config.ini`:**  
    ```ini
    run_chamber = False  
    flight_mode = preflight
    run_autonomous = True  
    ```  
-2. **Cleanup and restart server.**  
-3. **Start data recording during mission:**  
-   ```bash
-   ~/Projects/pcc/pc.sh set_flight_mode flight
-   ```  
+2. **Cleanup Data and Logfiles**
+```bash
+~/Projects/pcc/logs/cleanup_data.sh
+```
+4. **restart server.**
+```bash
+~/Projects/pcc/logs/status.sh restart
+```
+5. **Start data recording during mission:**  
+```bash
+~/Projects/pcc/pc.sh set_flight_mode flight
+```
    *Or send JSON payload:*  
    ```json
    {"command": "flight_mode", "data": {"method": "set", "mode": "flight"}}
    ```  
-4. **Stop server post-mission.**  
+6. **Stop server post-mission.**  
 
 ### Manual Autofocus/Autogain
 1) How to perform a **manual autofocus**. Where to find file generated/images:

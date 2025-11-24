@@ -587,7 +587,7 @@ sudo systemctl enable --now vl_install.service
 
 ```
 
-#### 2. **For User-Level Commands (cedar-detect-server & pueo_star_camera_operation_code.py & Web Server)**  
+#### 2. **OBSOLETE**  **For User-Level Commands (cedar-detect-server & pueo_star_camera_operation_code.py & Web Server)**  
 Use the user's autostart directory to run these at login.
 
 1. Copy/Create a shell script to run the commands:
@@ -626,6 +626,95 @@ X-GNOME-Autostart-enabled=true
    
    ls -l ~/.config/autostart/startup_commands.desktop
    ```
+
+#### 2. PUEO Server Startup Service (systemd user service)
+
+Absolutely — we can separate it cleanly into **two parts**:
+
+1. **Create logs directory**
+2. **Create and enable the systemd user service**
+
+No `echo` or embedded heredoc output inside the script. You can include the instructions in `install.md` with clear steps. Here’s a clean version:
+
+---
+
+**Step 1: Create PUEO Logs Directory**
+
+```bash
+# Create logs directory for PUEO
+mkdir -p /home/pst/Projects/pcc/logs
+chown pst:pst /home/pst/Projects/pcc/logs
+```
+
+* This ensures all logs from your startup script go to `~/Projects/pcc/logs`.
+* Make sure the directory exists **before** the service runs.
+
+**Step 2: Create Systemd User Service**
+
+Create the file:
+
+```bash
+nano /home/pst/.config/systemd/user/startup-commands.service
+```
+
+Paste the following content (or fetch a file content from REPO: setup/autostart/startup-command.service
+
+```ini
+[Unit]
+Description=PUEO Server Startup Service
+After=network-online.target
+
+[Service]
+Type=simple
+# Wait 60 seconds before starting
+ExecStartPre=/bin/sleep 60
+# Run your startup script and log output
+ExecStart=/bin/bash -lc '/home/pst/scripts/startup_commands.sh >> /home/pst/Projects/pcc/logs/startup_commands.log 2>&1'
+Restart=on-failure
+RestartSec=5
+WorkingDirectory=/home/pst
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
+```
+
+
+**Step 3: Make the Script Executable**
+
+```bash
+chmod +x /home/pst/scripts/startup_commands.sh
+```
+
+
+**Step 4: Enable and Start the Service**
+
+```bash
+# Reload systemd user daemon
+systemctl --user daemon-reload
+
+# Enable service to start at login
+systemctl --user enable --now startup-commands.service
+
+# Allow service to run even without GUI login
+sudo loginctl enable-linger pst
+```
+
+**Step 5: Check Status and Logs**
+
+```bash
+# Check service status
+systemctl --user status startup-commands.service
+
+# View real-time logs from the startup script
+journalctl --user -u startup-commands.service -f
+```
+
+Notes:
+
+* The `ExecStartPre=/bin/sleep 60` ensures a **60-second delay** before the script starts.
+* All output from the script goes into: `/home/pst/Projects/pcc/logs/startup_commands.log`.
 
 ### C. Verify Permissions & Dependencies (Do VIA Sudo Rule next section)
 

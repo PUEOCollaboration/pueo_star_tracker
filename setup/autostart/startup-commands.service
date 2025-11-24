@@ -1,0 +1,18 @@
+[Unit]
+Description=PUEO Server Startup Service
+After=network-online.target
+
+[Service]
+Type=simple
+# Wait 60 seconds before starting
+ExecStartPre=/bin/sleep 60
+# Run your startup script as user pst
+ExecStart=/bin/bash -lc '/home/pst/scripts/startup_commands.sh'
+Restart=on-failure
+RestartSec=5
+WorkingDirectory=/home/pst
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

@@ -1564,7 +1564,7 @@ class PueoStarCameraOperation:
         # best_focus = self.cfg.lab_best_focus
         self.best_focus, self.stdev = self.do_autofocus_routine(self.focus_image_path, coarse_start_focus_pos,
                                                                 coarse_stop_focus_pos, coarse_focus_step_count,
-                                                                self.max_focus_position)
+                                                                self.max_focus_position, focus_method='sequence_contrast')
 
         # change back to default image dynamic range and resolution.
         self.camera.set_image_type(asi.ASI_IMG_RAW16)

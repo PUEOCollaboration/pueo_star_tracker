@@ -32,6 +32,9 @@ sudo apt install p7zip-full p7zip-rar
 
 # Install the net-tools package
 sudo apt install net-tools
+
+# Install 
+sudo apt install expect
 ```
 
 - To get the system IP run the next command:

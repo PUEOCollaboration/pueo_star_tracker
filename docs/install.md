@@ -629,86 +629,83 @@ X-GNOME-Autostart-enabled=true
 
 #### 2. PUEO Server Startup Service (systemd user service)
 
-1. **Create logs directory**
-2. **Create and enable the systemd user service**
-
-**Step 1: Ensure PUEO Logs Directory Exists**
-
-```bash
-# Ensure the PUEO logs directory exists (should already be present)
-mkdir -p /home/pst/Projects/pcc/logs
-chown pst:pst /home/pst/Projects/pcc/logs
-```
-
-* This ensures all logs from your startup script go to `~/Projects/pcc/logs`.
-* Make sure the directory exists **before** the service runs.
-
-**Step 2: Create Systemd User Service**
+**Step 1: Create Systemd User Service**
 
 Create the file:
 
 ```bash
-nano /home/pst/.config/systemd/user/startup-commands.service
+mkdir -p ~/.config/systemd/user
+nano /home/pst/.config/systemd/user/pueo-startup.service
 ```
 
-Paste the following content (or fetch a file content from REPO: setup/autostart/startup-command.service
+Paste the following content (or fetch a file content from REPO: setup/autostart/pueo-startup.service
 
 ```ini
 [Unit]
 Description=PUEO Server Startup Service
-After=network-online.target
+After=network.target
 
 [Service]
-Type=simple
-# Wait 60 seconds before starting
-ExecStartPre=/bin/sleep 60
-# Run your startup script and log output
-ExecStart=/bin/bash -lc '/home/pst/scripts/startup_commands.sh >> /home/pst/Projects/pcc/logs/startup_commands.log 2>&1'
-Restart=on-failure
-RestartSec=5
-WorkingDirectory=/home/pst
-StandardOutput=journal
-StandardError=journal
+Type=forking
+ExecStart=/bin/bash -l -c "%h/scripts/startup_commands.sh"
+Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+RemainAfterExit=yes
 
 [Install]
 WantedBy=default.target
 ```
 
+**Step 2: Update and Make the Script Executable**
 
-**Step 3: Make the Script Executable**
+**Note:** The script has changed, fetch new version from REPO from setup/startup_commands.sh
 
 ```bash
 chmod +x /home/pst/scripts/startup_commands.sh
 ```
 
 
-**Step 4: Enable and Start the Service**
+**Step 3: Enable and Start the Service**
 
 ```bash
 # Reload systemd user daemon
 systemctl --user daemon-reload
 
 # Enable service to start at login
-systemctl --user enable --now startup-commands.service
+# Note: --now → enables at login and starts immediately.
+systemctl --user enable --now pueo-startup.service
 
 # Allow service to run even without GUI login
 sudo loginctl enable-linger pst
 ```
 
-**Step 5: Check Status and Logs**
+**Step 4: Check Status and Logs**
 
 ```bash
+# Start service MANUALLY (this is only for TEST)
+systemctl --user start pueo-startup.service
+
 # Check service status
-systemctl --user status startup-commands.service
+systemctl --user status pueo-startup.service
 
 # View real-time logs from the startup script
-journalctl --user -u startup-commands.service -f
+journalctl --user -u pueo-startup.service -f
 ```
 
-Notes:
+**Notes:**
+- All general startup messages (script execution, PIDs, timestamps) go into: `/home/pst/Projects/pcc/logs/startup.log`.
+- Output from the individual servers is in their respective log files: cedar_console.log, pueo_console.log, web_console.log
+- 
+```bash
+# To see everything in real-time, you can tail multiple logs:
+tail -f ~/Projects/pcc/logs/startup.log ~/Projects/pcc/logs/cedar_console.log ~/Projects/pcc/logs/pueo_console.log ~/Projects/pcc/logs/web_console.log
 
-* The `ExecStartPre=/bin/sleep 60` ensures a **60-second delay** before the script starts.
-* All output from the script goes into: `/home/pst/Projects/pcc/logs/startup_commands.log`.
+# But main CONSOLE log to observe is:
+tail -f ~/Projects/pcc/logs/pueo_console.log
+
+# And debug-server.log:
+tail -f ~/Projects/pcc/logs/debug-server.log
+
+```
 
 ### C. Verify Permissions & Dependencies (Do VIA Sudo Rule next section)
 

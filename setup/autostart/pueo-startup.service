@@ -1,0 +1,12 @@
+[Unit]
+Description=PUEO Server Startup Service
+After=network.target
+
+[Service]
+Type=forking
+ExecStart=/bin/bash -l -c "%h/scripts/startup_commands.sh"
+Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+RemainAfterExit=yes
+
+[Install]
+WantedBy=default.target

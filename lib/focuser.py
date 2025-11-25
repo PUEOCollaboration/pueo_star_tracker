@@ -136,7 +136,7 @@ class Focuser:
         # Set response mode: rm<verbose_mode>,<protocol_mode>
         cmd = f'rm{verbose_mode},{protocol_mode}\r'
         self.ser.write(cmd.encode('ascii'))
-        out = self.ser.readline()  # Expected responses: b'rm0,1\rOK\r' or b'rm0,0\r0\r'
+        out = self.ser.readline()  # b'rm0,1\rOK\r' or b'rm0,0\r0\r'
         parts = out.decode('ascii').split('\r')
         logit(f"Focuser RM (Response Mode): {parts}", color='magenta')
 
@@ -248,7 +248,7 @@ class Focuser:
             # define aperture: -> fmin,num_stops,fmax
         cmd = 'da' + '\r'
         self.ser.write(cmd.encode('ascii'))
-        out = self.ser.readline()
+        out = self.ser.readline() # b'da\rOK\rf14,28,f160\r'
         # erin: b'da\rOK\rf14,28,f160\r'
         # erintest: ['da', 'OK', 'f28,32,f452', '']
 
@@ -462,12 +462,26 @@ class Focuser:
         return min_focus_position, max_focus_position
 
     def close_aperture(self):
+        """
+        5.29 Move Aperture to Opened Position (mo)
+        Command Type : Legacy
+        Syntax : mo
+        Returns : DONE<signed_num_steps>,f<f_number>
+        Description
+        This command will move the aperture to the fully open position. The number of
+        steps in ¼ stops that the aperture actually moved is given in <signed_num_steps>. The
+        final position is given in <f_number> as the lens f-number times ten.
+        Example:
+        mo <CR>
+        DONE-21,f35
+        """
+
         t0 = time.monotonic()
         self.server.write('Closing aperture.')
         if not self.is_open():
             self.log.warning('Focuser connection closed.')
             return
-        cmd = 'in' + '\r'
+        cmd = 'mo' + '\r'
         self.ser.write(cmd.encode('ascii'))
         out = self.ser.readline()
         self.server.write(out.decode('ascii'))
@@ -618,6 +632,123 @@ class Focuser:
         self.log.debug(f'Check lens results: {results}')
         return results
 
+    def test_run_all_serial_commands(self):
+        """
+        PROTO CODE: Goal optimize communication with Focuser. Current issue, waiting for timeout.
+        Execute all prebuilt Focuser commands and measure outputs:
+          - Raw self.ser.readline() with timeout=2
+          - TextIOWrapper reads with timeout=0.1
+          - Report per-line timings and combined outputs
+          - Verify expected_read_lines vs actual lines read
+
+        Single member function — paste into Focuser class.
+        """
+        import io
+        import time
+        from contextlib import suppress
+
+        if not hasattr(self, "ser") or self.ser is None:
+            print("Serial port (self.ser) not configured. Aborting.")
+            return
+
+        if not self.is_open():
+            print("Serial port is not open. Aborting.")
+            return
+
+        # Prebuilt list command list
+        # @formatter:off
+        commands = [
+            {"operation_name": "define_aperture",         "command": "da\r",   "expected_read_lines": 3, "example_return": "da\rOK\rf28,32,f452"},
+            {"operation_name": "initialize_aperture",     "command": "in\r",   "expected_read_lines": 3, "example_return": "in\rOK\rDONE"},
+            {"operation_name": "close_aperture",          "command": "mo\r",   "expected_read_lines": 3, "example_return": "mo\rOK\rDONE0,f28"},
+            {"operation_name": "move_aperture_absolute",  "command": "ma 0\r", "expected_read_lines": 3, "example_return": "ma 0\rOK\rDONE0,f28"},
+            {"operation_name": "get_aperture_position",   "command": "pa\r",   "expected_read_lines": 3, "example_return": "pa\rOK\r0,f28"},
+            {"operation_name": "get_focus_position",      "command": "pf\r",   "expected_read_lines": 3, "example_return": "pf\rOK\r0"},
+            {"operation_name": "move_focus_position",     "command": "fa0\r",  "expected_read_lines": 3, "example_return": "fa0\rOK\rDONE0,1"},
+            {"operation_name": "move_focus_to_zero",      "command": "mz\r",   "expected_read_lines": 3, "example_return": "mz\rOK\rDONE-4724,1"},
+            {"operation_name": "move_focus_to_infinity",  "command": "mi\r",   "expected_read_lines": 4, "example_return": "DONE-8,1\rmi\rOK\rDONE4732,1"},
+            {"operation_name": "set_focus_to_zero",       "command": "sf0\r",  "expected_read_lines": 3, "example_return": "DONE0,1\rsf0\rOK"},
+            {"operation_name": "response_mode_verbose",   "command": "rm1,0\r","expected_read_lines": 2, "example_return": "rm1,0\rOK"}
+        ]
+        # @formatter:on
+
+        # Create a single wrapper for all commands
+        self.ser.timeout = 0.1  # short timeout for wrapper reads
+        brw = io.BufferedRWPair(self.ser, self.ser)
+        sio = io.TextIOWrapper(brw, encoding="ascii", newline="\r")
+
+        for entry in commands:
+            op = entry["operation_name"]
+            cmd = entry["command"]
+            expected = int(entry.get("expected_read_lines", 1))
+            num_cr_in_cmd = cmd.count("\r")
+
+            print("\n" + "=" * 60)
+            print(f"Operation: {op}")
+            print(f"Command: {repr(cmd)} (contains {num_cr_in_cmd} '\\r')")
+
+            # --- Raw readline measurement ---
+            if not self.is_open():
+                print(f"Serial port not open, skipping raw readline for {op}")
+                raw_dec = None
+                raw_dt = None
+            else:
+                self.ser.timeout = 2  # long timeout for raw
+                with suppress(Exception):
+                    self.ser.write(cmd.encode("ascii"))
+                t0 = time.perf_counter()
+                try:
+                    raw = self.ser.readline()
+                    raw_dt = time.perf_counter() - t0
+                    raw_dec = raw.decode("ascii", errors="replace").strip()
+                    print(f"RAW readline(): time={raw_dt:.6f}s  output={repr(raw_dec)}")
+                except Exception as e:
+                    print(f"  ERROR during raw readline(): {e}")
+                    raw_dec = None
+                    raw_dt = None
+
+            # --- Wrapper readline measurement ---
+            if not self.is_open():
+                print(f"Serial port not open, skipping wrapper readline for {op}")
+                continue
+
+            # Wrapper readline: big timeout (5–10 s), read the required number of lines (\r) — first lines will
+            # usually be instant, last line may take full device execution time.
+            self.ser.timeout = 5.0
+            with suppress(Exception):
+                self.ser.write(cmd.encode("ascii"))
+
+            joined = []
+            per_line_times = []
+            lines = []
+            for i in range(expected):
+                t0 = time.perf_counter()
+                try:
+                    line = sio.readline()
+                except Exception as e:
+                    line = f"<read-exception:{e}>"
+                dt = time.perf_counter() - t0
+                per_line_times.append(dt)
+                if line.endswith("\r"):
+                    line = line[:-1]
+                lines.append(line)
+                joined.append(line)
+                print(f"  wrapper.readline() [{i + 1}/{expected}]: time={dt:.6f}s  output={repr(line)}")
+
+            joined_str = "\r".join(joined)
+
+            # Count non-empty lines and check match
+            actual_lines = len([l for l in lines if l.strip() != ''])
+            lines_match = (actual_lines == expected)
+            if not lines_match:
+                print(f"  NOTE: Expected {expected} lines, but read {actual_lines} lines. Adjust expected_read_lines!")
+
+            print(f"  Combined (joined with '\\r'): {repr(joined_str)}")
+            print(f"Summary: op={op}, cmd={repr(cmd)}, expected_lines={expected}, actual_lines={actual_lines}, "
+                  f"lines_match={lines_match}, raw_read_time={raw_dt}")
+
+        print("\nAll commands executed.")
+
 
 def test():
     # !/usr/bin/env python3
@@ -661,17 +792,23 @@ if __name__ == "__main__":
     logit('Running Focuser STANDALONE.')
 
     if False:
+        pass
         test()
         sys.exit(0)
 
     try:
         class cfg:
-            focuser_port = '/dev/ttyS0'
-            baud_rate = 115200
+            focuser_port = '/dev/serial/by-id/usb-FTDI_Chipi-X_FT2RA78W-if00-port0'
+            baud_rate = 19200
+            lab_best_aperture_position = 0
+
         focuser = Focuser(cfg)  # Replace with your port and baud rate
+        focuser.test_run_all_serial_commands()
+        import sys
+        sys.exit(0)
         # ... (your application logic) ...
-        results = focuser.check_lens_focus()
-        print(results)
+        # results = focuser.check_lens_focus()
+        # print(results)
 
         # Erin TEST!!
         f_min: str= 'f28'

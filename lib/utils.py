@@ -484,38 +484,46 @@ def convert_dummy_to_mono(img):
         return img  # Return unchanged if not dummy RGB
 
 
-def save_as_jpeg_with_stretch(img_16bit, jpeg_path, quality=80, lower_percentile=1, upper_percentile=99):
+def save_as_jpeg_with_stretch(img_16bit, save_mode, jpeg_path, quality=80, lower_percentile=1, upper_percentile=99):
     """
     Convert 16-bit monochrome ASI image to 8-bit JPEG with contrast stretching.
 
     Args:
         img_16bit (np.ndarray): 16-bit input image (shape: height × width).
+        save_mode (str): normal | stretch
         jpeg_path (str): Output JPEG path.
         quality (int): JPEG quality (0-100).
         lower_percentile (float): Lower percentile for stretching (e.g., 1%).
         upper_percentile (float): Upper percentile for stretching (e.g., 99%).
     """
-    # Calculate percentiles to ignore outliers (e.g., hot pixels)
-    low_val = float(np.nanpercentile(img_16bit, lower_percentile))
-    high_val = float(np.nanpercentile(img_16bit, upper_percentile))
+    save_mode = save_mode or "normal"
+    # Check validity of save_mode
+    if save_mode not in ["normal", "stretch"]:
+        raise ValueError("Invalid mode")
 
-    # Guard against collapsed or NaN range
-    img = img_16bit.astype(np.float32, copy=False)
-    den = high_val - low_val
-    if not np.isfinite(den) or den <= 0.0:
-        # Fallback: robust median±3*MAD window
-        med = float(np.nanmedian(img))
-        mad = float(np.nanmedian(np.abs(img - med)))
-        lo, hi = med - 3.0 * mad, med + 3.0 * mad
-        den2 = hi - lo
-        if not np.isfinite(den2) or den2 <= 0.0:
-            img_8bit = np.zeros(img.shape, np.uint8)
+    img_8bit = None
+    if save_mode == "stretch":
+        # Calculate percentiles to ignore outliers (e.g., hot pixels)
+        low_val = float(np.nanpercentile(img_16bit, lower_percentile))
+        high_val = float(np.nanpercentile(img_16bit, upper_percentile))
+
+        # Guard against collapsed or NaN range
+        img = img_16bit.copy().astype(np.float32, copy=False)
+        den = high_val - low_val
+        if not np.isfinite(den) or den <= 0.0:
+            # Fallback: robust median±3*MAD window
+            med = float(np.nanmedian(img))
+            mad = float(np.nanmedian(np.abs(img - med)))
+            lo, hi = med - 3.0 * mad, med + 3.0 * mad
+            den2 = hi - lo
+            if not np.isfinite(den2) or den2 <= 0.0:
+                img_8bit = np.zeros(img.shape, np.uint8)
+            else:
+                img_stretched = np.clip((img - lo) * (255.0 / den2), 0, 255)
+                img_8bit = img_stretched.astype(np.uint8)
         else:
-            img_stretched = np.clip((img - lo) * (255.0 / den2), 0, 255)
+            img_stretched = np.clip((img - low_val) * (255.0 / den), 0, 255)
             img_8bit = img_stretched.astype(np.uint8)
-    else:
-        img_stretched = np.clip((img - low_val) * (255.0 / den), 0, 255)
-        img_8bit = img_stretched.astype(np.uint8)
 
     # Save as JPEG into .temp file then renaming to target filename
 
@@ -525,9 +533,19 @@ def save_as_jpeg_with_stretch(img_16bit, jpeg_path, quality=80, lower_percentile
     # Create temp filename by adding "temp_" prefix
     temp_filename = "temp_" + filename
     temp_path = os.path.join(directory, temp_filename)
-    cv2.imwrite(temp_path, img_8bit, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
-    with suppress(OSError):
-        os.rename(temp_path, jpeg_path)
+
+    # Save Image
+    if save_mode == "stretch":
+        cv2.imwrite(temp_path, img_8bit, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
+    elif save_mode == "normal":
+        cv2.imwrite(temp_path, img_16bit, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
+
+    try:
+        os.replace(temp_path, jpeg_path)
+    except OSError as exc:
+        # cleanup temp file and raise
+        with suppress(OSError):
+            os.remove(temp_path)
 
 
 def save_as_jp2(image, jp2path, compression_x1000=1000):
@@ -741,27 +759,39 @@ def image_resize(img, scale_factors, image_filename, overlay=None, resize_mode='
         quality = jpeg_settings.get('quality', 80)
         lower_percentile = jpeg_settings.get('lower_percentile', 1)
         upper_percentile = jpeg_settings.get('upper_percentile', 99)
-        symlink_name = jpeg_settings.get('last_image_symlink_name', 'last_inspection_image.jpg')
+        symlink_base_name = jpeg_settings.get('last_image_symlink_name', 'last_inspection_image.jpg')
         web_path = jpeg_settings.get('web_path', 'web/')
+
         # Ensure inspection_path exists
         os.makedirs(inspection_path, exist_ok=True)
 
         # Create proper path for JPEG file
         base_filename = os.path.basename(image_filename)  # Get just the filename
 
-        jpeg_basename = base_filename.replace(".png", ".jpg")
-        jpeg_filename = os.path.join(inspection_path, jpeg_basename)  # Full path
+        # Split the symlink base name into stem + extension
+        symlink_stem, symlink_ext = os.path.splitext(symlink_base_name)
 
         jp2_basename = base_filename.replace(".png", ".jp2")
         jp2_filename = os.path.join(inspection_path, jp2_basename)  # Full path
 
-        save_as_jpeg_with_stretch(resized_img, jpeg_filename, quality, lower_percentile, upper_percentile)
+        # The normal mode would save the image as jpg, but jpg only supports 8-bit, so image gets useless.
+        # Decision to only stay with stretch image
+        save_modes = ["stretch", ]  # ["normal", "stretch"]
+        for save_mode in save_modes:
+            jpeg_basename = base_filename.replace(".png", f"_{save_mode}.jpg")
+            jpeg_filename = os.path.join(inspection_path, jpeg_basename)  # Full path
+            # Clear and explicit naming
+            #  -> last_inspection_image_normal.jpg or last_inspection_image_stretch.jpg
+            symlink_name = f"{symlink_stem}_{save_mode}{symlink_ext}" if len(save_modes) > 1 else symlink_base_name
+            save_as_jpeg_with_stretch(resized_img, save_mode, jpeg_filename, quality, lower_percentile, upper_percentile)
+            # Create symlink to the latest image
+            create_symlink(web_path, jpeg_filename, symlink_name)
+
         # TODO: Revisit using of JPEG2000 - Disabled. Requested by Windell.
         if save_as_jp2 and False:
             save_as_jp2(resized_img, jp2_filename,500) # Target ~10:1 compression
 
-        # Create symlink to the latest image
-        create_symlink(web_path, jpeg_filename, symlink_name)
+        # Cleanup
         delete_trash(inspection_path, ext='.jpg', keep=images_keep)
 
     if overlay is not None:
@@ -772,6 +802,14 @@ def image_resize(img, scale_factors, image_filename, overlay=None, resize_mode='
 
     # Save as PNG
     cv2.imwrite(image_filename, resized_img, [int(cv2.IMWRITE_PNG_COMPRESSION), png_compression])
+
+    # Create symlink for inspection image pointing to a sd_card saved RAW image.
+    if is_inspection:
+        # Create symlink to the latest image
+        symlink_base_name = jpeg_settings.get('last_image_symlink_name', 'last_inspection_image.jpg')
+        symlink_name = symlink_base_name.replace(".jpg", f".png")
+        web_path = jpeg_settings.get('web_path', 'web/')
+        create_symlink(web_path, image_filename, symlink_name)
 
     # Save as JP2
     # TODO: Decide and reinspect this saving the RAW as jp2

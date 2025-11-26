@@ -692,10 +692,13 @@ class PueoStarCamera(Camera):
         #  60 -> Image captured in ~1.4s
         # 100 -> Image captured in ~1.2s
 
-        asi_bandwidthoverload_max_value = self.get_controls()['BandWidth']['MaxValue'] # 100
-        self.set_control_value(asi.ASI_BANDWIDTHOVERLOAD, asi_bandwidthoverload_max_value)
-        # self.set_control_value(asi.ASI_BANDWIDTHOVERLOAD, asi_bandwidthoverload_custom_value)
-        logit(f'{"disable_dark_subtract:":>23s} {asi_bandwidthoverload_max_value}', color='yellow')
+        # Windell decision: Setting 80 2025-11-26
+        # asi_bandwidthoverload_max_value = self.get_controls()['BandWidth']['MaxValue'] # 100
+        asi_bandwidthoverload_custom_value = 80
+        # self.set_control_value(asi.ASI_BANDWIDTHOVERLOAD, asi_bandwidthoverload_max_value)
+        self.set_control_value(asi.ASI_BANDWIDTHOVERLOAD, asi_bandwidthoverload_custom_value)
+        logit(f'{"ASI_BANDWIDTHOVERLOAD:":>23s} {asi_bandwidthoverload_custom_value}', color='yellow')
+
         # set initial gains & exposure value. These were best measured in the lab.
         self.set_control_value(asi.ASI_GAIN, self.cfg.min_gain_setting)
         logit(f'{"ASI_GAIN:":>23s} {self.cfg.min_gain_setting}', color='yellow')

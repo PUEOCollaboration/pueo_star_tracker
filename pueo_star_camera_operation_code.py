@@ -2851,11 +2851,8 @@ class PueoStarCameraOperation:
         f_val = self.focuser.f_stops[aperture_position] if len(self.focuser.f_stops) > aperture_position else 'f??'
         self.logit(f'Changing focuser aperture to: {aperture_position} [{f_val}]', color='blue')
         self.server.write(f'Changing focuser aperture to: {aperture_position} [{f_val}]')
-        self.focuser.move_aperture_absolute(aperture_position)
+        pos, f_val = self.focuser.move_aperture_absolute(aperture_position)
         self.cfg.set_dynamic(lab_best_aperture_position=aperture_position)
-        pos = f_val = None
-        with suppress(Exception):
-            pos, f_val = self.focuser.get_aperture_position()
         self.server.write(f'Focuser position: {pos} [{f_val}]')
 
     def camera_get_aperture_position(self):

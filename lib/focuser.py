@@ -2,7 +2,7 @@
 import logging
 import serial
 import time
-from typing import List
+from typing import Any, List, Tuple
 from contextlib import suppress
 
 import numpy as np
@@ -14,6 +14,9 @@ class Focuser:
     """
     TODO: Make sure only one command is running at the same TIME!!!
     """
+    read_timeout: float = 0.25 # secs, used for fast operations like  get position, get aperture
+    default_timeout: float = 3.0 # secs, user for movement operations
+
     f_stop_sequence = [
         'f14', 'f15', 'f17', 'f18', 'f20', 'f22', 'f24', 'f26', 'f28', 'f30',
         'f33', 'f36', 'f40', 'f43', 'f48', 'f52', 'f56', 'f61', 'f67', 'f73',
@@ -57,7 +60,7 @@ class Focuser:
                 else:
                     self.log.warning(f'Initialising focuser: retry: {retry} baud_rate: {baud_rate}')
 
-                self.ser = serial.Serial(self.cfg.focuser_port, baudrate=baud_rate, timeout=2)  # camera focuser port
+                self.ser = serial.Serial(self.cfg.focuser_port, baudrate=baud_rate, timeout=self.default_timeout)  # camera focuser port
                # TODO: Refactor
                 # Another Computer for sending commands via serial - this will be replaced by GUI!
                 # other computer serial port
@@ -69,9 +72,13 @@ class Focuser:
                 # self.f_stops = []
                 self.response_mode(verbose_mode=1, protocol_mode=0)  # Setting Verbose
                 self.define_aperture()
-                self.initialize_aperture()
-                self.move_aperture_absolute(self.cfg.lab_best_aperture_position)
-                self._aperture_pos, self._aperture_f_val = self.get_aperture_position()
+                self.initialize_aperture() # MUST DO as first command!
+                # self.move_aperture_absolute(self.cfg.lab_best_aperture_position)
+                # Initial state of the aperture shall be CLOSED!!!
+                # self.open_aperture() # Just for test
+                self.close_aperture()
+                # The values are set in close_aperture
+                # self._aperture_pos, self._aperture_f_val = self.get_aperture_position()
                 status = True
                 break
             except Exception as e:
@@ -315,7 +322,7 @@ class Focuser:
         """
         if not self.is_open():
             self.log.warning('Focuser connection closed.')
-            return 0
+            return 0, '??'
             # define aperture: -> fmin,num_stops,fmax
         cmd = f'ma {pos}\r'
         self.ser.write(cmd.encode('ascii'))
@@ -323,8 +330,17 @@ class Focuser:
         parts = out.decode('ascii').split('\r')
         logit(f"Focuser MA (Move Aperture Absolute): {parts}", color='magenta')
         # Focuser MA (Move Aperture Absolute): ['ma 0', 'OK', 'DONE0,f14', '']
-        pos, self._aperture_f_val = parts[-2].replace('DONE', '').split(',')
-        self._aperture_pos = int(pos)
+        # pos, self._aperture_f_val = parts[-2].replace('DONE', '').split(',')
+        # self._aperture_pos = int(pos)
+        cmd, self._aperture_pos, self._aperture_f_val = self.parse_focuser_output(out)
+        if cmd != "OK":
+            self._aperture_f_val = '??'
+            logit(f"Focuser MA (Move Aperture Absolute): ERROR", color='red')
+
+        self.aperture_position = 'opened'
+        with suppress(Exception):
+            # In case the values are not integers or none
+            self.aperture_position = 'opened' if self._aperture_pos != self.num_stops else 'closed'
         return self._aperture_pos, self._aperture_f_val
 
     def get_aperture_position(self):
@@ -347,7 +363,9 @@ class Focuser:
         try:
             cmd = f'pa\r'
             self.ser.write(cmd.encode('ascii'))
+            self.ser.timeout = self.read_timeout
             out = self.ser.readline()  # b'pa\rOK\r5,f54\r'
+            self.ser.timeout = self.default_timeout
             parts = out.decode('ascii').split('\r')
             pos, self._aperture_f_val = parts[-2].replace('DONE', '').split(',')
             logit(f"Focuser PA (Print Aperture Position): {parts} pos: {pos} f_val: {self._aperture_f_val}", color='magenta')
@@ -383,7 +401,9 @@ class Focuser:
         # get current focus position.
         cmd = 'pf' + '\r'
         self.ser.write(cmd.encode('ascii'))
+        self.ser.timeout = self.read_timeout
         out = self.ser.readline()  # b'pf\rOK\r8330\r'
+        self.ser.timeout = self.default_timeout
         parts = out.decode('ascii').split('\r')
         curr_focus_pos = int(parts[-2])
         self._focus_position = curr_focus_pos
@@ -408,17 +428,69 @@ class Focuser:
         return curr_focus_pos
 
     def open_aperture(self):
+        """
+        For opening the aperture, it is opened to:
+            self.cfg.lab_best_aperture_position
+
+        5.24 Move Aperture Absolute (ma)
+        Command Type : Legacy
+        Syntax : ma <pos>
+        Returns : DONE<rpos>,f<f_number>
+        Description
+        This command moves the aperture mechanism to the specified encoder position,
+        specified in ¼ stops from the fully-open position, indicated by the user in <pos>. If an
+        input value would move the aperture out of the legal range the value is set to the
+        boundary (i.e. min/max aperture). <rpos> is the actual position the aperture moved to in
+        ¼ stops from the fully-open position, and <f_number> is the absolute position given as
+        the lens f-number times ten.
+        Examples:
+        ma0 <CR>
+        DONE0,f35
+        ma5 <CR>
+        DONE5,f54
+
+        Move Aperture Absolute (ma)
+        Command Type : Legacy
+        Syntax : ma <pos>
+        Returns : DONE<rpos>,f<f_number>
+        Description
+        This command moves the aperture mechanism to the specified encoder position,
+        specified in ¼ stops from the fully-open position, indicated by the user in <pos>. If an
+        input value would move the aperture out of the legal range the value is set to the
+        boundary (i.e. min/max aperture). <rpos> is the actual position the aperture moved to in
+        ¼ stops from the fully-open position, and <f_number> is the absolute position given as
+        the lens f-number times ten.
+        Examples:
+        ma0 <CR>
+        DONE0,f35
+        ma5 <CR>
+        DONE5,f54
+        """
         t0 = time.monotonic()
         self.server.write('Opening aperture.')
         if not self.is_open():
             self.log.warning('Focuser connection closed.')
             return
-        cmd = 'in' + '\r'
+
+        # Sending ma command to FOCUSER
+        pos = self.cfg.lab_best_aperture_position
+        cmd = f'ma {pos}\r'
         self.ser.write(cmd.encode('ascii'))
-        out = self.ser.readline()
-        self.log.info(out.decode('ascii'))
+        out = self.ser.readline() # "mo\rOK\rDONE0,f28"
+        self.server.write(out.decode('ascii'))
+
+        # Parsing results, updating values
+        status, signed_num_steps, f_number = self.parse_focuser_output(out)
+        if status == "OK":
+            self.aperture_position = 'opened'
+            self._aperture_pos = pos
+            self._aperture_f_val = f_number
+        else:
+            logit(f"Error opening aperture: {out.decode('ascii')}", color='red')
+            self.get_aperture_position()
+
         self.aperture_position = 'opened'
-        logit(f'Aperture opened in {get_dt(t0)}.', color='magenta')
+        logit(f'Aperture opened, position: {self._aperture_pos} f-value: {self._aperture_f_val} in {get_dt(t0)}.', color='magenta')
 
     def home_lens_focus(self):
         t0 = time.monotonic()
@@ -463,17 +535,17 @@ class Focuser:
 
     def close_aperture(self):
         """
-        5.29 Move Aperture to Opened Position (mo)
+        Move Aperture to Closed Position (mc)
         Command Type : Legacy
-        Syntax : mo
+        Syntax : mc
         Returns : DONE<signed_num_steps>,f<f_number>
         Description
-        This command will move the aperture to the fully open position. The number of
+        This command will move the aperture to the fully closed position. The number of
         steps in ¼ stops that the aperture actually moved is given in <signed_num_steps>. The
         final position is given in <f_number> as the lens f-number times ten.
         Example:
-        mo <CR>
-        DONE-21,f35
+        mc <CR>
+        DONE14,f216
         """
 
         t0 = time.monotonic()
@@ -481,12 +553,25 @@ class Focuser:
         if not self.is_open():
             self.log.warning('Focuser connection closed.')
             return
-        cmd = 'mo' + '\r'
+
+        # Sending mc command to FOCUSER
+        cmd = 'mc' + '\r'
         self.ser.write(cmd.encode('ascii'))
-        out = self.ser.readline()
+        out = self.ser.readline() # "mo\rOK\rDONE0,f28"
         self.server.write(out.decode('ascii'))
-        self.aperture_position = 'closed'
-        logit(f'Aperture closed in {get_dt(t0)}.', color='magenta')
+
+        # Parsing results, updating values
+        status, signed_num_steps, f_number = self.parse_focuser_output(out)
+        if status == "OK":
+            self.aperture_position = 'closed'
+            self._aperture_pos = self.num_stops
+            self._aperture_f_val = f_number
+        else:
+            logit(f"Error closing aperture: {out.decode('ascii')}", color='red')
+            # self.aperture_position = 'closed'
+            self.get_aperture_position()
+
+        logit(f'Aperture closed, position: {self._aperture_pos} f-value: {self._aperture_f_val} in {get_dt(t0)}.', color='magenta')
 
     def move_focus_to_zero(self):
         """
@@ -557,18 +642,27 @@ class Focuser:
         self._focus_position = 0
         return out
 
-    def get_signed_num_counts(self, input) -> (str, int, int):
+    def parse_focuser_output(self, input: Any) -> Tuple[str, Any, Any]:
         """
-        Input format: <prefix>\rOK\rDONE<signed_num_counts>,<flag>\r
-        Example inputs:
-        1. b'mz\rOK\rDONE0,1\r'
-        2. b'mi\rOK\rDONE8808,1\r'
+        Parse a full focuser response consisting of three CR-terminated fields.
 
-        :return: (status, signed_num_counts, flag)
-        :rtype: str, int, int
+        Expected input format:
+            <cmd>\rOK\rDONE<value1>,<value2>\r
+
+        Example raw inputs (bytes):
+            1. b"mz\rOK\rDONE0,1\r"
+            2. b"mi\rOK\rDONE8808,1\r"
+
+        The function extracts and returns:
+            - status  -> "OK" or another status string
+            - value1  -> converted to int if possible, otherwise kept as a string
+            - value2  -> converted to int if possible, otherwise kept as a string
+
+        Returns:
+            Tuple[str, Any, Any]: (status, value1, value2)
         """
         status = 'ERROR'
-        signed_num_counts, flag = 0, 0  # Default return values in case of error
+        value1, value2 = 0, 0  # Default return values in case of error
 
         try:
             # 1. Decode if input is bytes
@@ -596,16 +690,25 @@ class Focuser:
             if len(num_parts) != 2:
                 return 'ERROR', 0, 0
 
-            # 5. Convert to integers
-            signed_num_counts = int(num_parts[0])
-            flag = int(num_parts[1])
+            # 5. Convert to integers, but keep strings if conversion fails
+            # Possible inputs:
+            #   '-12' -> -12
+            #   'f19' -> 'f19'
+            value1 = num_parts[0].strip()
+            value2 = num_parts[1].strip()
+
+            with suppress(ValueError):
+                value1 = int(value1)
+
+            with suppress(ValueError):
+                value2 = int(value2)
             status = 'OK'
 
         except (AttributeError, ValueError, IndexError, UnicodeDecodeError) as e:
-            print(f'Error parsing input: {e}')
-            status, signed_num_counts, flag = 'ERROR', 0, 0
+            self.log.error(f'Focuser Result Parsing Error parsing input: {e}')
+            status, value1, value2 = 'ERROR', 0, 0
 
-        return status, signed_num_counts, flag
+        return status, value1, value2
 
     def check_lens_focus(self):
         """
@@ -623,7 +726,7 @@ class Focuser:
             elif command == 'mi':
                 output = self.move_focus_to_infinity()
 
-            status, signed_num_counts, flag = self.get_signed_num_counts(output)
+            status, signed_num_counts, flag = self.parse_focuser_output(output)
             # Report
             results.append({'command': command, 'status': status, 'signed_num_counts': signed_num_counts, 'flag': flag})
 
@@ -660,11 +763,12 @@ class Focuser:
         commands = [
             {"operation_name": "define_aperture",         "command": "da\r",   "expected_read_lines": 3, "example_return": "da\rOK\rf28,32,f452"},
             {"operation_name": "initialize_aperture",     "command": "in\r",   "expected_read_lines": 3, "example_return": "in\rOK\rDONE"},
-            {"operation_name": "close_aperture",          "command": "mo\r",   "expected_read_lines": 3, "example_return": "mo\rOK\rDONE0,f28"},
-            {"operation_name": "move_aperture_absolute",  "command": "ma 0\r", "expected_read_lines": 3, "example_return": "ma 0\rOK\rDONE0,f28"},
+            {"operation_name": "move_aperture_absolute",  "command": "ma 2\r", "expected_read_lines": 3, "example_return": "ma 0\rOK\rDONE0,f28"},
+            {"operation_name": "open_aperture",           "command": "mo\r",   "expected_read_lines": 3, "example_return": "mo\rOK\rDONE0,f28"},
+            {"operation_name": "close_aperture",          "command": "mc\r",   "expected_read_lines": 3, "example_return": "mo\rOK\rDONE14,f216"},
             {"operation_name": "get_aperture_position",   "command": "pa\r",   "expected_read_lines": 3, "example_return": "pa\rOK\r0,f28"},
             {"operation_name": "get_focus_position",      "command": "pf\r",   "expected_read_lines": 3, "example_return": "pf\rOK\r0"},
-            {"operation_name": "move_focus_position",     "command": "fa0\r",  "expected_read_lines": 3, "example_return": "fa0\rOK\rDONE0,1"},
+            {"operation_name": "move_focus_position",     "command": "fa 0\r", "expected_read_lines": 3, "example_return": "fa0\rOK\rDONE0,1"},
             {"operation_name": "move_focus_to_zero",      "command": "mz\r",   "expected_read_lines": 3, "example_return": "mz\rOK\rDONE-4724,1"},
             {"operation_name": "move_focus_to_infinity",  "command": "mi\r",   "expected_read_lines": 4, "example_return": "DONE-8,1\rmi\rOK\rDONE4732,1"},
             {"operation_name": "set_focus_to_zero",       "command": "sf0\r",  "expected_read_lines": 3, "example_return": "DONE0,1\rsf0\rOK"},

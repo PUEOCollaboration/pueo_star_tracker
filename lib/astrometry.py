@@ -1417,8 +1417,8 @@ class Astrometry:
         cleaned_img = None
 
         # Defaults for 99.5th percentile values
-        p995_original = None
-        p995_masked_original = None
+        p999_original = None
+        p999_masked_original = None
 
         def get_params():
             return {
@@ -1500,8 +1500,8 @@ class Astrometry:
 
         # This is False in config.ini as ast_use_photoutils param
         # TODO: This is forced for now until cedar detect is implemented
-        p995_original = None
-        p995_masked_original = None
+        p999_original = None
+        p999_masked_original = None
         if self.solver in ['solver1', 'solver3']: #  or True:
             if True:
                 ##### Uncomment the following lines to use the source-finding functions independently
@@ -1518,7 +1518,7 @@ class Astrometry:
                 if True:
                     # Direct call to show exception on source_finder
                     source_finder_exec_time = time.monotonic()
-                    masked_image, sources_mask, sources_contours, p995_original, p995_masked_original = source_finder(
+                    masked_image, sources_mask, sources_contours, p999_original, p999_masked_original = source_finder(
                         self.cfg,
                         img,
                         log_file_path,
@@ -1871,8 +1871,8 @@ class Astrometry:
             astrometry['solver'] = self.solver
             astrometry['solver_name'] = self.solver_name
             # This is OK!!!
-            astrometry['p995_original'] = p995_original
-            astrometry['p995_masked_original'] = p995_masked_original
+            astrometry['p999_original'] = p999_original
+            astrometry['p999_masked_original'] = p999_masked_original
 
             logit(f"Astrometry: {str(astrometry)}")
 
@@ -1933,11 +1933,11 @@ class Astrometry:
             astrometry['solver'] = self.solver
             astrometry['solver_name'] = self.solver_name
             # Regardless of solution we still want to return
-            astrometry['p995_original'] = p995_original
-            astrometry['p995_masked_original'] = p995_masked_original
+            astrometry['p999_original'] = p999_original
+            astrometry['p999_masked_original'] = p999_masked_original
             # Example combined:
-            # astrometry['p995'] = (p995_original, p995_masked_original)
-            # Access: p995_original = astrometry['p995'][0]
+            # astrometry['p999'] = (p999_original, p999_masked_original)
+            # Access: p999_original = astrometry['p999'][0]
 
         total_exec_time = time.monotonic() - t0
         astrometry["total_exec_time"] = total_exec_time if astrometry else None

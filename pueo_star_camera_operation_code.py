@@ -438,137 +438,174 @@ class PueoStarCameraOperation:
         plt.savefig(image_file)
         self.server.write(image_file, data_type='image_file', is_preserve=is_preserve)
 
-    def fit_best_focus(self, focus_image_path, focus_positions, focus_scores, diameter_scores, max_focus_position,
-                       focus_method='sequence_contrast'):
-        # TODO: Implement sequence_twostep focus_method
-        # zip the two lists and sort
+    def fit_best_focus(self, focus_image_path, focus_positions, focus_scores, diameter_scores,
+                       max_focus_position, focus_method='sequence_contrast'):
+        """
+        Best-focus estimation from a focus scan.
+
+        Logic:
+          - Always try BOTH:
+              * Gaussian fit on edge/contrast scores (focus_scores).
+              * V-fit (abs_line) on diameter_scores.
+          - If BOTH fits work, use the V-fit (diameter-based).
+          - If only ONE fit works, use that one.
+          - If NEITHER fit works, fall back to cfg.lab_best_focus and
+            return cfg.sigma_error_value as stdev.
+
+        Returns
+        -------
+        best_focus_pos : int
+        stdev          : float (width/uncertainty from chosen fit,
+                                 or cfg.sigma_error_value if no fit succeeded)
+        """
+        sigma_error = float(self.cfg.sigma_error_value)
+
+        # Sort focus_positions & focus_scores like original code did
         list1, list2 = zip(*sorted(zip(focus_positions, focus_scores)))
         focus_positions, focus_scores = (list(t) for t in zip(*sorted(zip(list1, list2))))
 
-        focus_dict = {
-            'sequence_contrast': {
-                'best_focus_pos': self.cfg.trial_focus_pos,
-                'status': False
-            },
-            'sequence_diameter': {
-                'best_focus_pos': self.cfg.trial_focus_pos,
-                'status': False
-            },
-            'sequence_twostep': {
-                'best_focus_pos': self.cfg.trial_focus_pos,
-                'status': False
-            },
-        }
+        focus_positions = np.array(focus_positions, dtype=float)
+        focus_scores = np.array(focus_scores, dtype=float)
+        diameter_scores = np.array(diameter_scores, dtype=float)
 
-        # Autofucus by list of covariances
+        fit_points = self.cfg.fit_points_init  # Already an int
 
-        trial_best_focus_pos = None
-        if focus_method == 'sequence_contrast':
-            try:
-                fit_points = self.cfg.fit_points_init  # 100
-                # post process all images.
+        # ------------------------------------------------------------------
+        # 1) Gaussian fit on edge/contrast scores (existing "sequence_contrast")
+        # ------------------------------------------------------------------
+        gauss_best_pos = None
+        gauss_stdev = None
 
-                # initial conditions for the fit.
-                mean0 = sum(np.multiply(focus_positions, focus_scores)) / sum(focus_scores)
-                # mean0 = focus_positions[focus_scores.index(max(focus_scores))]
+        try:
+            # initial conditions for the Gaussian fit
+            mean0 = sum(np.multiply(focus_positions, focus_scores)) / sum(focus_scores)
+            sigma0 = math.sqrt(
+                sum(np.multiply(focus_scores, (focus_positions - mean0) ** 2)) /
+                sum(focus_scores)
+            )
+            base_height0 = float(focus_scores.min())
+            a0 = float(focus_scores.max())
 
-                sigma0 = math.sqrt(sum(np.multiply(focus_scores, (focus_positions - mean0) ** 2)) / sum(focus_scores))
-                base_height0 = min(focus_scores)
-                a0 = max(focus_scores)
+            p0 = [a0, mean0, sigma0, base_height0]
 
-                popt, pcov = curve_fit(self.gauss, focus_positions, focus_scores, p0=[a0, mean0, sigma0, base_height0])
-                fit_points = np.linspace(min(focus_positions), max(focus_positions), fit_points)
-                _ = popt[0]
-                mean = popt[1]
-                sigma = abs(popt[2])
-                height = popt[3]
+            popt, pcov = curve_fit(self.gauss, focus_positions, focus_scores, p0=p0)
 
-                plt.figure()
-                plt.plot(focus_positions, focus_scores, 'b', label='Focus Data')
-                plt.plot(fit_points, self.gauss(fit_points, *popt), 'r--', label='Gaussian fit')
-                plt.legend()
-                plt.xlabel('Focus Position, counts')
-                plt.ylabel('Sequence Contrast/Covariance')
-                plt.title(f'mean: {round(mean, 2)}, stdev: {round(sigma, 2)}, height: {round(height, 2)}')
-                # TODO: Remove old commented out code
-                # plt.savefig(focus_image_path + 'focus_score.png')
-                self.plt_savefig(plt, focus_image_path + 'focus_score.png')
-                trial_best_focus_pos = int(popt[1])  # Rounding to integer
+            fit_x = np.linspace(focus_positions.min(), focus_positions.max(), fit_points)
+            mean = popt[1]
+            sigma = abs(popt[2])
+            height = popt[3]
 
-                self.logit('Fitted parameters:')
-                self.logit(f'a = {popt[0]} +- {np.sqrt(pcov[0, 0])}')
-                self.logit(f'X_mean = {popt[1]} +- {np.sqrt(pcov[1, 1])}')
-                self.logit(f'sigma = {popt[2]} +- {np.sqrt(pcov[2, 2])}')
-                self.logit(f'height = {popt[3]} +- {np.sqrt(pcov[3, 3])}')
-                # In range?
-                if trial_best_focus_pos < 0 or trial_best_focus_pos > max_focus_position:
-                    trial_best_focus_pos = self.cfg.trial_focus_pos
-                    self.logit(f'Focus set to out of limits. So defaulting to {self.cfg.trial_focus_pos}.')
-                else:
-                    focus_dict['sequence_contrast']['best_focus_pos'] = trial_best_focus_pos
-                    focus_dict['sequence_contrast']['status'] = True
-            except Exception as e:
-                self.log.error(f'Fitting Error: {e}')
-                self.logit(f"There was an error with fitting: {e}")
-                sigma = self.cfg.sigma_error_value
-                # This needs to be read from a config file
-                focus_dict['sequence_contrast']['best_focus_pos'] = self.cfg.trial_focus_pos
-                focus_dict['sequence_contrast']['status'] = False
-        elif focus_method == 'sequence_diameter':
-            # Autofocus score by mean diameters
-            best_focus_pos = 0
-            try:
-                fit_points = self.cfg.fit_points_init
-                # post process all images.
+            # Save plot
+            plt.figure()
+            plt.plot(focus_positions, focus_scores, 'b', label='Focus Data')
+            plt.plot(fit_x, self.gauss(fit_x, *popt), 'r--', label='Gaussian fit')
+            plt.legend()
+            plt.xlabel('Focus Position, counts')
+            plt.ylabel('Sequence Contrast/Covariance')
+            plt.title(f'mean: {round(mean, 2)}, stdev: {round(sigma, 2)}, height: {round(height, 2)}')
+            self.plt_savefig(plt, focus_image_path + 'focus_score.png')
 
-                # initial conditions for the fit.
-                a = 1
-                h = 0.5 * (min(focus_positions) + max(focus_positions))
-                c = min(diameter_scores)
+            self.logit('Gaussian fit (edge) parameters:')
+            self.logit(f'a = {popt[0]} +- {np.sqrt(pcov[0, 0])}')
+            self.logit(f'X_mean = {popt[1]} +- {np.sqrt(pcov[1, 1])}')
+            self.logit(f'sigma = {popt[2]} +- {np.sqrt(pcov[2, 2])}')
+            self.logit(f'height = {popt[3]} +- {np.sqrt(pcov[3, 3])}')
 
-                popt, pcov = curve_fit(self.abs_line, focus_positions, diameter_scores, p0=[a, h, c])
-                fit_points = np.linspace(min(focus_positions), max(focus_positions), fit_points)
-                a = popt[0]
-                h = trial_best_focus_pos = int(popt[1])  # best_focus_pos
-                c = popt[2]
+            trial_best = int(round(mean))
+            if 0 <= trial_best <= max_focus_position:
+                gauss_best_pos = trial_best
+                gauss_stdev = float(sigma)
+            else:
+                self.logit(
+                    f'Gaussian best focus {trial_best} out of limits 0..{max_focus_position}; '
+                    'ignoring Gaussian fit.'
+                )
+        except Exception as e:
+            self.log.error(f'Gaussian fitting Error: {e}')
+            self.logit(f"There was an error with Gaussian fitting: {e}")
 
-                self.logit('Fitted parameters:')
-                self.logit(f'a = {popt[0]} +- {np.sqrt(pcov[0, 0])}')
-                self.logit(f'h (x offset) = {popt[1]} +- {np.sqrt(pcov[1, 1])}')
-                self.logit(f'c (y offset) = {popt[2]} +- {np.sqrt(pcov[2, 2])}')
+        # ------------------------------------------------------------------
+        # 2) V-fit on diameters using abs_line (existing "sequence_diameter")
+        # ------------------------------------------------------------------
+        vfit_best_pos = None
+        vfit_stdev = None
 
-                plt.figure()
-                plt.plot(focus_positions, diameter_scores, 'b', label='Focus Data')
-                plt.plot(fit_points, self.abs_line(fit_points, *popt), 'r--', label='Absolute Line Fit')
-                plt.legend()
-                plt.xlabel('Focus Position, counts')
-                plt.ylabel('Diameter')
-                plt.title(f'x offset: {round(h, 2)}, y offset: {round(c, 2)}, slope: {round(a, 2)}')
-                # TODO: Remove old commented out code
-                # plt.savefig(focus_image_path + 'diameters_score.png')
-                self.plt_savefig(plt, focus_image_path + 'diameters_score.png')
+        try:
+            a0 = 1.0
+            h0 = 0.5 * (focus_positions.min() + focus_positions.max())
+            c0 = float(diameter_scores.min())
 
-                # is in range
-                if trial_best_focus_pos < 0 or trial_best_focus_pos > max_focus_position:
-                    trial_best_focus_pos = self.cfg.trial_focus_pos
-                    self.logit(f'Focus set to out of limits. So defaulting to {self.cfg.trial_focus_pos}.')
-                else:
-                    focus_dict['sequence_diameter']['best_focus_pos'] = h
-                    focus_dict['sequence_diameter']['status'] = True
-            except Exception as e:
-                self.log.error(f'Fitting Error: {e}')
-                self.logit(f"There was an error with fitting: {e}")
-                sigma = self.cfg.sigma_error_value
-                focus_dict['sequence_diameter']['best_focus_pos'] = self.cfg.trial_focus_pos
-                focus_dict['sequence_diameter']['status'] = False
-        if focus_method == 'sequence_contrast':  # and focus_dict['covariance']['status']:
-            best_focus_pos = focus_dict['sequence_contrast']['best_focus_pos']
-        elif focus_method == 'sequence_diameter':
-            best_focus_pos = focus_dict['sequence_diameter']['best_focus_pos']
-        elif focus_method == 'sequence_twostep':
-            best_focus_pos = focus_dict['sequence_twostep']['best_focus_pos']
+            p0_v = [a0, h0, c0]
 
-        return best_focus_pos, sigma
+            popt_v, pcov_v = curve_fit(self.abs_line, focus_positions, diameter_scores, p0=p0_v)
+
+            fit_x_v = np.linspace(focus_positions.min(), focus_positions.max(), fit_points)
+            a = popt_v[0]
+            h = popt_v[1]  # V-vertex (focus position)
+            c = popt_v[2]
+
+            trial_best_v = int(round(h))
+
+            self.logit('V-fit (diameter) parameters:')
+            self.logit(f'a (slope) = {popt_v[0]} +- {np.sqrt(pcov_v[0, 0])}')
+            self.logit(f'h (x offset) = {popt_v[1]} +- {np.sqrt(pcov_v[1, 1])}')
+            self.logit(f'c (y offset) = {popt_v[2]} +- {np.sqrt(pcov_v[2, 2])}')
+
+            plt.figure()
+            plt.plot(focus_positions, diameter_scores, 'b', label='Focus Data')
+            plt.plot(fit_x_v, self.abs_line(fit_x_v, *popt_v), 'r--', label='Absolute Line Fit')
+            plt.legend()
+            plt.xlabel('Focus Position, counts')
+            plt.ylabel('Diameter')
+            plt.title(f'x offset: {round(h, 2)}, y offset: {round(c, 2)}, slope: {round(a, 2)}')
+            self.plt_savefig(plt, focus_image_path + 'diameters_score.png')
+
+            if 0 <= trial_best_v <= max_focus_position:
+                vfit_best_pos = trial_best_v
+                # uncertainty in h as a proxy for stdev in focus units
+                vfit_stdev = float(np.sqrt(pcov_v[1, 1]))
+            else:
+                self.logit(
+                    f'V-fit best focus {trial_best_v} out of limits 0..{max_focus_position}; '
+                    'ignoring V-fit.'
+                )
+        except Exception as e:
+            self.log.error(f'V-fit (diameter) Error: {e}')
+            self.logit(f"There was an error with V-fitting: {e}")
+
+        # ------------------------------------------------------------------
+        # 3) Decide which result to use
+        # ------------------------------------------------------------------
+        v_ok = vfit_best_pos is not None
+        gauss_ok = gauss_best_pos is not None
+
+        if v_ok and gauss_ok:
+            self.logit(
+                f"fit_best_focus: both fits OK; using V-fit (diameter) at pos={vfit_best_pos}, "
+                f"Gaussian (edge) best at pos={gauss_best_pos} for comparison."
+            )
+            return int(vfit_best_pos), float(vfit_stdev)
+
+        if v_ok:
+            self.logit(
+                f"fit_best_focus: using V-fit (diameter) at pos={vfit_best_pos}; "
+                "Gaussian fit not usable."
+            )
+            return int(vfit_best_pos), float(vfit_stdev)
+
+        if gauss_ok:
+            self.logit(f"fit_best_focus: V-fit failed; using Gaussian (edge) fit at pos={gauss_best_pos}.")
+            return int(gauss_best_pos), float(gauss_stdev)
+
+        # ------------------------------------------------------------------
+        # 4) Final fallback: lab_best_focus + sigma_error_value
+        # ------------------------------------------------------------------
+        self.logit(
+            "fit_best_focus: both V-fit and Gaussian fit failed; "
+            f"falling back to cfg.lab_best_focus={self.cfg.lab_best_focus} "
+            f"and sigma_error_value={sigma_error}."
+        )
+        return int(self.cfg.lab_best_focus), sigma_error
 
     def read_filename_focus_positions(self, focus_image_path, focus_positions, focus_scores):
         # get the path/directory
@@ -767,17 +804,72 @@ class PueoStarCameraOperation:
         tmp_filename = f'{basename}_histogram_tmp.png'
         self.plt_savefig(plt, tmp_filename, is_preserve=False)
 
-
     def do_auto_gain_routine(self, auto_gain_image_path, initial_gain_value,
                              desired_max_pix_value, pixel_saturated_value, pixel_count_tolerance,
                              max_iterations=None):
+        """
+        Autogain: adjust camera GAIN using a brightness control metric.
 
-        """For adhoc single image gain check use autonomous last image rather than creating serioes of images."""
-        max_autogain_iterations = self.cfg.max_autogain_iterations if max_iterations is None else max_iterations
+        Control strategy:
+          * Primary metric: MAX pixel value in the image (drives bright star peaks).
+          * If image is saturated (max == pixel_saturated_value):
+              → fall back to 99.9th percentile of UNCLIPPED pixels (arr < pixel_saturated_value),
+                to keep using a meaningful value instead of the pinned ADC ceiling.
+
+        Behavior:
+          * On every iteration, we capture a fresh image through capture_timestamp_save().
+          * Compute:
+              - max pixel value
+              - min pixel value
+              - p99.9 over all pixels (for logging)
+              - count/fraction of saturated pixels
+          * If not saturated → control_value = max pixel.
+          * If saturated → control_value = 99.9th percentile of unclipped pixels (or max as last resort).
+          * If |control_value - desired| <= pixel_count_tolerance → converged → stop.
+          * Otherwise, adjust gain in the correct direction (up for dark, down for bright)
+            by at least autogain_min_gain_step, until we converge or hit max_autogain_iterations.
+
+        Saving policy:
+          * Images are saved ONLY by capture_timestamp_save(), using auto_gain_image_path
+            and inserted_string. This function assumes that the returned `basename` is the
+            full base path (dir + filename root) for that image.
+
+          * If self.cfg.return_partial_images is True:
+              - Save histogram text file every iteration.
+              - Save per-iteration histogram plot every iteration (same base as image).
+              - Also save a FINAL histogram plot for the last image (basename + "_final").
+          * If self.cfg.return_partial_images is False:
+              - Do NOT save histogram text or plots during the loop.
+              - After the loop, save ONLY the FINAL histogram text file and FINAL
+                histogram plot for the last image (basename + "_final").
+        """
+
+        # 1) Iteration control
+        max_autogain_iterations = (
+            self.cfg.max_autogain_iterations if max_iterations is None else max_iterations
+        )
+        save_partials = bool(self.cfg.return_partial_images)
+
         t0 = time.monotonic()
-        is_done = False
         loop_counts = 1
-        new_gain_value = initial_gain_value
+
+        # 2) Clamp initial gain into allowed range
+        min_gain = int(self.cfg.min_gain_setting)
+        max_gain = int(self.cfg.max_gain_setting)
+        new_gain_value = int(initial_gain_value)
+        if new_gain_value < min_gain:
+            self.logit(
+                f"Initial gain {new_gain_value} < min_gain_setting={min_gain}. Clamping.",
+                color='yellow'
+            )
+            new_gain_value = min_gain
+        elif new_gain_value > max_gain:
+            self.logit(
+                f"Initial gain {new_gain_value} > max_gain_setting={max_gain}. Clamping.",
+                color='yellow'
+            )
+            new_gain_value = max_gain
+
         if max_autogain_iterations > 1:
             # take image using these settings.
             self.camera.set_control_value(asi.ASI_GAIN, new_gain_value)
@@ -786,154 +878,406 @@ class PueoStarCameraOperation:
                 self.logit('Opening Aperture.')
                 self.focuser.open_aperture()
 
-        # Camera Setting required mode
+        # Camera setting required mode
         self.camera.set_image_type(asi.ASI_IMG_RAW16)
         # self.camera.set_roi(bins=self.cfg.roi_bins)
 
-
         self.logit("Starting autogain routine.")
         high_pix_value = 0
-        while not is_done:
+
+        # To remember the final iteration histogram for the final plot/text
+        last_basename = None  # full base path from capture_timestamp_save
+        last_bins = None
+        last_counts = None
+        last_high_pix_value = None
+        last_low_pix_value = None
+        last_control_value = None
+        last_metric_source = None
+
+        # Minimum gain step (ensures we don't stall if controller returns same value)
+        min_step = int(self.cfg.autogain_min_gain_step)
+
+        # Threshold for "heavily saturated" fraction of pixels at ADC limit
+        sat_frac_thresh = 1e-4  # 0.01%
+
+        # 3) Main loop
+        while True:
             if loop_counts > max_autogain_iterations:
-                is_done = True
                 self.logit("Maximum iterations reached. Can't find solution. Ending cycle.")
                 break
+
             self.logit("#" * 104)
             self.logit(f"Autogain Iteration: {loop_counts} / {max_autogain_iterations}")
 
             self.logit('Capturing image.')
-            inserted_string = 'e'  + 'g' + str(new_gain_value)
+            inserted_string = 'e' + 'g' + str(new_gain_value)
+
             # Take image or use existing self.curr_img for single gain update
             img = self.curr_img if max_iterations is not None and max_iterations == 1 else None
             img, basename = self.capture_timestamp_save(auto_gain_image_path, inserted_string, img)
             self.log.debug('Image captured.')
+            # `basename` is the base path for this image; we reuse it for histogram files.
 
-            bins, et1 = timed_function(np.linspace,0, pixel_saturated_value, self.cfg.autogain_num_bins)
-            # Creating a histogram requires flatten + histogram
+            # Flatten once
             arr, et2 = timed_function(img.flatten)
 
+            # ----------------- Brightness metrics -----------------
+            high_pix_value, et4 = timed_function(np.max, arr)
+            low_pix_value = int(arr.min())
+            p999_all = float(np.percentile(arr, 99.9))  # for logging only
+
+            num_at_sat = int((arr >= pixel_saturated_value).sum())
+            sat_frac = num_at_sat / max(arr.size, 1)
+            unclipped = arr[arr < pixel_saturated_value]
+
+            # Control metric selection
+            if high_pix_value < pixel_saturated_value or num_at_sat == 0:
+                # Not saturated (or no pixels at ADC limit) → use max pixel directly
+                control_value = float(high_pix_value)
+                metric_source = "max"
+                is_saturated = False
+            else:
+                # Saturated: use 99.9 percentile of *unclipped* pixels if possible
+                if unclipped.size > 0:
+                    control_value = float(np.percentile(unclipped, 99.9))
+                    metric_source = "p99.9_unclipped"
+                else:
+                    # Pathological: everything is clipped; fall back to max
+                    control_value = float(high_pix_value)
+                    metric_source = "max_all_clipped"
+                is_saturated = True
+
+            # Log iteration stats including control metric and saturation info
+            self.logit(
+                f'Iteration stats: iter={loop_counts}, gain={new_gain_value} [cB], '
+                f'max={high_pix_value} [counts], '
+                f'control={control_value:.1f} [counts] ({metric_source}), '
+                f'p99.9_all={p999_all:.1f}, '
+                f'min={low_pix_value} [counts], '
+                f'sat_pixels={num_at_sat} ({sat_frac:.2e} of image)'
+            )
+
+            # ----------------- Histogram (for plotting / logging) -----------------
+            bins, et1 = timed_function(
+                np.linspace, 0, pixel_saturated_value, self.cfg.autogain_num_bins
+            )
             (counts, bins), et3 = timed_function(np.histogram, arr, bins=bins)
 
-            # There is one counts less than bins, therefore we iterate over counts, not bins
-
-            n = len(counts)
-            # high_pix_value, et4 = timed_function(max, arr)
-            high_pix_value, et4 = timed_function(np.max, arr)
-
-            min_count = self.cfg.min_count # [IMAGE] min_count
-            # find the next largest pixel value
-            second_largest_pix_value = int(bins[0])
-
-            self.log.debug(f'Exec np.linspace/img.flatten/np.histogram/np.max in sec: {et1}/{et2}/{et3}/{et4} arr dtype: {arr.dtype}')
+            self.log.debug(
+                f'Exec np.linspace/img.flatten/np.histogram/np.max in sec: '
+                f'{et1}/{et2}/{et3}/{et4} arr dtype: {arr.dtype}'
+            )
             self.log.debug(f'bin: {len(bins)} counts: {len(counts)}')
-            try:
-                for i in range(n - 1, -1, -1):
-                    if bins[i + 1] < high_pix_value and counts[i] >= min_count:
-                        # second_largest_pix_value = arr[i]
-                        second_largest_pix_value = int(bins[i + 1])
-                        break
-                    else:
-                        second_largest_pix_value = high_pix_value
-            except IndexError as e:
-                self.log.error(e)
-                raise IndexError(e)
 
-            if self.cfg.return_partial_images:
-                # Create and save the histogram plot image
-                t0 = time.monotonic()
-                plt.figure()
-                plt.hist(bins[:-1], bins, weights=counts)
-                plt.xlabel('Gain Brightness, counts')
-                plt.ylabel('Frequency, pixels')
-                plt.title(f'hpv: {high_pix_value}, slp: {second_largest_pix_value}, lpv: {min(arr)}')
-                plt.grid()
-                # plt.show() # Showing only in TESTING phase!
+            # Save data needed to make final histogram after loop
+            last_basename = basename
+            last_bins = bins
+            last_counts = counts
+            last_high_pix_value = high_pix_value
+            last_low_pix_value = low_pix_value
+            last_control_value = control_value
+            last_metric_source = metric_source
+
+            # ----------------- Optional histogram figure + text for partials -----------------
+            if save_partials:
+                # Histogram figure (more "professional" style)
+                t_plot0 = time.monotonic()
+                fig, ax = plt.subplots()
+
+                ax.hist(
+                    bins[:-1],
+                    bins,
+                    weights=counts,
+                    histtype="stepfilled",
+                    linewidth=1.5,
+                    alpha=0.8,
+                )
+
+                ax.set_xlabel("Pixel value [counts]")
+                ax.set_ylabel("Frequency [pixels]")
+
+                ax.set_title(
+                    f"Autogain Histogram (iter={loop_counts}, gain={new_gain_value} cB)\n"
+                    f"control={control_value:.1f} ({metric_source}), max={high_pix_value}, "
+                    f"min={low_pix_value}, target={desired_max_pix_value}±{pixel_count_tolerance}"
+                )
+
+                # Mark the target and tolerance band
+                ax.axvline(desired_max_pix_value, linestyle="--", linewidth=1.5)
+                ax.axvline(
+                    desired_max_pix_value - pixel_count_tolerance,
+                    linestyle=":",
+                    linewidth=1.0,
+                )
+                ax.axvline(
+                    desired_max_pix_value + pixel_count_tolerance,
+                    linestyle=":",
+                    linewidth=1.0,
+                )
+
+                # Lightly tighten x-limits around data
+                x_min = max(
+                    0,
+                    min(low_pix_value, desired_max_pix_value - 3 * pixel_count_tolerance),
+                )
+                x_max = min(
+                    pixel_saturated_value * 1.05,
+                    max(high_pix_value, desired_max_pix_value + 3 * pixel_count_tolerance),
+                )
+                ax.set_xlim(x_min, x_max)
+
+                ax.tick_params(direction="in", top=True, right=True)
+
+                fig.tight_layout()
+                # Save histogram PNG next to the image (same basename, different extension)
                 self.save_fig(basename, plt)
-                self.log.debug(f'Image plot created in {get_dt(t0)}.')
+                self.log.debug(f"Histogram plot created in {get_dt(t_plot0)}.")
 
-            # Save histogram data to text file
-            txt_filename = f'{basename}_histogram.txt'
-            try:
-                with open(txt_filename, 'w') as f:
-                    f.write("--- Histogram Data ---\n")
-                    f.write(f"# Histogram data for: {basename}\n")
-                    f.write(f"# High pixel value: {high_pix_value}\n")
-                    f.write(f"# Second largest pixel value: {second_largest_pix_value}\n")
-                    f.write(f"# Low pixel value: {min(arr)}\n")
-                    f.write(f"# Number of bins: {len(bins)}\n")
-                    f.write(f"# Total pixels: {np.sum(counts)}\n")
-                    f.write("# Bin_Left_Edge,Bin_Right_Edge,Count\n")
+                # Histogram text file for this iteration (same directory as image)
+                txt_filename = basename + "_histogram.txt"
+                try:
+                    with open(txt_filename, 'w') as f:
+                        f.write("--- Histogram Data (Iteration) ---\n")
+                        f.write(f"# Basename: {basename}\n")
+                        f.write(f"# Iteration: {loop_counts}\n")
+                        f.write(f"# Gain [cB]: {new_gain_value}\n")
+                        f.write(f"# Desired max pixel value [counts]: {desired_max_pix_value}\n")
+                        f.write(f"# Pixel tolerance [counts]: {pixel_count_tolerance}\n")
+                        f.write(f"# ADC saturation value [counts]: {pixel_saturated_value}\n")
+                        f.write(f"# High pixel value (max): {high_pix_value}\n")
+                        f.write(f"# Control value [counts]: {control_value:.3f}\n")
+                        f.write(f"# Control source: {metric_source}\n")
+                        f.write(f"# 99.9 percentile (all pixels): {p999_all:.3f}\n")
+                        f.write(f"# Saturated pixels: {num_at_sat} ({sat_frac:.3e} of image)\n")
+                        f.write(f"# Low pixel value (min): {low_pix_value}\n")
+                        f.write(f"# Number of bins: {len(bins)}\n")
+                        f.write(f"# Total pixels: {np.sum(counts)}\n")
+                        f.write("# Bin_Left_Edge,Bin_Right_Edge,Count\n")
+                        for i in range(len(counts)):
+                            f.write(f"{bins[i]:.1f},{bins[i + 1]:.1f},{counts[i]}\n")
+                        f.write("\n")
+                    self.log.debug(f'Histogram data saved to {txt_filename}')
+                except Exception as e:
+                    self.log.error(f'Failed to save Histogram data to {txt_filename}: {e}')
 
-                    # Write bin edges and counts in a readable format
-                    for i in range(len(counts)):
-                        f.write(f"{bins[i]:.1f},{bins[i + 1]:.1f},{counts[i]}\n")
-
-                    f.write("\n")  # blank line after this block
-
-                self.log.debug(f'Histogram data saved to {txt_filename}')
-            except Exception as e:
-                self.log.error(f'Failed to save histogram data to {txt_filename}: {e}')
-
-            image_saturated = True
-            if high_pix_value == pixel_saturated_value:
-                if second_largest_pix_value >= (desired_max_pix_value + pixel_count_tolerance):
-                    self.logit("Image is saturated.")
-                    image_saturated = True
-                elif second_largest_pix_value < (desired_max_pix_value - pixel_count_tolerance):
-                    self.logit("Image has hot pixels. Image not saturated.")
-                    high_pix_value = second_largest_pix_value  # overwrite high pix value with valid count.
-                    image_saturated = False
+            # ----------------- Saturation diagnostics ONLY (still use control metric) -----------------
+            heavily_saturated = is_saturated and (sat_frac > sat_frac_thresh)
+            if heavily_saturated:
+                self.logit(
+                    "Image is heavily saturated (significant fraction at ADC limit); "
+                    "using unclipped 99.9th percentile as control metric."
+                )
+            elif is_saturated:
+                self.logit(
+                    "Image has some saturated pixels; using unclipped 99.9th percentile as control metric."
+                )
             else:
-                self.logit("Image has no hot pixels.")
-                image_saturated = False
+                self.logit("Image not saturated; using max pixel as control metric.")
 
-            difference = np.subtract(np.int64(desired_max_pix_value), np.int64(high_pix_value))
-            self.logit(f'Counts: desired_max_pix_value:{desired_max_pix_value} high_pix_value: {high_pix_value}')
-            if high_pix_value > desired_max_pix_value + pixel_count_tolerance:
-                self.logit("Counts too high.")
-                self.logit(f"Pixel count difference: {difference}")
-            elif high_pix_value < desired_max_pix_value - pixel_count_tolerance:
-                self.logit("Counts too low.")
-                self.logit(f"Pixel count difference: {difference}")
-            else:
-                # Highest value is high enough.
-                # Fount desired gain, exiting the iterations loop
-                self.logit("Pixels counts are in range. Ending iterations.")
-                self.logit(f"Pixel count difference: {difference}")
-                is_done = False
+            # ----------------- Control metric + convergence test -----------------
+            difference = float(desired_max_pix_value) - float(control_value)
+
+            self.logit(
+                f'Counts: desired_max_pix_value:{desired_max_pix_value} '
+                f'control_value: {control_value:.1f} ({metric_source})'
+            )
+
+            # Convergence: |control_value - target| <= tolerance
+            if abs(difference) <= float(pixel_count_tolerance):
+                self.logit("Pixel counts (control metric) are in range. Ending iterations.")
+                self.logit(f"Pixel count difference: {difference:.1f}")
                 break
-            old_gain_value = new_gain_value
 
-            if not image_saturated:
-                self.logit(f"Image not saturated.")
-                #calculate gain adjustment
-                new_gain_value = self.calculate_gain_adjustment(old_gain_value, high_pix_value, desired_max_pix_value)
-
-                self.logit(f'Old/New Gain Value: {old_gain_value}/{new_gain_value}')
-                self.camera.set_control_value(asi.ASI_GAIN, new_gain_value)
+            # We are NOT converged → gain must change this iteration
+            if control_value > desired_max_pix_value + pixel_count_tolerance:
+                self.logit("Counts too high (control metric above target).")
+                counts_too_high = True
             else:
-                self.logit(f"Image is saturated. Setting gain to halfway.")
-                # TODO: Saturated image, we started from middle gain
-                new_gain_value = int(0.5*(self.cfg.max_gain_setting-self.cfg.min_gain_setting))
-                if new_gain_value < self.cfg.min_gain_setting:
-                    self.logit(f"New gain too low. Setting gain={self.cfg.min_gain_setting}. Recommend decreasing exposure time.")
-                    new_gain_value = self.cfg.min_gain_setting
-                elif new_gain_value >= self.cfg.max_gain_setting:
-                    self.logit(
-                        f"New gain too high. Setting gain={self.cfg.max_gain_setting}. Recommend increasing exposure time.")
-                    new_gain_value = self.cfg.max_gain_setting
+                self.logit("Counts too low (control metric below target).")
+                counts_too_high = False
+            self.logit(f"Pixel count difference: {difference:.1f}")
 
-                self.logit(f'Old/New Gain Value: {old_gain_value}/{new_gain_value}')
-                self.camera.set_control_value(asi.ASI_GAIN, new_gain_value)
-            # Increment the loop_counts
+            old_gain_value = int(new_gain_value)
+
+            # ----------------- Compute new gain -----------------
+            self.logit(
+                f"Image autogain step using control metric '{metric_source}' "
+                f"(heavily_saturated={heavily_saturated})."
+            )
+
+            raw_new_gain = self.calculate_gain_adjustment(
+                old_gain_value, control_value, desired_max_pix_value
+            )
+
+            # Enforce directionality + minimum step so we don't stall
+            if control_value > desired_max_pix_value + pixel_count_tolerance:
+                # too bright → MUST move gain DOWN
+                if raw_new_gain >= old_gain_value:
+                    raw_new_gain = old_gain_value - min_step
+            elif control_value < desired_max_pix_value - pixel_count_tolerance:
+                # too dim → MUST move gain UP
+                if raw_new_gain <= old_gain_value:
+                    raw_new_gain = old_gain_value + min_step
+
+            # Round and clamp to valid range
+            new_gain_value = int(round(raw_new_gain))
+
+            # If the gain rails out at min/max, recommend exposure adjustment in the log.
+            if new_gain_value < min_gain:
+                self.logit(
+                    f"Requested gain {new_gain_value} < min_gain_setting={min_gain}. "
+                    f"Clamping.",
+                    color='yellow'
+                )
+                new_gain_value = min_gain
+
+                # Recommendation based on brightness state
+                if counts_too_high:
+                    self.logit(
+                        "Gain has railed at MIN and image is still too bright. "
+                        "Recommend DECREASING exposure time.",
+                        color='red'
+                    )
+                else:
+                    self.logit(
+                        "Gain has railed at MIN but image is too dim. "
+                        "Recommend INCREASING exposure time (check configuration).",
+                        color='red'
+                    )
+
+            elif new_gain_value > max_gain:
+                self.logit(
+                    f"Requested gain {new_gain_value} > max_gain_setting={max_gain}. "
+                    f"Clamping.",
+                    color='yellow'
+                )
+                new_gain_value = max_gain
+
+                if counts_too_high:
+                    self.logit(
+                        "Gain has railed at MAX and image is too bright. "
+                        "Recommend DECREASING exposure time.",
+                        color='red'
+                    )
+                else:
+                    self.logit(
+                        "Gain has railed at MAX and image is still too dim. "
+                        "Recommend INCREASING exposure time.",
+                        color='red'
+                    )
+
+            self.logit(f'Old/New Gain Value: {old_gain_value}/{new_gain_value}')
+            self.camera.set_control_value(asi.ASI_GAIN, new_gain_value)
+
             loop_counts += 1
-        self.logit("##########################Auto Gain Routine Summary Results: ###############################", color='green')
+
+        # 4) Final histogram text & plot (ALWAYS saved for final image)
+        if last_basename is not None and last_bins is not None and last_counts is not None:
+            # Final histogram text: if partials are disabled, this is the ONLY histogram TXT
+            if not save_partials:
+                txt_filename = last_basename + "_final_histogram.txt"
+                try:
+                    with open(txt_filename, 'w') as f:
+                        f.write("--- Histogram Data (FINAL) ---\n")
+                        f.write(f"# Basename: {last_basename}\n")
+                        f.write(f"# Final gain [cB]: {int(new_gain_value)}\n")
+                        f.write(f"# Desired max pixel value [counts]: {desired_max_pix_value}\n")
+                        f.write(f"# Pixel tolerance [counts]: {pixel_count_tolerance}\n")
+                        f.write(f"# ADC saturation value [counts]: {pixel_saturated_value}\n")
+                        f.write(f"# High pixel value (max): {last_high_pix_value}\n")
+                        f.write(f"# Control value [counts]: {last_control_value:.3f}\n")
+                        f.write(f"# Control source: {last_metric_source}\n")
+                        f.write(f"# Low pixel value (min): {last_low_pix_value}\n")
+                        f.write(f"# Number of bins: {len(last_bins)}\n")
+                        f.write(f"# Total pixels: {np.sum(last_counts)}\n")
+                        f.write("# Bin_Left_Edge,Bin_Right_Edge,Count\n")
+                        for i in range(len(last_counts)):
+                            f.write(f"{last_bins[i]:.1f},{last_bins[i + 1]:.1f},{last_counts[i]}\n")
+                        f.write("\n")
+                    self.log.debug(f'FINAL histogram data saved to {txt_filename}')
+                except Exception as e:
+                    self.log.error(f'Failed to save FINAL histogram data to {txt_filename}: {e}')
+
+            # Final histogram plot: always saved with "_final" suffix, same base as image
+            try:
+                fig, ax = plt.subplots()
+
+                ax.hist(
+                    last_bins[:-1],
+                    last_bins,
+                    weights=last_counts,
+                    histtype="stepfilled",
+                    linewidth=1.5,
+                    alpha=0.8,
+                )
+
+                ax.set_xlabel("Pixel value [counts]")
+                ax.set_ylabel("Frequency [pixels]")
+
+                ax.set_title(
+                    f"FINAL Autogain Histogram (gain={int(new_gain_value)} cB)\n"
+                    f"control={last_control_value:.1f} ({last_metric_source}), "
+                    f"max={last_high_pix_value}, min={last_low_pix_value}, "
+                    f"target={desired_max_pix_value}±{pixel_count_tolerance}"
+                )
+
+                # Target + tolerance band
+                ax.axvline(desired_max_pix_value, linestyle="--", linewidth=1.5)
+                ax.axvline(
+                    desired_max_pix_value - pixel_count_tolerance,
+                    linestyle=":",
+                    linewidth=1.0,
+                )
+                ax.axvline(
+                    desired_max_pix_value + pixel_count_tolerance,
+                    linestyle=":",
+                    linewidth=1.0,
+                )
+
+                # Clean x-limits based on final data
+                x_min = max(
+                    0,
+                    min(last_low_pix_value, desired_max_pix_value - 3 * pixel_count_tolerance),
+                )
+                x_max = min(
+                    pixel_saturated_value * 1.05,
+                    max(
+                        last_high_pix_value,
+                        desired_max_pix_value + 3 * pixel_count_tolerance,
+                    ),
+                )
+                ax.set_xlim(x_min, x_max)
+
+                ax.tick_params(direction="in", top=True, right=True)
+
+                fig.tight_layout()
+                # Save final histogram PNG next to the last image
+                self.save_fig(last_basename + "_final", plt)
+                self.log.debug(f"Final histogram plot saved for {last_basename}")
+            except Exception as e:
+                self.log.error(f'Failed to save final histogram plot: {e}')
+
+        # 5) Summary
+        self.logit(
+            "##########################Auto Gain Routine Summary Results: "
+            "###############################",
+            color='green'
+        )
         self.logit(f'desired_max_pix_value: {desired_max_pix_value} [counts]')
-        self.logit(f'largest count in image is: {high_pix_value} [counts]')
-        self.logit(f'optimal_gain_value: {new_gain_value} [cB]')
-        self.logit("#"*107, color='green')
+
+        if last_control_value is not None:
+            self.logit(
+                f'final control_value ({last_metric_source}): '
+                f'{last_control_value:.1f} [counts]'
+            )
+        if last_high_pix_value is not None:
+            self.logit(f'final max_pixel_value: {last_high_pix_value} [counts]')
+
+        self.logit(f'optimal_gain_value: {int(new_gain_value)} [cB]')
+        self.logit("#" * 107, color='green')
         self.logit(f'do_auto_gain_routine completed in {get_dt(t0)}.', color='cyan')
-        return new_gain_value
+
+        return int(new_gain_value)
 
     def software_gain_from_metric(
             self,
@@ -1203,6 +1547,10 @@ class PueoStarCameraOperation:
         0/1, or 0/255). We compute a contour-based diameter for each blob
         directly from the mask geometry (no background subtraction or
         source_finder inside this function).
+
+        Diameter definition (area-equivalent):
+            d_eq = 2 * sqrt(A / pi)
+        where A is the contour area in pixels².
         """
         # --- Normalize to a uint8 mask (0 or 255) ---
         if is_array:
@@ -1233,9 +1581,10 @@ class PueoStarCameraOperation:
             if area < min_size or area > max_size:
                 continue
 
-            # Diameter of contour: use enclosing circle diameter
-            (cx, cy), radius = cv2.minEnclosingCircle(cnt)
-            d = 2.0 * float(radius)
+            # Diameter of contour: use area-equivalent diameter
+            # d_eq = 2 * sqrt(A / pi)
+            equiv_radius = np.sqrt(area / np.pi)
+            d = 2.0 * float(equiv_radius)
             diameters.append(d)
 
         if not diameters:
@@ -1243,7 +1592,7 @@ class PueoStarCameraOperation:
             return [-1, ]
 
         diameters = np.array(diameters, dtype=float)
-        self.logit("--------Focus Routine: Diameter List (mask-based, contour diameter)--------")
+        self.logit("--------Focus Routine: Diameter List (mask-based, area-equivalent)--------")
         self.logit(str(diameters))
         return diameters
 
@@ -1263,6 +1612,7 @@ class PueoStarCameraOperation:
         if self.focuser.aperture_position == 'closed':
             self.logit('Opening Aperture.')
             self.focuser.open_aperture()
+
         # Getting the images at different focus positions
         for i in range(len(focus_positions)):
             self.logit("#########################################################################################")
@@ -1277,11 +1627,14 @@ class PueoStarCameraOperation:
             if d < 3:
                 raise ValueError("d must be >= 3")
 
-            # Downscale image
+            # --- First leveling pass ---
             downscale_factor = self.cfg.leveling_filter_downscale_factor
             if downscale_factor > 1:
-                downsampled_img = cv2.resize(img, (img.shape[1] // downscale_factor, img.shape[0] // downscale_factor),
-                                             interpolation=cv2.INTER_AREA)
+                downsampled_img = cv2.resize(
+                    img,
+                    (img.shape[1] // downscale_factor, img.shape[0] // downscale_factor),
+                    interpolation=cv2.INTER_AREA
+                )
                 d_small = max(3, d // downscale_factor)  # shrink kernel accordingly
             else:
                 downsampled_img = img
@@ -1290,86 +1643,109 @@ class PueoStarCameraOperation:
             initial_local_levels = ring_mean_background_estimation(downsampled_img, d_small)
 
             # Upscale back with interpolation
-            print("Upscaling initial local levels.")
+            self.logit("Upscaling initial local levels.")
             if downscale_factor > 1:
-                initial_local_levels = cv2.resize(initial_local_levels, (img.shape[1], img.shape[0]),
-                                                  interpolation=cv2.INTER_LINEAR)
-            # subtract background the first time.
+                initial_local_levels = cv2.resize(
+                    initial_local_levels,
+                    (img.shape[1], img.shape[0]),
+                    interpolation=cv2.INTER_LINEAR
+                )
+
+            # Subtract background the first time
             cleaned_img = subtract_background(img, initial_local_levels)
 
-            # Downscale image
+            # --- Second leveling pass on cleaned image ---
             downscale_factor = self.cfg.leveling_filter_downscale_factor
             if downscale_factor > 1:
-                downsampled_img = cv2.resize(cleaned_img, (cleaned_img.shape[1] // downscale_factor,
-                                                           cleaned_img.shape[0] // downscale_factor),
-                                             interpolation=cv2.INTER_AREA)
-                d_small = max(3, d // downscale_factor)  # shrink kernel accordingly
+                downsampled_img = cv2.resize(
+                    cleaned_img,
+                    (cleaned_img.shape[1] // downscale_factor, cleaned_img.shape[0] // downscale_factor),
+                    interpolation=cv2.INTER_AREA
+                )
+                d_small = max(3, d // downscale_factor)
             else:
                 downsampled_img = cleaned_img
                 d_small = d
 
             final_local_levels = ring_mean_background_estimation(downsampled_img, d_small)
 
-            # Upscale back with cubic spline
+            # Upscale back with interpolation
             if downscale_factor > 1:
-                final_local_levels = cv2.resize(final_local_levels, (img.shape[1], img.shape[0]),
-                                                interpolation=cv2.INTER_LINEAR)
+                final_local_levels = cv2.resize(
+                    final_local_levels,
+                    (img.shape[1], img.shape[0]),
+                    interpolation=cv2.INTER_LINEAR
+                )
 
-            # estimate noise for image
+            # Estimate noise for image
             sigma_g = estimate_noise_pairs(cleaned_img, sep=int(self.cfg.noise_pair_sep_full))
             estimated_noise = np.full_like(cleaned_img, sigma_g, dtype=np.float32)
 
-            # Build leveled residual for hysteresis thresholding
+            # Build leveled residual
             residual_img = subtract_background(cleaned_img, final_local_levels)
 
-            # threshold using hysteresis
-            self.logit("Creating mask using hysteresis thresholding.")
+            # --- Threshold using a single noise-scaled threshold (no hysteresis) ---
+            self.logit("Creating mask using single-threshold (k=5.0, no hysteresis) for autofocus.")
+            k_single = 5.0  # single k-sigma threshold for autofocus
+
             sources_mask, sources_mask_u8 = threshold_with_noise(
                 residual_img,
                 sigma_map=estimated_noise,
-                k_high=float(self.cfg.hyst_k_high),
-                k_low=float(self.cfg.hyst_k_low),
-                use_hysteresis=True,
+                k_high=k_single,  # same threshold for high/low
+                k_low=k_single,
+                use_hysteresis=False,  # disable hysteresis for autofocus
                 min_area=int(self.cfg.hyst_min_area),
                 close_kernel=int(self.cfg.hyst_close_kernel),
                 sigma_gauss=float(self.cfg.hyst_sigma_gauss),
                 sigma_floor=float(self.cfg.hyst_sigma_floor),
             )
 
+            # Apply mask to cleaned image for diameter measurement
             masked_image = cv2.bitwise_and(cleaned_img, cleaned_img, mask=sources_mask_u8)
 
+            # Mask-based equivalent diameters
             equiv_diameters = self.get_centroid_diameters(masked_image, is_array=True)
 
-            if (equiv_diameters is None or
+            if (
+                    equiv_diameters is None or
                     (hasattr(equiv_diameters, "__len__") and len(equiv_diameters) == 1 and float(
-                        equiv_diameters[0]) < 0)):
+                        equiv_diameters[0]) < 0)
+            ):
                 self.logit("No valid diameters at this focus position; assigning penalty diameter score.")
                 diameter_score = 1e6
+                self.logit('Mean star diameter: n/a (penalty).')
+                self.logit('Median star diameter: n/a (penalty).')
+                self.logit('Number of diameters: 0')
             else:
-                diameter_score = float(np.mean(equiv_diameters))
+                mean_d = float(np.mean(equiv_diameters))
+                median_d = float(np.median(equiv_diameters))
 
-            self.logit(f'Mean star diameter: {diameter_score:.3f} px')
-            self.logit(f'Number of diameters: {len(equiv_diameters)}')
+                # Use median for autofocus score (more robust)
+                diameter_score = median_d
+
+                self.logit(f'Mean star diameter: {mean_d:.3f} px')
+                self.logit(f'Median star diameter (used for V-fit): {median_d:.3f} px')
+                self.logit(f'Number of diameters: {len(equiv_diameters)}')
 
             # Store for diameter-based autofocus (sequence_diameter)
             diameter_scores.append(diameter_score)
 
-            # Edge-contrast metric on your background-subtracted image
+            # Edge-contrast metric on cleaned background-subtracted image
             edge_score = self.focus_score_starfield_edge(cleaned_img, top_frac=1.0)
             self.logit(f'Edge-contrast Focus score: {edge_score:.6g}')
 
             # Store for contrast-based autofocus (sequence_contrast)
             focus_scores.append(edge_score)
 
-            count = count + 1
+            count += 1
 
         self.logit('Processing focus images.')
-        # self.read_filename_focus_positions(focus_image_path, focus_positions, focus_scores)
-        # self.logit(measured_focus_positions)
-        # self.logit(focus_scores)
         try:
-            trial_best_focus_pos, stdev = self.fit_best_focus(focus_image_path, focus_positions, focus_scores,
-                                                              diameter_scores, max_focus_position, focus_method)
+            trial_best_focus_pos, stdev = self.fit_best_focus(
+                focus_image_path, focus_positions, focus_scores,
+                diameter_scores, max_focus_position, focus_method
+            )
+
             # Calculate focus deviation range
             focus_min_pos = self.cfg.lab_best_focus * (1 - self.cfg.autofocus_max_deviation)
             focus_max_pos = self.cfg.lab_best_focus * (1 + self.cfg.autofocus_max_deviation)
@@ -1377,19 +1753,30 @@ class PueoStarCameraOperation:
             # Check if the calculated result of autofocus is within allowed autofocus_max_deviation
             if trial_best_focus_pos < focus_min_pos or trial_best_focus_pos > focus_max_pos:
                 self.logit(
-                    f'AutoFocus position out of allowed range of autofocus_max_deviation: {trial_best_focus_pos} allowed range: {focus_min_pos}..{focus_max_pos}')
+                    f'AutoFocus position out of allowed range of autofocus_max_deviation: '
+                    f'{trial_best_focus_pos} allowed range: {focus_min_pos}..{focus_max_pos}'
+                )
                 trial_best_focus_pos = self.cfg.lab_best_focus
 
+            # Clamp to scan range with correct messages
             if trial_best_focus_pos < focus_start_pos:
                 trial_best_focus_pos = focus_start_pos
-                self.logit('Focus position too great. Setting to upper bound of focus range.')
+                self.logit('Focus position too small. Setting to lower bound of focus range.')
             elif trial_best_focus_pos > focus_stop_pos:
                 trial_best_focus_pos = focus_stop_pos
-                self.logit('Focus position too small. Setting to lower bound of focus range.')
-            if stdev > (focus_stop_pos + focus_start_pos) / 2:
-                trial_best_focus_pos = self.cfg.trial_focus_pos
+                self.logit('Focus position too great. Setting to upper bound of focus range.')
+
+            # Only apply this stdev sanity check if we actually had a real fit
+            if hasattr(self.cfg, "sigma_error_value") and stdev != self.cfg.sigma_error_value:
+                if stdev > (focus_stop_pos + focus_start_pos) / 2:
+                    self.logit(
+                        f'Autofocus stdev={stdev:.3f} too large; '
+                        f'falling back to trial_focus_pos={self.cfg.trial_focus_pos}.'
+                    )
+                    trial_best_focus_pos = self.cfg.trial_focus_pos
+
         except Exception as e:
-            # TODO: one of the above values is none and we get an exception
+            # Catch any unexpected failure from fit_best_focus / post-processing
             self.logit(f"best focus fit failed. Setting focus position to {self.cfg.trial_focus_pos}.")
             stdev = self.cfg.stdev_error_value
             trial_best_focus_pos = self.cfg.trial_focus_pos
@@ -1399,15 +1786,14 @@ class PueoStarCameraOperation:
             self.log.error(traceback.format_exception(e))
             logit(e, color='red')
 
-        # move the focus to the best found position.
+        # Move the focus to the best found position.
         self.logit(f"Moving Focus to best focus position: {int(round(trial_best_focus_pos))}")
         self.focuser.move_focus_position(trial_best_focus_pos)
-        # take final image at estimated best focus
+
+        # Take final image at estimated best focus
         inserted_string = 'f' + str(int(round(trial_best_focus_pos)))
         self.capture_timestamp_save(focus_image_path, inserted_string)
-        # No need to close anything
-        # self.logit('Closing Aperture.')
-        # self.focuser.close_aperture()
+
         self.logit(f'do_autofocus_routine completed in {get_dt(t0)}.', color='cyan')
         return trial_best_focus_pos, stdev
 
@@ -2157,23 +2543,25 @@ class PueoStarCameraOperation:
             self.cfg.autogain_min_gain_step
             self.cfg.autogain_max_exp_factor_up    # if both up & down are 1.0 → exposure lock
             self.cfg.autogain_max_exp_factor_down  # "
-            self.cfg.autogain_use_masked_p995      # 0=never, 1=auto, 2=force
+            self.cfg.autogain_use_masked_p999      # 0=never, 1=auto, 2=force
             self.cfg.autogain_min_mask_pixels
         """
 
         # --- 0. Master switch ---
-        if self.cfg.autogain_enable:
-            self.logit("autogain/autoexposure: autogain_enable:0, skipping.",color='yellow')
+        if self.cfg.autogain_enable == False:
+            self.logit("autogain/autoexposure: autogain_enable:0, skipping.", color='yellow')
             return
 
-        # --- 1. Read p99.5 metrics from astrometry dict ---
-        p995_original = astrometry.get('p995_original')
-        p995_masked = astrometry.get('p995_masked_original')
+        # --- 1. Read p99.9 metrics from astrometry dict ---
+        # NOTE: currently still coming from the legacy p999_* keys;
+        # you will update astrometry wiring separately.
+        p999_original = astrometry.get('p999_original')
+        p999_masked = astrometry.get('p999_masked_original')
         n_mask_pixels = astrometry.get('n_mask_pixels')  # optional
 
-        # --- Decide whether to use masked or unmasked p995 ---
+        # --- Decide whether to use masked or unmasked p999 ---
 
-        mode = self.cfg.autogain_use_masked_p995  # 0=never, 1=auto, 2=force
+        mode = self.cfg.autogain_use_masked_p999  # 0=never, 1=auto, 2=force
         min_mask_pixels = self.cfg.autogain_min_mask_pixels
 
         mode_str_map = {
@@ -2185,22 +2573,22 @@ class PueoStarCameraOperation:
 
         use_masked = False
 
-        if p995_masked is not None and p995_masked > 0:
+        if p999_masked is not None and p999_masked > 0:
             if mode == 2:
-                # FORCE mode: always use masked p995 if it exists and is positive
+                # FORCE mode: always use masked p999 if it exists and is positive
                 use_masked = True
             elif mode == 1:
-                # AUTO mode: only use masked p995 if there are enough pixels in the mask
+                # AUTO mode: only use masked p999 if there are enough pixels in the mask
                 if (n_mask_pixels is not None) and (n_mask_pixels >= min_mask_pixels):
                     use_masked = True
             # mode == 0 -> never use masked
 
         if use_masked:
-            high_pix_value = p995_masked
-            src_name = "p995_masked_original"
+            high_pix_value = p999_masked
+            src_name = "p999_masked_original"
         else:
-            high_pix_value = p995_original
-            src_name = "p995_original"
+            high_pix_value = p999_original
+            src_name = "p999_original"
 
         desired_max_pix_value = self.cfg.autogain_desired_max_pixel_value
 
@@ -2211,9 +2599,9 @@ class PueoStarCameraOperation:
                 desired_max_pix_value is None or
                 desired_max_pix_value <= 0
         ):
-            self.logit(f"autogain/autoexposure: status:HUNTING, action:invalid_p995", color='cyan')
-            self.logit(f"  src: {src_name} mode: {mode}({mode_str}) use_masked: {use_masked} n_mask_pixels: {n_mask_pixels}", color='yellow')
-            self.logit(f"  p995: {high_pix_value}, target: {desired_max_pix_value}", color='yellow')
+            self.logit(f"autogain/autoexposure: status:HUNTING, action:invalid_p999", color='cyan')
+            self.logit(f"  src: {src_name} mode: {mode}({mode_str}) use_masked: {use_masked} n_mask_pixels: {n_mask_pixels}",  color='yellow')
+            self.logit(f"  p999: {high_pix_value}, target: {desired_max_pix_value}", color='yellow')
             self.logit(f"Note: no_change_applied", color='white')
             return
 
@@ -2415,9 +2803,9 @@ class PueoStarCameraOperation:
 
         self.logit(
             f"src:{src_name}, mode:{mode}({mode_str}), use_masked:{use_masked}, "
-            f"n_mask_pixels:{n_mask_pixels}, p995:{high_pix_value:.1f}, "
-            f"target:{desired_max_pix_value:.1f}, ratio:{ratio_str}, "
-            f"exp_factor:{exp_factor_str}",
+            f"n_mask_pixels:{n_mask_pixels}, "
+            f"p999:{high_pix_value:.1f}, target:{desired_max_pix_value:.1f}, "
+            f"ratio:{ratio_str}, exp_factor:{exp_factor_str}",
             color='yellow'
         )
 
@@ -2659,8 +3047,8 @@ class PueoStarCameraOperation:
             self.server.write(f'Solving of image (do_astrometry) did not produce any solutions.', 'warning')
             return position
         else:
-            self.logit(f"p995_masked_image value: {self.astrometry.get('p995_masked_original', '-')}")
-            self.logit(f"p995_original image value: {self.astrometry.get('p995_original', '-')}")
+            self.logit(f"p999_masked_image value: {self.astrometry.get('p999_masked_original', '-')}")
+            self.logit(f"p999_original image value: {self.astrometry.get('p999_original', '-')}")
 
             if self.cfg.autogain_mode == 'software':
                 self.adjust_exposure_gain(self.astrometry)
@@ -2871,7 +3259,6 @@ class PueoStarCameraOperation:
             self.cfg.exposure_time_s = float(manual_exposure_time) / 1e6
         except Exception:
             self.cfg.exposure_time_s = 0.0
-
 
     def camera_set_gain(self, cmd):
         gain_setting = cmd.gain

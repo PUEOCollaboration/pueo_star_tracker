@@ -429,11 +429,26 @@ def source_finder(
     logit("Creating cleaned masked_image. Using hysteresis mask. For autogain/exposure.")
     masked_original_image = cv2.bitwise_and(img, img, mask=simple_sources_mask_u8)
 
-    p995_original = np.percentile(img, 99.5)
-    p995_masked_original = np.percentile(masked_original_image, 99.5)
+    # Compute p99.9 EXCLUDING saturated pixels (>= cfg.pixel_saturated_value_raw16).
+    pixel_saturated_value = cfg.pixel_saturated_value_raw16
 
-    logit(f"p995_original: {p995_original}")
-    logit(f"p995_masked_original: {p995_masked_original}")
+    # Unmasked: p99.9 of valid (unsaturated) pixels
+    valid_original = img[img < pixel_saturated_value]
+    if valid_original.size > 0:
+        p999_original = np.percentile(valid_original, 99.9)
+    else:
+        # Fallback: if everything is saturated, use full-array p99.9
+        p999_original = np.percentile(img, 99.9)
+
+    # Masked: p99.9 of valid (unsaturated) pixels
+    valid_masked = masked_original_image[masked_original_image < pixel_saturated_value]
+    if valid_masked.size > 0:
+        p999_masked_original = np.percentile(valid_masked, 99.9)
+    else:
+        p999_masked_original = np.percentile(masked_original_image, 99.9)
+
+    logit(f"p999_original (excl. saturated): {p999_original}")
+    logit(f"p999_masked_original (excl. saturated): {p999_masked_original}")
 
     # Defer trail/still decision to astrometry.py classifier; only honor explicit override
     use_trail_mode = bool(is_trail) if is_trail is not None else False
@@ -526,6 +541,7 @@ def source_finder(
                 file.write(f"median_length_px : {float(np.median(lengths)):.1f}\n")
                 file.write(f"median_area_px : {float(np.median([cv2.contourArea(c) for c in contours])):.1f}\n")
 
-    return masked_clean_image, sources_mask, top_contours, p995_original, p995_masked_original
+    return masked_clean_image, sources_mask, top_contours, p999_original, p999_masked_original
+
 
 

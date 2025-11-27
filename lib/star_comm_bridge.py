@@ -434,7 +434,10 @@ class StarCommBridge:
                 ret = Status.get_status(Status.SUCCESS, "Time updated.")
             elif commands == Commands.POWER_CYCLE:
                 self.server.camera_power_cycle(cmd)
-                ret = Status.get_status(Status.SUCCESS, "Camera/Focuser Power cycle completed.")
+                ret = Status.get_status(Status.SUCCESS, "Camera/Focuser Power Cycle completed.")
+            elif commands == Commands.POWER_SWITCH:
+                self.server.camera_power_switch(cmd)
+                ret = Status.get_status(Status.SUCCESS, f"{cmd.device.title()} Power Switch completed.")
             elif commands == Commands.HOME_LENS:
                 self.server.camera_home_lens(cmd)
                 ret = Status.get_status(Status.SUCCESS, "Camera Home lens completed.")
@@ -442,9 +445,13 @@ class StarCommBridge:
                 result = self.server.camera_check_lens(cmd)
                 ret = Status.success({'data': {'result': result}}, f"Camera Check lens completed.")
             elif commands == Commands.SET_LEVEL_FILTER:
-                # self.server.camera_set_gain(cmd)
                 self.server.camera_set_level_filter(cmd)
                 ret = Status.get_status(Status.SUCCESS, "Level filter set.")
+            elif commands == Commands.SET_AUTOGAIN_MODE:
+                self.server.cfg.set_dynamic(autogain_mode=cmd.mode)
+                logit(f'Set Autogain Mode: {cmd.mode}', color=('green' if cmd.mode != 'off' else 'red'))
+                ret = Status.get_status(Status.SUCCESS, "Auto Gain Mode set.")
+
             elif commands == Commands.CHAMBER_MODE:
                 if cmd.method == 'set':
                     self.server.chamber_mode = cmd.mode
@@ -464,6 +471,8 @@ class StarCommBridge:
                     value = camera_settings['Gain'] if cmd.param == 'gain' else camera_settings['Exposure']
                 elif cmd.param == 'level_filter':
                     value = self.server.level_filter
+                elif cmd.param == 'autogain_mode':
+                    value = self.server.cfg.autogain_mode
                 elif cmd.param == 'settings':
                     aperture_pos, aperture_f_val = self.server.focuser.get_aperture_position()
                     value = {

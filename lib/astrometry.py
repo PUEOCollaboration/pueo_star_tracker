@@ -1923,9 +1923,9 @@ class Astrometry:
                 except (TypeError, ValueError) as e:
                     # pass
                     self.log.error(f"Failed to compute RMS: {e}")
-                    self.log.error(f"Exception type: {type(e).__name__}")
-                    self.log.error(f"Stack trace:\n{traceback.format_exc()}")
-                    logit(f"Stack trace:\n{traceback.format_exc()}")
+                    # self.log.error(f"Exception type: {type(e).__name__}")
+                    # self.log.error(f"Stack trace:\n{traceback.format_exc()}")
+                    # logit(f"Stack trace:\n{traceback.format_exc()}")
         else:
             logit('No centroids found, skipping astrometry solving.', color='red')
             astrometry = {}

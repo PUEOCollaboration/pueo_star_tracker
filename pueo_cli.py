@@ -307,8 +307,8 @@ class PueoSocketClient:
         get_status_parser = subparsers.add_parser('get_status', help='Get PUEO Server status')
 
         # Parameter get commands
-        get_list = ['aperture', 'aperture_position', 'focus', 'exposure', 'gain', 'level_filter', 'settings']
-        set_list = ['aperture', 'aperture_position', 'focus', 'exposure', 'gain', 'level_filter']
+        get_list = ['aperture', 'aperture_position', 'focus', 'exposure', 'gain', 'level_filter', 'settings', 'camera_power', 'focuser_power', 'autogain_mode']
+        set_list = ['aperture', 'aperture_position', 'focus', 'exposure', 'gain', 'level_filter', 'camera_power', 'focuser_power', 'autogain_mode']
         for param in get_list:
             subparsers.add_parser(f'get_{param}', help=f'Get current {param} value')
 

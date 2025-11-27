@@ -59,6 +59,9 @@ class Dynamic:
     # autogain_enabled: bool = False          # Cannot change via CLI
     # threshold: float = 0.5                  # Cannot change via CLI
 
+    # [CAMERA]
+    autogain_mode: str = 'gain'             # off, gain, both
+
     # [SOURCES]
     level_filter: int = 9                   # OK
 

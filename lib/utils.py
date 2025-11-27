@@ -17,7 +17,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 # Custom imports
-from lib.common import get_dt, current_timestamp
+from lib.common import get_dt, current_timestamp, logit
 
 # Initialize logging
 log = logging.getLogger('pueo')
@@ -670,10 +670,59 @@ def delete_trash(
         except OSError as e:
             log.debug(f"Error deleting {file}: {e}")
 
+def create_image_histogram(cfg, arr, basename):
+    """Create Adhoc Histogram and save it to basename
+
+    Params:
+        arr: image
+        basename: filename without extension, e.g. test/test
+
+    """
+    t0 = time.monotonic()
+    bins = np.linspace( 0, cfg.pixel_saturated_value_raw16, cfg.autogain_num_bins)
+    counts, bins = np.histogram( arr, bins=bins)
+
+    fig, ax = plt.subplots()
+
+    ax.hist(
+        bins[:-1],
+        bins,
+        weights=counts,
+        histtype="stepfilled",
+        linewidth=1.5,
+        alpha=0.8,
+    )
+
+    ax.set_xlabel("Pixel value [counts]")
+    ax.set_ylabel("Frequency [pixels]")
+    ax.set_title(f"Image Histogram")
+
+    ax.tick_params(direction="in", top=True, right=True)
+
+    fig.tight_layout()
+    # Save histogram PNG next to the image (same basename, different extension)
+    logit(f"Histogram plot created in {get_dt(t0)}.")
+    filename = f'{basename}_histogram.jpg'
+    plt.savefig(
+        filename,
+        dpi=75,
+        facecolor='w',
+        edgecolor='w',
+        bbox_inches='tight',
+        pad_inches=0.05,
+        format='jpg'
+    )
+    logit(f"Histogram plot created as {filename} in {get_dt(t0)}.", color='cyan')
+
+    return filename
+
 
 def image_resize(img, scale_factors, image_filename, overlay=None, resize_mode='downscale',
                  png_compression=0,
-                 is_inspection=False, jpeg_settings: dict | None = None, is_save_jp2=False):
+                 is_inspection=False, jpeg_settings: dict | None = None,
+                 is_save_jp2=False, is_save=True,
+                 cfg=None
+                 ):
     """
     Resize an image using either downscaling (with interpolation or local mean) or downsampling.
 
@@ -791,6 +840,11 @@ def image_resize(img, scale_factors, image_filename, overlay=None, resize_mode='
         if save_as_jp2 and False:
             save_as_jp2(resized_img, jp2_filename,500) # Target ~10:1 compression
 
+        # Create inspection histogram
+        histogram_base = os.path.join(inspection_path, base_filename.replace(".png", ""))
+        histogram_filename = create_image_histogram(cfg, img, histogram_base)  # adds : _histogram.jpg
+        create_symlink(web_path, histogram_filename, 'last_inspection_histogram_image.jpg')
+
         # Cleanup
         delete_trash(inspection_path, ext='.jpg', keep=images_keep)
 
@@ -801,15 +855,18 @@ def image_resize(img, scale_factors, image_filename, overlay=None, resize_mode='
     print_img_info(resized_img, 'resized')
 
     # Save as PNG
-    cv2.imwrite(image_filename, resized_img, [int(cv2.IMWRITE_PNG_COMPRESSION), png_compression])
+    if is_save:
+        cv2.imwrite(image_filename, resized_img, [int(cv2.IMWRITE_PNG_COMPRESSION), png_compression])
 
     # Create symlink for inspection image pointing to a sd_card saved RAW image.
     if is_inspection:
-        # Create symlink to the latest image
+        # Create symlink to the latest inspection image
         symlink_base_name = jpeg_settings.get('last_image_symlink_name', 'last_inspection_image.jpg')
         symlink_name = symlink_base_name.replace(".jpg", f".png")
         web_path = jpeg_settings.get('web_path', 'web/')
         create_symlink(web_path, image_filename, symlink_name)
+
+        # Create symlink to latest histogram inspction image
 
     # Save as JP2
     # TODO: Decide and reinspect this saving the RAW as jp2
@@ -819,8 +876,9 @@ def image_resize(img, scale_factors, image_filename, overlay=None, resize_mode='
         # save_as_jp2(resized_img, jp2_filename, 400)  # Target ~10:1 compression
 
     # Get file size in MB (converted from bytes)
-    file_size = os.path.getsize(image_filename) / (1024 * 1024)  # bytes to MB conversion
-    log.debug(f'Saved resized image to path: {image_filename} compression: {png_compression} file_size: {file_size:.2f} Mb in {get_dt(t0)}.')
+    with suppress(FileNotFoundError):
+        file_size = os.path.getsize(image_filename) / (1024 * 1024)  # bytes to MB conversion
+        log.debug(f'Saved resized image to path: {image_filename} compression: {png_compression} file_size: {file_size:.2f} Mb in {get_dt(t0)}.')
 
     return resized_img.shape
 
@@ -829,7 +887,8 @@ def save_raws(img, ssd_path="", sd_card_path="", image_name="",
               scale_factors=(16, 16), resize_mode='downscale',
               raw_scale_factors=(8,8),  raw_resize_mode='downscale',
               png_compression=0, is_save=True,
-              jpeg_settings: dict | None = None):
+              jpeg_settings: dict | None = None,
+              cfg=None):
     # Save original image to ssd
     img1 = img  # .copy()
     image_filename = f"{ssd_path}/{image_name}-raw.png"
@@ -855,7 +914,9 @@ def save_raws(img, ssd_path="", sd_card_path="", image_name="",
     image_resized_shape = image_resize(img1, scale_factors, image_resized_filename,
                                        overlay=overlay_sd_card,
                                        resize_mode=resize_mode, png_compression=png_compression,
-                                       is_inspection=True, jpeg_settings=jpeg_settings)
+                                       is_inspection=True, jpeg_settings=jpeg_settings,
+                                       is_save=is_save,
+                                       cfg=cfg)
     log.debug(f'Saved downscaled image to sd path: {image_resized_filename} in {get_dt(t0)}.')
     return image_filename, img.shape, image_resized_filename, image_resized_shape
 

@@ -61,7 +61,7 @@ from lib.camera import PueoStarCamera, DummyCamera
 from lib.compute import Compute
 from lib.focuser import Focuser
 from lib.star_comm_bridge import StarCommBridge
-from lib.utils import read_image_grayscale, read_image_BGR, display_overlay_info, save_raws, image_resize, timed_function, create_symlink, get_current_utc_timestamp, delete_files
+from lib.utils import read_image_grayscale, read_image_BGR, display_overlay_info, save_raws, timed_function, create_symlink, get_current_utc_timestamp, delete_files
 from lib.source_finder import global_background_estimation,  ring_mean_background_estimation, subtract_background, estimate_noise_pairs,  threshold_with_noise, source_finder
 # from lib.astrometry import do_astrometry, optimize_calibration_parameters
 from lib.start_tracker_body_rates import StarTrackerBodyRates
@@ -800,9 +800,10 @@ class PueoStarCameraOperation:
             format='jpg'
         )
         # self.server.write(filename, data_type='image_file', is_preserve=True)  # Will delete the image so saving it again!
+        if self.cfg.enable_gui_data_exchange:
+            tmp_filename = f'{basename}_histogram_tmp.png'
+            self.plt_savefig(plt, tmp_filename, is_preserve=False)
 
-        tmp_filename = f'{basename}_histogram_tmp.png'
-        self.plt_savefig(plt, tmp_filename, is_preserve=False)
 
     def do_auto_gain_routine(self, auto_gain_image_path, initial_gain_value,
                              desired_max_pix_value, pixel_saturated_value, pixel_count_tolerance,
@@ -2548,9 +2549,11 @@ class PueoStarCameraOperation:
         """
 
         # --- 0. Master switch ---
-        if self.cfg.autogain_enable == False:
-            self.logit("autogain/autoexposure: autogain_enable:0, skipping.", color='yellow')
+        if self.cfg.autogain_mode == 'off':
+            self.logit(f"autogain/autoexposure: autogain_mode: {self.cfg.autogain_mode}, skipping.", color='yellow')
             return
+        else:
+            self.logit(f"autogain/autoexposure: autogain_mode: {self.cfg.autogain_mode}, skipping.", color='green')
 
         # --- 1. Read p99.9 metrics from astrometry dict ---
         # NOTE: currently still coming from the legacy p999_* keys;
@@ -2629,14 +2632,16 @@ class PueoStarCameraOperation:
         # --- 3a. Exposure lock detection and lab_best exposure ---
 
         # max_exp_factor_up == max_exp_factor_down == 1.0 → lock exposure to lab_best
-        exposure_lock = (
-                abs(max_exp_factor_up - 1.0) < 1e-6 and
-                abs(max_exp_factor_down - 1.0) < 1e-6
-        )
+        # exposure_lock = (
+        #         abs(max_exp_factor_up - 1.0) < 1e-6 and
+        #         abs(max_exp_factor_down - 1.0) < 1e-6
+        # )
+
+        exposure_lock = self.cfg.autogain_mode == 'gain'
 
         lab_best_exposure = None
         if exposure_lock:
-            lab_best_exposure = getattr(self.cfg, "camera_exposure_lab_best_us", old_exposure)
+            lab_best_exposure = self.cfg.lab_best_exposure
             if lab_best_exposure > exp_max:
                 lab_best_exposure = exp_max
             elif lab_best_exposure < exp_min:
@@ -2830,7 +2835,10 @@ class PueoStarCameraOperation:
         # --- Apply settings if they changed ---
         if changed:
             self.camera.set_control_value(asi.ASI_GAIN, new_gain_value)
-            self.camera.set_control_value(asi.ASI_EXPOSURE, new_exposure_value)
+            self.cfg.set_dynamic(lab_best_gain=new_gain_value)
+            if self.cfg.autogain_mode == 'both':
+                self.camera.set_control_value(asi.ASI_EXPOSURE, new_exposure_value)
+                self.cfg.set_dynamic(lab_best_exposure=new_exposure_value)
 
     def camera_take_image(self, cmd=None, is_operation=False, is_test=False):
         """
@@ -2944,37 +2952,6 @@ class PueoStarCameraOperation:
         self.info_file = f"{self.get_daily_path(self.cfg.final_path)}/log_{timestamp_string}.txt"
         self.info_add_image_info(camera_settings, curr_utc_timestamp)
 
-        # Periodic Autogain (in autonomous mode)
-        # Single iteration keeps the camera in range.
-        # TODO: If the autonomous mode is disabled it will lose track so needs to rerun the full autogain interactions again
-        is_threaded_autogain_maintenance = True
-        if (
-                is_operation
-                and self.cfg.autogain_update_interval != 0
-                and (self.img_cnt % self.cfg.autogain_update_interval) == 0
-                and not is_test
-                # TODO: NEXT condition is from Windell, but does not resolve!!!
-                # and hw_autogain_enabled
-        ):
-            self.logit(f"Autogain mode: {self.cfg.autogain_mode}", color="cyan")
-            if self.cfg.autogain_mode == "hardware" and False: # Let's not do this at the moment
-                if is_threaded_autogain_maintenance:
-                    if self._autogain_thread is None or not self._autogain_thread.is_alive():
-                        self.log.debug('Running hardware autogain_maintenance in a NEW thread.')
-                        self._autogain_thread = threading.Thread(
-                            target=self._run_autogain_maintenance,
-                            args=(camera_settings, current_gain),
-                            daemon=True,
-                        )
-                        self._autogain_thread.start()
-                else:
-                    self.log.debug('Running autogain_maintenance in MAIN thread.')
-                    new_gain, gain_exec = timed_function(self.autogain_maintenance, camera_settings)
-                    self.logit(f'Single image autogain completed: interval={self.cfg.autogain_update_interval} current gain: {current_gain} new gain: {new_gain} in {gain_exec:.4f} seconds.', color='cyan')
-            elif self.cfg.autogain_mode == "software":
-                self.log.debug('Running software autogain.')
-
-
         # Perform astrometry
         image_file = timestamp_string
         self.logit(f"curr image name : {image_file}")
@@ -3007,7 +2984,8 @@ class PueoStarCameraOperation:
                       self.cfg.scale_factors, self.cfg.resize_mode,
                       self.cfg.raw_scale_factors, self.cfg.raw_resize_mode,
                       self.cfg.png_compression, self.is_flight,
-                      self.cfg.inspection_settings
+                      self.cfg.inspection_settings,
+                      self.cfg
                       )
             )
 
@@ -3030,8 +3008,9 @@ class PueoStarCameraOperation:
             # Get the save_raws return values (filenames)
             self.curr_image_name, self.curr_image_info, self.curr_scaled_name, self.curr_scaled_info = save_raws_result.get()
             # Send image to GUI/client
-            self.server.write(f'Current image filename: {self.curr_image_name}')
-            self.server.write(self.curr_scaled_name, data_type='image_file')
+            if self.cfg.enable_gui_data_exchange:
+                self.server.write(f'Current image filename: {self.curr_image_name}')
+                self.server.write(self.curr_scaled_name, data_type='image_file')
 
         if is_raw:
             # Only took the raw image, no solving
@@ -3050,8 +3029,8 @@ class PueoStarCameraOperation:
             self.logit(f"p999_masked_image value: {self.astrometry.get('p999_masked_original', '-')}")
             self.logit(f"p999_original image value: {self.astrometry.get('p999_original', '-')}")
 
-            if self.cfg.autogain_mode == 'software':
-                self.adjust_exposure_gain(self.astrometry)
+            # Enabled via self.cfg.autogain_enabled
+            self.adjust_exposure_gain(self.astrometry)
 
         # Append additional image metadata log to a file.
         self.info_add_astro_info()
@@ -3383,12 +3362,36 @@ class PueoStarCameraOperation:
             self.versa_api.cycle_pin(self.cfg.sbc_dio_focuser_pin, self.cfg.sbc_dio_cycle_delay, self.cfg.sbc_dio_default)
         self.focuser.power_cycle(power_cycle_wait_s)
 
+    def camera_power_switch(self, cmd):
+        """Switch the Power to the target device"""
+        device = str(cmd.device)
+        power = cmd.power.lower() == 'on' # True: On, False: Off
+        switch_txt = 'On' if power else 'Off'
+
+        invert = not self.cfg.sbc_dio_default
+        value = power ^ invert  # ~ ^ XOR
+        # Switch: True = ON, False = OFF
+        # If sbc_dio_default is False, logic is inverted
+
+        color = 'green' if power else 'red'
+        self.logit(f'{device.title()} Power Switch: {switch_txt}', color=color)
+        hi_low = "HIGH" if value else "LOW"
+        self.logit(f'Setting GPIO Pins For {device.title()} to {value} ({hi_low}):', color='cyan')
+        if device == 'camera':
+            with suppress(RuntimeError):
+                self.versa_api.set_pin(self.cfg.sbc_dio_camera_pin, value)
+        elif device == 'focuser':
+            with suppress(RuntimeError):
+                self.versa_api.set_pin(self.cfg.sbc_dio_focuser_pin, value)
+        else:
+            raise ValueError('Invalid device, specified.')
+
+
     def camera_home_lens(self, cmd):
         c_min = self.min_focus_position
         c_max = self.max_focus_position
         self.min_focus_position, self.max_focus_position = self.focuser.home_lens_focus()
-        self.logit(
-            f'Home Lens completed: new min/max positions: {self.min_focus_position}/{self.max_focus_position} old: {c_min}/{c_max}')
+        self.logit(f'Home Lens completed: new min/max positions: {self.min_focus_position}/{self.max_focus_position} old: {c_min}/{c_max}')
 
     def camera_check_lens(self, cmd):
         result = self.focuser.check_lens_focus()

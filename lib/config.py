@@ -97,7 +97,6 @@ class Config(Dynamic):
     delta_gain = 5
 
     # [CAMERA]
-    autogain_mode = "hardware" # Added new, setting default!
     asi_gama = 50
     asi_exposure = 9000
     asi_gain = 100
@@ -132,7 +131,7 @@ class Config(Dynamic):
     camera_exposure_max_us = 5000000
 
     # Master switch for software autogain/autoexposure
-    autogain_enable = True
+    autogain_mode = 'gain' # gain or both
 
     # Preferred "center" gain when exposure changes
     autogain_mid_gain_setting = 300
@@ -207,7 +206,7 @@ class Config(Dynamic):
     # min_pattern_checking_stars = 15
     min_pattern_checking_stars = 10
     include_angular_velocity = True
-    angular_velocity_timeout: float = 10.0  # seconds
+    angular_velocity_timeout = 10.0  # seconds
 
     solve_timeout = 5000.0
 
@@ -554,7 +553,6 @@ class Config(Dynamic):
         self.delta_gain = self._config.getint('LENS_FOCUS_CONSTANTS', 'delta_gain', fallback=self.delta_gain)
 
         # [CAMERA] section
-        self.autogain_mode = self._config.get('CAMERA', 'autogain_mode', fallback=self.autogain_mode)
         self.asi_gama = self._config.getint('CAMERA', 'asi_gama', fallback=self.asi_gama)
         self.asi_exposure = self._config.getint('CAMERA', 'asi_exposure', fallback=self.asi_exposure)
         self.asi_gain = self._config.getint('CAMERA', 'asi_gain', fallback=self.asi_gain)
@@ -588,7 +586,7 @@ class Config(Dynamic):
         self.camera_exposure_max_us = self._config.getint('CAMERA', 'camera_exposure_max_us', fallback=self.camera_exposure_max_us)
 
         # Autogain / autoexposure knobs
-        self.autogain_enable = self._config.getboolean('CAMERA', 'autogain_enable', fallback=self.autogain_enable)
+        self.autogain_mode = self._config.get('CAMERA', 'autogain_mode', fallback=self.autogain_mode)
 
         # TODO: This is a derived value, should not be here!!! autogain_mid_gain_setting is not defined in config.ini!!!
         self.autogain_mid_gain_setting = self._config.getfloat('CAMERA', 'autogain_mid_gain_setting', fallback=(self.min_gain_setting + self.max_gain_setting) / 2.0)

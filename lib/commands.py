@@ -90,10 +90,13 @@ class Commands(Enum):
     UPDATE_TIME = 16
 
     POWER_CYCLE = 17
-    HOME_LENS = 18
-    CHECK_LENS = 19
+    POWER_SWITCH = 18
+    HOME_LENS = 19
+    CHECK_LENS = 20
 
-    SET_LEVEL_FILTER = 20
+    SET_LEVEL_FILTER = 21
+
+    SET_AUTOGAIN_MODE = 22
 
     CHAMBER_MODE = 97
     GET = 98
@@ -134,6 +137,8 @@ class Command:
     mode = None
     param = None
     metadata: bool = None
+    device: str = None
+    power: bool = None
 
     settings = {
         Commands.CHECK_STATUS.value: {
@@ -336,6 +341,19 @@ class Command:
         Commands.POWER_CYCLE.value: {
             'params': {}
         },
+        Commands.POWER_SWITCH.value: {
+            'params': {
+                'device': {
+                    'type': 'list',
+                    'values': ['camera', 'focuser']
+                },
+                'power': {
+                    'type': 'list',
+                    'values': ['on', 'off'],
+                    'default': 'on'
+                }
+            }
+        },
         Commands.HOME_LENS.value: {
             'params': {}
         },
@@ -351,6 +369,15 @@ class Command:
                     'odd': True,
                     'default': 9
                 }
+            }
+        },
+        Commands.SET_AUTOGAIN_MODE.value: {
+            'params': {
+                'mode': {
+                    'type': 'list',
+                    'values': ['off', 'gain', 'both'],
+                    'default': 'gain'
+                },
             }
         },
         Commands.CHAMBER_MODE.value: {
@@ -370,7 +397,7 @@ class Command:
             'params': {
                 'param': {
                     'type': 'list',
-                    'values': ['aperture', 'aperture_position', 'exposure', 'gain', 'focus', 'settings', 'level_filter'],
+                    'values': ['aperture', 'aperture_position', 'exposure', 'gain', 'focus', 'settings', 'level_filter', 'autogain_mode'],
                 },
             },
         },
@@ -471,6 +498,12 @@ class Command:
             self.add_attribute('omega_z', self.data['omega_z'], validation['params'])
         elif self.command == Commands.UPDATE_TIME:
             self.add_attribute('new_time', self.data['new_time'], validation['params'])
+        elif self.command == Commands.POWER_SWITCH:
+            self.add_attribute('device', self.data['device'], validation['params'])
+            if 'power' not in self.data:
+                self.data['power'] = validation['params']['power']['default']
+            self.add_attribute('power', self.data['power'], validation['params'])
+
         # CHAMBER_MODE ~ id 97
         elif self.command == Commands.CHAMBER_MODE:
             if self.data is None:
@@ -483,6 +516,9 @@ class Command:
                 self.add_attribute('mode', self.data['mode'], validation['params'])
         elif self.command == Commands.SET_LEVEL_FILTER:
             self.add_attribute('level', self.data['level'], validation['params'])
+        elif self.command == Commands.SET_AUTOGAIN_MODE:
+            self.add_attribute('mode', self.data['mode'], validation['params'])
+
         # ...
         elif self.command == Commands.GET:
             self.add_attribute('param', self.data['param'], validation['params'])
@@ -730,6 +766,12 @@ class Command:
             return self.set_gain(value)
         elif command in ['level_filter', 'set_level_filter']:
             return self.set_level_filter(value)
+        elif command in ['focuser_power', 'set_focuser_power']:
+            return self.power_switch('focuser', value)
+        elif command in ['camera_power', 'set_camera_power']:
+            return self.power_switch('camera', value)
+        elif command in ['autogain_mode', 'set_autogain_mode']:
+            return self.set_autogain_mode(value)
         raise ValueError('Invalid command.')
 
     def enable_distortion_correction(self, fov: float, distortion_parameter1: float, distortion_parameter2: float):
@@ -763,6 +805,11 @@ class Command:
         self.define(command_data)
         return self.command_data
 
+    def power_switch(self, device: str, power: bool = True):
+        command_data = {'command': Commands.POWER_SWITCH.name.lower(), 'data': {'device': device, 'power': power}}
+        self.define(command_data)
+        return self.command_data
+
     def home_lens(self):
         command_data = {'command': Commands.HOME_LENS.name.lower(), 'data': {}}
         self.define(command_data)
@@ -775,6 +822,11 @@ class Command:
 
     def set_level_filter(self, level: int):
         command_data = {'command': Commands.SET_LEVEL_FILTER.name.lower(), 'data': {'level': level}}
+        self.define(command_data)
+        return self.command_data
+
+    def set_autogain_mode(self, mode: str):
+        command_data = {'command': Commands.SET_AUTOGAIN_MODE.name.lower(), 'data': {'mode': mode}}
         self.define(command_data)
         return self.command_data
 
@@ -843,7 +895,10 @@ if __name__ == "__main__":
         cmd.get('aperture_position'),
         cmd.chamber_mode('set', True),
         cmd.chamber_mode('get'),
-        cmd.set('level_filter', 6),
+        cmd.set('level_filter', 5),
+        cmd.set('camera_power', 'on'),
+        cmd.set('focuser_power', 'off'),
+        cmd.set('autogain_mode', 'both')
         # cmd.get('level_filter'),
     ]
     for cmd_dict in cmds:
@@ -865,6 +920,10 @@ if __name__ == "__main__":
 
         elif cmd.command == Commands.FLIGHT_MODE:
             print(f'{cmd.method}, {cmd.command_name}, {cmd.data}')
+        elif cmd.command == Commands.POWER_SWITCH:
+            print(f'{cmd.device}, {cmd.power}, {cmd.data}')
+        elif cmd.command == Commands.SET_AUTOGAIN_MODE:
+            print(f'{cmd.mode}')
         else:
             print(f'{cmd.command} -> {cmd_dict} ... {cmd.param}')
 

@@ -23,11 +23,13 @@ python pueo-cli.py <command> [<args>...]
 
 ### System Control Commands
 
-| Command        | Description                    | Arguments                                                                                                                    |
-|----------------|--------------------------------|------------------------------------------------------------------------------------------------------------------------------|
-| `start`        | Start/resume autonomous mode   | `[solver]` (solver1, solver2, solver3), `[cadence]` (Cadence in seconds)<br/> (all optional, but must provide first or both) |
-| `stop`         | Stop autonomous mode           | None                                                                                                                         |
-| `power_cycle`  | Power cycle camera and focuser | None                                                                                                                         |
+| Command             | Description                    | Arguments                                                                                                                    |
+|---------------------|--------------------------------|------------------------------------------------------------------------------------------------------------------------------|
+| `start`             | Start/resume autonomous mode   | `[solver]` (solver1, solver2, solver3), `[cadence]` (Cadence in seconds)<br/> (all optional, but must provide first or both) |
+| `stop`              | Stop autonomous mode           | None                                                                                                                         |
+| `power_cycle`       | Power cycle camera and focuser | None                                                                                                                         |
+| `set_camera_power`  | Switches focuser power         | `[power]` (on, off)                                                                                                          |
+| `set_focuser_power` | Switches camera power          | `[power]` (on, off)                                                                                                          |
 
 ### Focus Operations
 
@@ -44,6 +46,9 @@ python pueo-cli.py <command> [<args>...]
 | `auto_gain`      | Run autogain routine                | `[desired_max_pixel_value]` (optional)              |
 | `auto_exposure`  | Run autoexposure routine            | `[desired_max_pixel_value]` (optional)              |
 | `take_image`     | Capture image                       | `[type]` (optional: raw, solver1, solver2, solver3) |
+| `get_autogain_mode` | Get current autogain mode. | None                       |
+| `set_autogain_mode` | Set autogain mode.   | `<mode>` (off, gain, both) |
+
 
 ### Chamber Mode Control
 
@@ -101,6 +106,7 @@ pueo-cli.py get_exposure
 pueo-cli.py get_gain
 pueo-cli.py get_filter_level
 pueo-cli.py get_settings
+pueo-cli.py get_autogain_mode
 ```
 
 #### Set Commands
@@ -111,6 +117,7 @@ pueo-cli.py set_focus <value>
 pueo-cli.py set_exposure <value>
 pueo-cli.py set_gain <value>
 pueo-cli.py set_filter_level <value>
+pueo-cli.py set_autogain_mode <value>
 
 ```
 

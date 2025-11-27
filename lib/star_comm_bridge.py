@@ -479,6 +479,7 @@ class StarCommBridge:
                         'camera': self.server.camera.name,
                         'camera_mode': 'simulated' if self.server.camera.simulated else 'real',
                         'hw_autogain': self.server.cfg.hw_autogain_enabled,
+                        'autogain_mode': self.server.cfg.autogain_mode,
                         'aperture': self.server.focuser.aperture_position,
                         'aperture_pos': aperture_pos,
                         'aperture_f_val': aperture_f_val,

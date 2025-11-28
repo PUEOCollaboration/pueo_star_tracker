@@ -568,6 +568,10 @@ class Focuser:
             self.log.warning('Focuser connection closed.')
             return
 
+        if not self.cfg.close_aperture_enabled:
+            logit(f"Aperture NOT closed; close_aperture_enabled: {self.cfg.close_aperture_enabled}", color='blue')
+            return
+
         # Sending mc command to FOCUSER
         cmd = 'mc' + '\r'
         self.ser.write(cmd.encode('ascii'))

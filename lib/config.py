@@ -77,6 +77,8 @@ class Config(Dynamic):
     lab_best_exposure = 100000
     exposure_time_s = lab_best_exposure/1e6
 
+    close_aperture_enabled = True
+
     autofocus_max_deviation = 0.1
     focus_tolerance_percentage = 2.5 # Percentage
 
@@ -536,6 +538,9 @@ class Config(Dynamic):
         self.lab_best_focus = self._config.getint('LENS_FOCUS_CONSTANTS', 'lab_best_focus', fallback=self.lab_best_focus)
         self.lab_best_gain = self._config.getint('LENS_FOCUS_CONSTANTS', 'lab_best_gain', fallback=self.lab_best_gain)
         self.lab_best_exposure = self._config.getint('LENS_FOCUS_CONSTANTS', 'lab_best_exposure', fallback=self.lab_best_exposure)
+
+        self.close_aperture_enabled = self._config.getboolean('LENS_FOCUS_CONSTANTS', 'close_aperture_enabled', fallback=self.close_aperture_enabled)
+
 
         self.autofocus_max_deviation = self._config.getfloat('LENS_FOCUS_CONSTANTS', 'autofocus_max_deviation', fallback=self.autofocus_max_deviation)
 

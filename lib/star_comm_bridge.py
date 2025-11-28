@@ -362,7 +362,7 @@ class StarCommBridge:
         try:
             if not self.server.is_ready():
                 self.server.server.messages.write(f'Warning: Cannot execute command: {cmd.command_name}, server is not ready: {self.server.is_ready()}', 'warning')
-                ret = Status.get_status(Status.ERROR,f"Warning: Cannot take image, server not ready: {self.server.status}")
+                ret = Status.get_status(Status.ERROR,f"Warning: Cannot execute command, server not ready: {self.server.status}")
             elif commands == Commands.TAKE_IMAGE:
                 # Execute the take image command here
                 if self.server.operation_enabled is not None and not self.server.operation_enabled:
@@ -451,7 +451,6 @@ class StarCommBridge:
                 self.server.cfg.set_dynamic(autogain_mode=cmd.mode)
                 logit(f'Set Autogain Mode: {cmd.mode}', color=('green' if cmd.mode != 'off' else 'red'))
                 ret = Status.get_status(Status.SUCCESS, "Auto Gain Mode set.")
-
             elif commands == Commands.CHAMBER_MODE:
                 if cmd.method == 'set':
                     self.server.chamber_mode = cmd.mode
@@ -491,6 +490,7 @@ class StarCommBridge:
                         'autonomous': self.server.operation_enabled,
                         'solver': self.server.solver,
                         'status': str(self.server.status).lower(),
+                        'filesystem_status': self.server.monitor.status_list(),
                         'cadence': self.server.time_interval / 1e6,
                         'level_filter': self.server.level_filter
                     }

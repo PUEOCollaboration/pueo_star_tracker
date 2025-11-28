@@ -415,16 +415,22 @@ class Focuser:
             self.log.warning('Focuser connection closed.')
             return 0
         # move focus to desired position.
-        cmd = 'fa' + str(int(round(new_position))) + '\r'
-        self.ser.write(cmd.encode('ascii'))
-        output = self.ser.readline()
-        if len(output.decode().split("E")) == 1:
-            self.log.error('Focuser error, got invalid or no response for move_focus_position.')
+        # TODO: Handle the error at the application level!
+        try:
+            cmd = 'fa' + str(int(round(new_position))) + '\r'
+            self.ser.write(cmd.encode('ascii'))
+            output = self.ser.readline()
+            if len(output.decode().split("E")) == 1:
+                self.log.error('Focuser error, got invalid or no response for move_focus_position.')
+                return 0
+            curr_focus_pos = int(output.decode().split("E")[1].split(",")[0])
+            # self.log.info(f'In move_focus_position function: Focus moved to: {curr_focus_pos}')
+            logit(f'Focus moved to position: {curr_focus_pos}', color='magenta')
+            self._focus_position = curr_focus_pos
+        except ValueError as e:
+            logit(f'move_focus_position({new_position}) error: {e}', color='red')
+            self.log.error(f'Error: {e}')
             return 0
-        curr_focus_pos = int(output.decode().split("E")[1].split(",")[0])
-        # self.log.info(f'In move_focus_position function: Focus moved to: {curr_focus_pos}')
-        logit(f'Focus moved to position: {curr_focus_pos}', color='magenta')
-        self._focus_position = curr_focus_pos
         return curr_focus_pos
 
     def open_aperture(self):
@@ -499,38 +505,46 @@ class Focuser:
             self.server.write('Focuser connection closed.', 'warning')
             self.log.warning('Focuser connection closed.')
             return 0, 0
-        # self.server.write('Getting current focus position.')
-        # starting_focus_position = self.get_focus_position()
-        # self.server.write(f'Starting focus position: {starting_focus_position}')
-        self.server.write('Moving to zero stop of lens.')
-        self.server.write('Current focus position was...')
-        output = self.move_focus_to_zero()
-        if len(output.decode().split("E")) == 1:
-            self.log.error('Focuser error, got invalid or no response for move_focus_to_zero.')
-            return 0, 0
-        min_focus_position = int(output.decode().split("E")[1].split(",")[0])
-        # self. server.write(f'Min Focus Position: {min_focus_position}')
-        starting_focus_position = abs(min_focus_position)
-        self.server.write(f'Starting focus position: {starting_focus_position}')
-        self.server.write(f'Old Min Focus Position: {min_focus_position}')
-        self.server.write('Set zero position as zero counts.')
-        output = self.set_focus_to_zero()
-        min_focus_position = self.get_focus_position()
-        self.server.write(f'New Min Focus Position: {min_focus_position}')
-        # self.server.write('Move focus to infinity position and store encoder counts')
-        self.server.write('Move focus to infinity position.')
-        output = self.move_focus_to_infinity()
-        if len(output.decode().split("E")) == 1:
-            self.log.error('Focuser error, got invalid or no response for move_focus_to_infinity.')
-            return 0, 0
-        max_focus_position = int(output.decode().split("E")[1].split(",")[0])
-        self.server.write(f'New Max Focus Position: {max_focus_position}')
-        self.server.write('Move back to initial focus position. Now with offsets applied.')
-        # output = self.move_focus_position(starting_focus_position - min_focus_position)
-        output = self.move_focus_position(starting_focus_position)
-        focus_position = self.get_focus_position()
-        # self.server.write(f'Moved focus to: {output}')
-        self.server.write(f'Moved focus to: {focus_position} in {get_dt(t0)}.')
+        min_focus_position = max_focus_position = 0
+        # Handling Focuser/Lens issues by ignoring ERR, return!
+        # TODO: Handle the error at the application level!
+        try:
+            # self.server.write('Getting current focus position.')
+            # starting_focus_position = self.get_focus_position()
+            # self.server.write(f'Starting focus position: {starting_focus_position}')
+            self.server.write('Moving to zero stop of lens.')
+            self.server.write('Current focus position was...')
+            output = self.move_focus_to_zero()
+            if len(output.decode().split("E")) == 1:
+                self.log.error('Focuser error, got invalid or no response for move_focus_to_zero.')
+                return 0, 0
+            min_focus_position = int(output.decode().split("E")[1].split(",")[0])
+            # self. server.write(f'Min Focus Position: {min_focus_position}')
+            starting_focus_position = abs(min_focus_position)
+            self.server.write(f'Starting focus position: {starting_focus_position}')
+            self.server.write(f'Old Min Focus Position: {min_focus_position}')
+            self.server.write('Set zero position as zero counts.')
+            output = self.set_focus_to_zero()
+            min_focus_position = self.get_focus_position()
+            self.server.write(f'New Min Focus Position: {min_focus_position}')
+            # self.server.write('Move focus to infinity position and store encoder counts')
+            self.server.write('Move focus to infinity position.')
+            output = self.move_focus_to_infinity()
+            if len(output.decode().split("E")) == 1:
+                self.log.error('Focuser error, got invalid or no response for move_focus_to_infinity.')
+                return 0, 0
+            max_focus_position = int(output.decode().split("E")[1].split(",")[0])
+            self.server.write(f'New Max Focus Position: {max_focus_position}')
+            self.server.write('Move back to initial focus position. Now with offsets applied.')
+            # output = self.move_focus_position(starting_focus_position - min_focus_position)
+            output = self.move_focus_position(starting_focus_position)
+            focus_position = self.get_focus_position()
+            # self.server.write(f'Moved focus to: {output}')
+            self.server.write(f'Moved focus to: {focus_position} in {get_dt(t0)}.')
+        except ValueError as e:
+            logit(f'home_lens_focus error: {e}', color='red')
+            self.log.error(f'Error: {e}')
+
         return min_focus_position, max_focus_position
 
     def close_aperture(self):

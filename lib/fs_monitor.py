@@ -552,6 +552,18 @@ class FSMonitor:
         self.is_critical = is_critical_all # set to True if at least one of the monitored paths becomes critical.
         return result
 
+    def status_list(self) -> dict:
+        """Get status for monitored items
+        Example output:
+            { 'root': 'normal', 'ssd': 'warning', 'sd_card': 'critical' }
+        """
+        result = {}
+        status = self.status()
+
+        for fs, fs_status in status.items():
+            result[fs] = fs_status.get('status', '')
+        return result
+
     def status_json(self, *, indent: Optional[int] = 2, fmt: Optional[str] = 'iso') -> str:
         """
         Return the same information as status() but serialized to JSON.

@@ -10,7 +10,7 @@ from astropy.convolution import convolve
 from lmfit import Model
 from photutils.segmentation import SourceCatalog, make_2dgaussian_kernel
 from scipy.special import erf
-from lib.utils import box_plot_compare
+from lib.utils import Utils
 
 
 def compute_centroids_from_trails_ellipse_method(
@@ -261,6 +261,7 @@ def compute_centroids_from_still(
         #     plt.show(block=True)
         #     plt.imshow(img[y1:y2, x1:x2])
         #     plt.show(block=True)
+        #     plt.close()
         # Centroid & spread from OpenCV moments (C-optimized)
         # Note: binaryImage=False uses intensity-weighted moments over the ROI (img_cent)
         # print(img_cent.shape, img_cent.dtype)
@@ -510,6 +511,7 @@ def compute_centroids_from_trail(
         # if return_partial_images:
         #     plt.imshow(object_img)
         #     plt.show(block=True)
+        #     plt.close()
         x_len = x.max() - x.min()
         y_len = y.max() - y.min()
         d_len = (x_len**2 + y_len**2) ** 0.5
@@ -585,6 +587,7 @@ def compute_centroids_from_trail(
         #    object_img = filtered_cleaned_img_bgr[y.min():y.max(), x.min():x.max()]
         #    plt.imshow(object_img)
         #    plt.show(block=True)
+        #    plt.close()
 
         return (
             m0,
@@ -629,7 +632,7 @@ def compute_centroids_from_trail(
     length_filtered, lower_bound, upper_bound = remove_outliers(length_values)
 
     if return_partial_images:
-        box_plot_compare(length_values, length_filtered, "4.1 - Sources Lengths")
+        Utils.box_plot_compare(length_values, length_filtered, "4.1 - Sources Lengths")
 
     filtered_sources = []
     for detected_source in detected_sources:

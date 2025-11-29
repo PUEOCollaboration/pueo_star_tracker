@@ -82,7 +82,7 @@ show_status() {
     echo -e "WEB Server: $([[ -n "$web_pids" ]] && echo "${GREEN}Running (PIDs: ${web_pids})${NC}" || echo "${RED}Not Running${NC}")"
 }
 
-stop_services() {
+stop_services_old() {
     echo -e "${YELLOW}Stopping services (delay: ${TERMINATION_DELAY}s)...${NC}"
 
     # Kill CEDAR
@@ -108,6 +108,34 @@ stop_services() {
 
     sleep $TERMINATION_DELAY
 }
+
+stop_services() {
+    echo -e "${YELLOW}Stopping services (delay: ${TERMINATION_DELAY}s)...${NC}"
+
+    # Kill CEDAR
+    cedar_pids=$(pgrep -f "cedar-detect-server" | tr '\n' ' ')
+    if [[ -n "$cedar_pids" ]]; then
+        kill $cedar_pids 2>/dev/null
+        echo -e "  CEDAR Detect: ${RED}Terminated PIDs: ${cedar_pids}${NC}"
+    fi
+
+    # Kill PUEO
+    pueo_pids=$(pgrep -f "pueo_star_camera_operation" | tr '\n' ' ')
+    if [[ -n "$pueo_pids" ]]; then
+        kill $pueo_pids 2>/dev/null
+        echo -e "  PUEO Server: ${RED}Terminated PIDs: ${pueo_pids}${NC}"
+    fi
+
+    # Kill WEB Server (specific pattern for Python HTTP server on port 8000)
+    web_pids=$(pgrep -f "python.*http\.server.*8000" | tr '\n' ' ')
+    if [[ -n "$web_pids" ]]; then
+        kill $web_pids 2>/dev/null
+        echo -e "  WEB Server: ${RED}Terminated PIDs: ${web_pids}${NC}"
+    fi
+
+    sleep $TERMINATION_DELAY
+}
+
 
 start_services() {
     local mode="${1:-production}"  # Use $1 if provided, otherwise "production"

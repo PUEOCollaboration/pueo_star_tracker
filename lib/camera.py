@@ -22,7 +22,7 @@ import cv2
 import numpy as np
 
 # Custom imports
-from lib.utils import read_image_grayscale
+from lib.utils import Utils
 from lib.common import logit, get_dt
 
 # '/usr/lib/x86_64-linux-gnu/libASICamera2.so'

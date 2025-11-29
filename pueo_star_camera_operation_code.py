@@ -52,7 +52,6 @@ import pandas as pd
 # Custom imports
 from lib.astrometry import Astrometry
 from lib.common import get_file_size, DroppingQueue
-from lib.compute_star_centroids import compute_centroids_from_still
 from lib.common import init_common, load_config, logit, current_timestamp, cprint, get_dt, save_to_json, save_to_excel
 from lib.common import archive_folder, delete_folder
 from lib.config import Config
@@ -61,10 +60,8 @@ from lib.camera import PueoStarCamera, DummyCamera
 from lib.compute import Compute
 from lib.focuser import Focuser
 from lib.star_comm_bridge import StarCommBridge
-from lib.utils import read_image_grayscale, read_image_BGR, display_overlay_info, save_raws, timed_function, create_symlink, get_current_utc_timestamp, delete_files
-from lib.source_finder import global_background_estimation,  ring_mean_background_estimation, subtract_background, estimate_noise_pairs,  threshold_with_noise, source_finder
-# from lib.astrometry import do_astrometry, optimize_calibration_parameters
-from lib.start_tracker_body_rates import StarTrackerBodyRates
+from lib.utils import Utils
+from lib.source_finder import SourceFinder
 from lib.telemetry import Telemetry
 from lib.commands import Command
 from lib.fs_monitor import FSMonitor, MonitorCfg
@@ -107,7 +104,8 @@ class PueoStarCameraOperation:
 
         self.cfg = cfg
         self.cfg._log = self.log    # Add loger to the config object
-
+        self.utils = Utils(self.cfg, self.log, self)  # Passing SERVER for parent access.
+        self.sf = SourceFinder(self.cfg, self.log, self)  # Passing SERVER for parent access.
         # Params
         self.start_t0 = time.monotonic()
         self.status = 'Initializing'
@@ -132,6 +130,8 @@ class PueoStarCameraOperation:
         self.curr_img = None
         self.prev_img = None
         self.prev_image_name = None
+
+        self.curr_img_dtc = datetime.datetime.now(timezone.utc)
 
         self.distortion_calibration_params = None
 
@@ -201,7 +201,10 @@ class PueoStarCameraOperation:
         self.positions_queue = DroppingQueue(maxsize=self.cfg.fq_max_size)
 
         # Astrometry
-        self.astro = Astrometry(self.cfg.ast_t3_database, self.cfg, self.log)
+        self.astro = Astrometry(self.cfg.ast_t3_database, self.cfg, self.log, server=self)
+
+        # Create/update symlink to astro.json file
+        self.utils.create_symlink(self.cfg.web_path, self.cfg.astro_path, 'astro.json')
 
         # Board API (VersaLogic)
         self.versa_api = VersaAPI()
@@ -436,6 +439,7 @@ class PueoStarCameraOperation:
         """Saves an image and sends it to the messenger."""
         self.logit(f'Saving image: {image_file}')
         plt.savefig(image_file)
+        plt.close()
         self.server.write(image_file, data_type='image_file', is_preserve=is_preserve)
 
     def fit_best_focus(self, focus_image_path, focus_positions, focus_scores, diameter_scores,
@@ -783,7 +787,7 @@ class PueoStarCameraOperation:
             - Minimal padding (pad_inches=0.05) reduces empty space around plot
 
         Example:
-            >>> save_fig('temperature_data', plt)
+            save_fig('temperature_data', plt)
             # Saves as 'temperature_data_histogram.jpg'
         """
         filename = f'{basename}_histogram.jpg'
@@ -920,10 +924,10 @@ class PueoStarCameraOperation:
             # `basename` is the base path for this image; we reuse it for histogram files.
 
             # Flatten once
-            arr, et2 = timed_function(img.flatten)
+            arr, et2 = self.utils.timed_function(img.flatten)
 
             # ----------------- Brightness metrics -----------------
-            high_pix_value, et4 = timed_function(np.max, arr)
+            high_pix_value, et4 = self.utils.timed_function(np.max, arr)
             low_pix_value = int(arr.min())
             p999_all = float(np.percentile(arr, 99.9))  # for logging only
 
@@ -959,10 +963,10 @@ class PueoStarCameraOperation:
             )
 
             # ----------------- Histogram (for plotting / logging) -----------------
-            bins, et1 = timed_function(
+            bins, et1 = self.utils.timed_function(
                 np.linspace, 0, pixel_saturated_value, self.cfg.autogain_num_bins
             )
-            (counts, bins), et3 = timed_function(np.histogram, arr, bins=bins)
+            (counts, bins), et3 = self.utils.timed_function(np.histogram, arr, bins=bins)
 
             self.log.debug(
                 f'Exec np.linspace/img.flatten/np.histogram/np.max in sec: '
@@ -1558,7 +1562,7 @@ class PueoStarCameraOperation:
             mask = img.astype(np.uint8)
         else:
             # if a filename is ever passed, read as grayscale
-            mask = read_image_grayscale(img)
+            mask = self.utils.read_image_grayscale(img)
 
         # Ensure binary 0/255
         if mask.max() <= 1:
@@ -1641,7 +1645,7 @@ class PueoStarCameraOperation:
                 downsampled_img = img
                 d_small = d
 
-            initial_local_levels = ring_mean_background_estimation(downsampled_img, d_small)
+            initial_local_levels = self.sf.ring_mean_background_estimation(downsampled_img, d_small)
 
             # Upscale back with interpolation
             self.logit("Upscaling initial local levels.")
@@ -1653,7 +1657,7 @@ class PueoStarCameraOperation:
                 )
 
             # Subtract background the first time
-            cleaned_img = subtract_background(img, initial_local_levels)
+            cleaned_img = self.sf.subtract_background(img, initial_local_levels)
 
             # --- Second leveling pass on cleaned image ---
             downscale_factor = self.cfg.leveling_filter_downscale_factor
@@ -1668,7 +1672,7 @@ class PueoStarCameraOperation:
                 downsampled_img = cleaned_img
                 d_small = d
 
-            final_local_levels = ring_mean_background_estimation(downsampled_img, d_small)
+            final_local_levels = self.sf.ring_mean_background_estimation(downsampled_img, d_small)
 
             # Upscale back with interpolation
             if downscale_factor > 1:
@@ -1679,17 +1683,17 @@ class PueoStarCameraOperation:
                 )
 
             # Estimate noise for image
-            sigma_g = estimate_noise_pairs(cleaned_img, sep=int(self.cfg.noise_pair_sep_full))
+            sigma_g = self.sf.estimate_noise_pairs(cleaned_img, sep=int(self.cfg.noise_pair_sep_full))
             estimated_noise = np.full_like(cleaned_img, sigma_g, dtype=np.float32)
 
             # Build leveled residual
-            residual_img = subtract_background(cleaned_img, final_local_levels)
+            residual_img = self.sf.subtract_background(cleaned_img, final_local_levels)
 
             # --- Threshold using a single noise-scaled threshold (no hysteresis) ---
             self.logit("Creating mask using single-threshold (k=5.0, no hysteresis) for autofocus.")
             k_single = 5.0  # single k-sigma threshold for autofocus
 
-            sources_mask, sources_mask_u8 = threshold_with_noise(
+            sources_mask, sources_mask_u8 = self.sf.threshold_with_noise(
                 residual_img,
                 sigma_map=estimated_noise,
                 k_high=k_single,  # same threshold for high/low
@@ -2136,13 +2140,13 @@ class PueoStarCameraOperation:
         timestamp_string = current_timestamp(self.timestamp_fmt)
         auto_gain_image_path = self.cfg.auto_gain_image_path_tmpl.format(timestamp_string=timestamp_string)
         os.mkdir(auto_gain_image_path)
-        is_check_gain, et1 = timed_function(self.check_gain_routine,
+        is_check_gain, et1 = self.utils.timed_function(self.check_gain_routine,
                                             self.curr_img, self.desired_max_pix_value, self.pixel_saturated_value,
                                             self.pixel_count_tolerance, auto_gain_image_path)
         if is_check_gain:
             self.server.write("Performing autogain maintenance.")
             curr_gain_value = camera_settings['Gain']
-            self.best_gain_value, et2 = timed_function(self.do_auto_gain_routine,
+            self.best_gain_value, et2 = self.utils.timed_function(self.do_auto_gain_routine,
                                                         auto_gain_image_path, curr_gain_value,
                                                         self.desired_max_pix_value, self.pixel_saturated_value,
                                                         self.pixel_count_tolerance,
@@ -2156,7 +2160,7 @@ class PueoStarCameraOperation:
 
     def _run_autogain_maintenance(self, camera_settings, current_gain):
         """Wrapper function to run autogain maintenance and log results."""
-        new_gain, gain_exec = timed_function(self.autogain_maintenance, camera_settings)
+        new_gain, gain_exec = self.utils.timed_function(self.autogain_maintenance, camera_settings)
         self.logit(
             f'Single image autogain completed: interval: {self.cfg.autogain_update_interval} current gain: {current_gain} new gain: {new_gain} in {gain_exec:.4f} seconds.',
             color='cyan')
@@ -2874,7 +2878,7 @@ class PueoStarCameraOperation:
 
         self.curr_time = time.monotonic()
         # Default: will be updated just in time before capture!!!
-        dtc, utc_time, curr_utc_timestamp = get_current_utc_timestamp()
+        dtc, utc_time, curr_utc_timestamp = self.utils.get_current_utc_timestamp()
 
         if self.focuser.aperture_position == 'closed':
             self.focuser.open_aperture()
@@ -2902,8 +2906,9 @@ class PueoStarCameraOperation:
                 )
                 # Context manager for a hardware autogain cycle.
                 with self.camera.hw_autogain_cycle():
-                    dtc, utc_time, curr_utc_timestamp = get_current_utc_timestamp()
+                    dtc, utc_time, curr_utc_timestamp = self.utils.get_current_utc_timestamp()
                     self.curr_img = self.camera.capture()
+                self.curr_img_dtc = dtc
                 self.img_cnt += 1
                 self.logit(f'Camera image captured in {get_dt(t1)} @{get_dt(t0)} shape: {self.curr_img.shape} capture timestamp: {curr_utc_timestamp}.', color='green')
             except Exception as e:
@@ -2940,8 +2945,8 @@ class PueoStarCameraOperation:
         if not is_operation:
             self.focuser.close_aperture()
 
-        # Get and log camera settings
-        camera_settings = self.camera.get_control_values()
+        # Get and log camera settings, also save it to utils for histogram rendering
+        camera_settings = self.utils.camera_settings = self.camera.get_control_values()
         self.logit(f"camera exposure time (us) : {camera_settings['Exposure']}")
         current_gain = camera_settings['Gain']
         self.logit(f"camera gain (cB) : {current_gain}")
@@ -2977,7 +2982,7 @@ class PueoStarCameraOperation:
             # Use a multiprocessing Pool
             # Save image to SSD, SD card, inspection_images
             save_raws_result = self.pool.apply_async(
-                save_raws,
+                self.utils.save_raws,
                 args=(self.curr_img,
                       self.get_daily_path(self.cfg.ssd_path), self.get_daily_path(self.cfg.sd_card_path),
                       image_file,
@@ -3045,7 +3050,7 @@ class PueoStarCameraOperation:
         # foi ~ Final Overlay Image
         if is_operation or True:
             self.log.debug('Adding overlay.')
-            self.foi_name, self.foi_info, self.foi_scaled_name, self.foi_scaled_info = display_overlay_info(
+            self.foi_name, self.foi_info, self.foi_scaled_name, self.foi_scaled_info = self.utils.display_overlay_info(
                 self.contours_img, timestamp_string,
                 self.astrometry, self.omega, False,
                 self.curr_image_name,
@@ -3058,7 +3063,7 @@ class PueoStarCameraOperation:
 
 
             # Create/update symlink to last foi file
-            create_symlink(self.cfg.web_path, self.foi_scaled_name, 'last_final_overlay_image_downscaled.png')
+            self.utils.create_symlink(self.cfg.web_path, self.foi_scaled_name, 'last_final_overlay_image_downscaled.png')
 
             if self.cfg.enable_gui_data_exchange and self.foi_scaled_name is not None:
                 self.server.write(self.foi_scaled_name, data_type='image_file', dst_filename=self.curr_scaled_name)
@@ -3067,7 +3072,7 @@ class PueoStarCameraOperation:
             #     self.log.error('foi_scaled_name was None, no downscaled image generated.')
 
             # Delete prev files (output folder), keeping only Last one.
-            deleted_cnt = delete_files(self.prev_foi_name, self.prev_foi_scaled_name, self.prev_info_file)
+            deleted_cnt = self.utils.delete_files(self.prev_foi_name, self.prev_foi_scaled_name, self.prev_info_file)
             if deleted_cnt:
                 self.log.debug(f'Cleanup deleted {deleted_cnt} files (foi, info file).')
 
@@ -3105,7 +3110,7 @@ class PueoStarCameraOperation:
             shutil.copy2(self.info_file, self.get_daily_path(self.cfg.sd_card_path))
             shutil.copy2(self.info_file, self.get_daily_path(self.cfg.ssd_path))
         # Create/update symlink to last info file
-        create_symlink(self.cfg.web_path, self.info_file, 'last_info_file.txt')
+        self.utils.create_symlink(self.cfg.web_path, self.info_file, 'last_info_file.txt')
 
         self.logit(f'camera_take_image completed in {get_dt(t0)}.', color='green')
         return position

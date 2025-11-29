@@ -19,15 +19,11 @@ import numpy as np
 # Custom imports
 from lib.config import Config
 from lib.common import current_timestamp, logit
-from lib.utils import read_image_grayscale, read_image_BGR, display_overlay_info, timed_function, print_img_info
-from lib.source_finder import global_background_estimation, source_finder
-# from lib.source_finder import global_background_estimation, local_levels_background_estimation, \
-#     median_background_estimation, sextractor_background_estimation, find_sources, find_sources_photutils, \
-#     select_top_sources, select_top_sources_photutils, source_finder
+
+from lib.source_finder import SourceFinder
 
 from lib.compute_star_centroids import compute_centroids_from_still, compute_centroids_from_trail, \
     compute_centroids_photutils, compute_centroids_from_trails_ellipse_method
-from lib.utils import get_files, split_path
 from lib.tetra3 import Tetra3
 from lib.cedar_solve import Tetra3 as Tetra3Cedar  # , cedar_detect_client
 from lib.cedar import Cedar
@@ -46,13 +42,18 @@ class Astrometry:
     _t3 = None
     test_data = {}
 
-    def __init__(self, database_name=None, cfg=None, log=None):
+    def __init__(self, database_name=None, cfg=None, log=None, server=None):
         self.log = log or logging.getLogger('pueo')
         self.log.info('Initializing Astrometry Object')
         self.test = False
         self.database_name = database_name
         self.cfg = cfg
         self.solver = 'solver2'  # Default solver
+
+        self.server = server  # Parent, PUEO Server Main Class Reference
+        self.utils = self.server.utils
+
+        self.sf = SourceFinder(self.cfg, self.log, self.server) # Giving the SourceFinder God Access
 
         self.compute = Compute(log)
 
@@ -1472,11 +1473,11 @@ class Astrometry:
         if not is_array:
             logit(f"is_array = FALSE. converting to grayscale")
             # img_bgr = read_image_BGR(img)
-            img = read_image_grayscale(img)
+            img = self.utils.read_image_grayscale(img)
             img_bgr = cv2.merge([img, img, img])
 
-        print_img_info(img)
-        print_img_info(img_bgr, 'bgr')
+        self.utils.print_img_info(img)
+        self.utils.print_img_info(img_bgr, 'bgr')
 
         # Save Partial image. For debugging
         if return_partial_images:
@@ -1492,8 +1493,8 @@ class Astrometry:
         total_exec_time = 0.0
         if subtract_global_bkg:
             logit(f"--------Subtract global background--------")
-            global_cleaned_img, global_exec_time = timed_function(
-                global_background_estimation, img, sigma_clipped_sigma, return_partial_images, partial_results_path
+            global_cleaned_img, global_exec_time = self.utils.timed_function(
+                self.sf.global_background_estimation, img, sigma_clipped_sigma, return_partial_images, partial_results_path
             )
             img = global_cleaned_img
             total_exec_time += global_exec_time
@@ -1518,8 +1519,7 @@ class Astrometry:
                 if True:
                     # Direct call to show exception on source_finder
                     source_finder_exec_time = time.monotonic()
-                    masked_image, sources_mask, sources_contours, p999_original, p999_masked_original = source_finder(
-                        self.cfg,
+                    masked_image, sources_mask, sources_contours, p999_original, p999_masked_original = self.sf.source_finder(
                         img,
                         log_file_path,
                         leveling_filter_downscale_factor,
@@ -1648,7 +1648,7 @@ class Astrometry:
 
                     # ---- Choose centroid path based on classifier ----
                     if suggest_is_trail:
-                        (precomputed_star_centroids, contours_img), centroids_exec_time = timed_function(
+                        (precomputed_star_centroids, contours_img), centroids_exec_time = self.utils.timed_function(
                             self._trail_ellipse_adapter,
                             masked_image=masked_image,
                             sources_mask=sources_mask,
@@ -1661,7 +1661,7 @@ class Astrometry:
                             partial_results_path=partial_results_path,
                         )
                     else:
-                        (precomputed_star_centroids, contours_img), centroids_exec_time = timed_function(
+                        (precomputed_star_centroids, contours_img), centroids_exec_time = self.utils.timed_function(
                             compute_centroids_from_still,
                             masked_image=masked_image,
                             sources_contours=sources_contours,
@@ -1737,7 +1737,7 @@ class Astrometry:
                             )
                     except Exception as e:
                         logit(f"[Trail Omega] (forced mode) ERROR estimating angular velocity: {e}")
-                    (precomputed_star_centroids, contours_img), centroids_exec_time = timed_function(
+                    (precomputed_star_centroids, contours_img), centroids_exec_time = self.utils.timed_function(
                         self._trail_ellipse_adapter,
                         masked_image=masked_image,
                         sources_mask=sources_mask,
@@ -1754,7 +1754,7 @@ class Astrometry:
                     suggest_is_trail = False
                     mode_str = "override to still mode"
                     logit(f"[Astrometry] Centroid mode = {mode} → {mode_str}")
-                    (precomputed_star_centroids, contours_img), centroids_exec_time = timed_function(
+                    (precomputed_star_centroids, contours_img), centroids_exec_time = self.utils.timed_function(
                         compute_centroids_from_still,
                         masked_image=masked_image,
                         sources_contours=sources_contours,
@@ -1770,7 +1770,7 @@ class Astrometry:
                     mode_str = f"unknown '{mode}' → defaulting to still"
                     logit(f"[Astrometry] Centroid mode = {mode} → {mode_str}")
 
-                    (precomputed_star_centroids, contours_img), centroids_exec_time = timed_function(
+                    (precomputed_star_centroids, contours_img), centroids_exec_time = self.utils.timed_function(
                         compute_centroids_from_still,
                         masked_image=masked_image,
                         sources_contours=sources_contours,
@@ -1823,7 +1823,7 @@ class Astrometry:
 
             max_c = 0 or precomputed_star_centroids.shape[0]
             if distortion_calibration_params and solver == 'solver1':
-                astrometry, solver_exec_time = timed_function(
+                astrometry, solver_exec_time = self.utils.timed_function(
                     self.tetra3_solver,
                     img,
                     precomputed_star_centroids[:max_c, :2],
@@ -1840,7 +1840,7 @@ class Astrometry:
                 astrometry = {}
                 an_solver = AstrometryNet(self.cfg, self.log)
                 try:
-                    astrometry, solver_exec_time = timed_function(
+                    astrometry, solver_exec_time = self.utils.timed_function(
                         an_solver.process_centroids,
                         precomputed_star_centroids[:max_c],
                         image_size,
@@ -2004,7 +2004,7 @@ class Astrometry:
         timestamp_string = current_timestamp("%d-%m-%Y-%H-%M-%S")
         omega = (0.0, 0.0, 0.0)
         # display_overlay_info(img, timestamp_string, astrometry, omega, display=True, image_filename=None, downscale_factors=(8, 8)):
-        display_overlay_info(
+        self.utils.display_overlay_info(
             img,
             timestamp_string,
             astrometry,

@@ -6,7 +6,6 @@ from termcolor import cprint
 from time import perf_counter as precision_timestamp
 from contextlib import suppress
 from multiprocessing import shared_memory
-# from lib.cedar_detect.python.cedar_detect_client import extract_centroids
 
 # External imports
 import cv2
@@ -19,7 +18,7 @@ import grpc
 import lib.cedar_detect.python.cedar_detect_pb2 as cedar_detect_pb2
 import lib.cedar_detect.python.cedar_detect_pb2_grpc as cedar_detect_pb2_grpc
 from lib.common import save_to_json, get_dt, float_range
-from lib.utils import read_image_grayscale, read_image_BGR, display_overlay_info, timed_function, print_img_info
+from lib.utils import Utils
 
 
 class Cedar:
@@ -38,7 +37,7 @@ class Cedar:
         self.log.info('Initializing Cedar Object')
 
         self.cfg = cfg
-
+        self.utils = Utils(self.cfg, self.log)
         # Set up to make gRPC calls to CedarDetect centroid finder (it must be running
         # already).
         # if database_name:
@@ -422,7 +421,7 @@ class Cedar:
                 astrometry = {}
                 with suppress(IndexError):
 
-                    astrometry, tetra3_exec_time_1 = timed_function(
+                    astrometry, tetra3_exec_time_1 = self.utils.timed_function(
                         self.tetra3_solver,
                         image,
                         precomputed_star_centroids=precomputed_star_centroids[:max_c, :2],  # Take only 20 centroids

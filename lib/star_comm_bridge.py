@@ -449,8 +449,13 @@ class StarCommBridge:
                 ret = Status.get_status(Status.SUCCESS, "Level filter set.")
             elif commands == Commands.SET_AUTOGAIN_MODE:
                 self.server.cfg.set_dynamic(autogain_mode=cmd.mode)
-                logit(f'Set Autogain Mode: {cmd.mode}', color=('green' if cmd.mode != 'off' else 'red'))
-                ret = Status.get_status(Status.SUCCESS, "Auto Gain Mode set.")
+                if cmd.mode == 'off':
+                    logit(f'Set Autogain Mode: {cmd.mode}', color='red')
+                    ret = Status.get_status(Status.SUCCESS, f"Auto Gain Mode set; mode: {cmd.mode}")
+                else:
+                    self.server.cfg.set_dynamic(autogain_desired_max_pixel_value=int(cmd.desired_max_pixel_value))
+                    logit(f'Set Autogain Mode: {cmd.mode} desired_max_pixel_value: {cmd.desired_max_pixel_value}', color='green')
+                    ret = Status.get_status(Status.SUCCESS, f"Auto Gain Mode set; mode: {cmd.mode} desired_max_pixel_value: {cmd.desired_max_pixel_value}")
             elif commands == Commands.CHAMBER_MODE:
                 if cmd.method == 'set':
                     self.server.chamber_mode = cmd.mode
@@ -471,7 +476,8 @@ class StarCommBridge:
                 elif cmd.param == 'level_filter':
                     value = self.server.level_filter
                 elif cmd.param == 'autogain_mode':
-                    value = self.server.cfg.autogain_mode
+                    value = { 'mode': self.server.cfg.autogain_mode, 'desired_max_pixel_value': self.server.cfg.autogain_desired_max_pixel_value}
+                    pass
                 elif cmd.param == 'settings':
                     aperture_pos, aperture_f_val = self.server.focuser.get_aperture_position()
                     value = {
@@ -490,7 +496,7 @@ class StarCommBridge:
                         'autonomous': self.server.operation_enabled,
                         'solver': self.server.solver,
                         'status': str(self.server.status).lower(),
-                        'filesystem_status': self.server.monitor.status_list(),
+                        'filesystem': self.server.monitor.status_list(),
                         'cadence': self.server.time_interval / 1e6,
                         'level_filter': self.server.level_filter
                     }

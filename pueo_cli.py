@@ -274,7 +274,12 @@ class PueoSocketClient:
 
         # Auto exposure command
         autoexposure_parser = subparsers.add_parser('auto_exposure', help='Run autoexposure routine')
-        autoexposure_parser.add_argument('desired_max_pixel_value', nargs='?', type=int, default=self.cfg.autoexposure_desired_max_pixel_value, help='Auto exposure desired max pixel value (default: %(default)s)')
+        autoexposure_parser.add_argument('desired_max_pixel_value', nargs='?', type=int, default=self.cfg.autogain_desired_max_pixel_value, help='Auto exposure desired max pixel value (default: %(default)s)')
+
+        # Set Auto gain mode command
+        set_autogain_parser = subparsers.add_parser('set_autogain_mode', help='Set autogain mode')
+        set_autogain_parser.add_argument('mode', choices=['off', 'gain', 'both'], help='Autogain mode to set')
+        set_autogain_parser.add_argument('desired_max_pixel_value', nargs='?', type=int, default=self.cfg.autogain_desired_max_pixel_value, help='Auto gain desired max pixel value (default: %(default)s)')
 
         # Take image command
         take_image_parser = subparsers.add_parser('take_image', help='Take image (default: solver from config)')
@@ -308,7 +313,7 @@ class PueoSocketClient:
 
         # Parameter get commands
         get_list = ['aperture', 'aperture_position', 'focus', 'exposure', 'gain', 'level_filter', 'settings', 'camera_power', 'focuser_power', 'autogain_mode']
-        set_list = ['aperture', 'aperture_position', 'focus', 'exposure', 'gain', 'level_filter', 'camera_power', 'focuser_power', 'autogain_mode']
+        set_list = ['aperture', 'aperture_position', 'focus', 'exposure', 'gain', 'level_filter', 'camera_power', 'focuser_power']
         for param in get_list:
             subparsers.add_parser(f'get_{param}', help=f'Get current {param} value')
 
@@ -369,6 +374,8 @@ class PueoSocketClient:
                 return cmd.flight_telemetry(args.limit, args.metadata)
             elif args.command == 'get_status':
                 return cmd.check_status()
+            elif args.command == 'set_autogain_mode':
+                return cmd.set_autogain_mode(args.mode, args.desired_max_pixel_value)
 
             elif args.command.startswith('get_'):
                 param = args.command[4:]  # Remove 'get_' prefix

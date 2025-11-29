@@ -41,14 +41,13 @@ python pueo-cli.py <command> [<args>...]
 
 ### Camera Settings
 
-| Command          | Description                          | Arguments                                           |
-|------------------|--------------------------------------|-----------------------------------------------------|
+| Command          | Description                         | Arguments                                           |
+|------------------|-------------------------------------|-----------------------------------------------------|
 | `auto_gain`      | Run autogain routine                | `[desired_max_pixel_value]` (optional)              |
 | `auto_exposure`  | Run autoexposure routine            | `[desired_max_pixel_value]` (optional)              |
 | `take_image`     | Capture image                       | `[type]` (optional: raw, solver1, solver2, solver3) |
-| `get_autogain_mode` | Get current autogain mode. | None                       |
-| `set_autogain_mode` | Set autogain mode.   | `<mode>` (off, gain, both) |
-
+| `get_autogain_mode` | Get current autogain mode. | None                                                |
+| `set_autogain_mode` | Set autogain mode.   | `<mode>` (off, gain, both)<br/>`[desired_max_pixel_value]` (optional) |
 
 ### Chamber Mode Control
 

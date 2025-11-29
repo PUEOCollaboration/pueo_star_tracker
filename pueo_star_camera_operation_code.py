@@ -2550,10 +2550,10 @@ class PueoStarCameraOperation:
 
         # --- 0. Master switch ---
         if self.cfg.autogain_mode == 'off':
-            self.logit(f"autogain/autoexposure: autogain_mode: {self.cfg.autogain_mode}, skipping.", color='yellow')
+            self.logit(f"auto gain/exposure: autogain_mode: {self.cfg.autogain_mode}, skipping.", color='yellow')
             return
         else:
-            self.logit(f"autogain/autoexposure: autogain_mode: {self.cfg.autogain_mode}, skipping.", color='green')
+            self.logit(f"auto gain/exposure: autogain_mode: {self.cfg.autogain_mode}, desired_max_pixel_value: {self.cfg.autogain_desired_max_pixel_value}.", color='green')
 
         # --- 1. Read p99.9 metrics from astrometry dict ---
         # NOTE: currently still coming from the legacy p999_* keys;

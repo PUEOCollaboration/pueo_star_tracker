@@ -66,9 +66,6 @@ class Config(Dynamic):
     max_exposure_setting = 200000
     min_exposure_setting = 50000
 
-    autogain_desired_max_pixel_value = int(0.90*65535)  # TODO: Add correct value Windell
-    autoexposure_desired_max_pixel_value = 100 # TODO: Add correct value Windell
-
     lab_best_aperture_position = 0
     lab_best_focus = 8352
     lab_best_gain = 120
@@ -134,6 +131,7 @@ class Config(Dynamic):
 
     # Master switch for software autogain/autoexposure
     autogain_mode = 'gain' # gain or both
+    autogain_desired_max_pixel_value = 32767
 
     # Preferred "center" gain when exposure changes
     autogain_mid_gain_setting = 300
@@ -533,7 +531,7 @@ class Config(Dynamic):
         self.min_exposure_setting = self._config.getint('LENS_FOCUS_CONSTANTS', 'min_exposure_setting', fallback=self.min_exposure_setting)
 
         self.autogain_desired_max_pixel_value = self._config.getint('LENS_FOCUS_CONSTANTS', 'autogain_desired_max_pixel_value', fallback=self.autogain_desired_max_pixel_value)
-        self.autoexposure_desired_max_pixel_value = self._config.getint('LENS_FOCUS_CONSTANTS', 'autoexposure_desired_max_pixel_value', fallback=self.autoexposure_desired_max_pixel_value)
+
         self.lab_best_aperture_position = self._config.getint('LENS_FOCUS_CONSTANTS', 'lab_best_aperture_position', fallback=self.lab_best_aperture_position)
         self.lab_best_focus = self._config.getint('LENS_FOCUS_CONSTANTS', 'lab_best_focus', fallback=self.lab_best_focus)
         self.lab_best_gain = self._config.getint('LENS_FOCUS_CONSTANTS', 'lab_best_gain', fallback=self.lab_best_gain)

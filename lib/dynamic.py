@@ -61,7 +61,7 @@ class Dynamic:
 
     # [CAMERA]
     autogain_mode: str = 'gain'             # off, gain, both
-
+    autogain_desired_max_pixel_value: int = 32767
     # [SOURCES]
     level_filter: int = 9                   # OK
 

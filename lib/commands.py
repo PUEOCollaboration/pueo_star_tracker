@@ -378,6 +378,12 @@ class Command:
                     'values': ['off', 'gain', 'both'],
                     'default': 'gain'
                 },
+                'desired_max_pixel_value': {
+                    'type': 'int',
+                    'min': 0,
+                    'max': 65532,
+                    'default': 32767
+                },
             }
         },
         Commands.CHAMBER_MODE.value: {
@@ -518,7 +524,9 @@ class Command:
             self.add_attribute('level', self.data['level'], validation['params'])
         elif self.command == Commands.SET_AUTOGAIN_MODE:
             self.add_attribute('mode', self.data['mode'], validation['params'])
-
+            if 'desired_max_pixel_value' not in self.data:
+                self.data['desired_max_pixel_value'] = validation['params']['desired_max_pixel_value']['default']
+            self.add_attribute('desired_max_pixel_value', self.data['desired_max_pixel_value'], validation['params'])
         # ...
         elif self.command == Commands.GET:
             self.add_attribute('param', self.data['param'], validation['params'])
@@ -753,7 +761,18 @@ class Command:
         self.define(command_data)
         return self.command_data
 
-    def set(self, command, value):
+    def set(self, command, value, *extra_values):
+        """
+        Dispatch 'set' commands.
+
+        Minimal helper wrapper. `command` and `value` are mandatory.
+        Optional additional positional values may be supplied and will be
+        forwarded only where explicitly used here (currently only for
+        'autogain_mode').
+
+        Missing extra values are intentionally NOT handled here (caller/upper
+        layer is responsible for providing/validating them).
+        """
         if command in ['aperture', 'set_aperture']:
             return self.set_aperture(value)
         if command in ['aperture_position', 'set_aperture_position']:
@@ -771,7 +790,10 @@ class Command:
         elif command in ['camera_power', 'set_camera_power']:
             return self.power_switch('camera', value)
         elif command in ['autogain_mode', 'set_autogain_mode']:
-            return self.set_autogain_mode(value)
+            # NOTE: if caller did not supply an extra value, this will raise IndexError,
+            # which is acceptable per your instruction ("missing extra VALUE is OK to fail").
+            return self.set_autogain_mode(value, extra_values[0])  # CHANGED
+
         raise ValueError('Invalid command.')
 
     def enable_distortion_correction(self, fov: float, distortion_parameter1: float, distortion_parameter2: float):
@@ -825,8 +847,8 @@ class Command:
         self.define(command_data)
         return self.command_data
 
-    def set_autogain_mode(self, mode: str):
-        command_data = {'command': Commands.SET_AUTOGAIN_MODE.name.lower(), 'data': {'mode': mode}}
+    def set_autogain_mode(self, mode: str, desired_max_pixel_value: int):
+        command_data = {'command': Commands.SET_AUTOGAIN_MODE.name.lower(), 'data': {'mode': mode, 'desired_max_pixel_value': desired_max_pixel_value}}
         self.define(command_data)
         return self.command_data
 
@@ -898,7 +920,7 @@ if __name__ == "__main__":
         cmd.set('level_filter', 5),
         cmd.set('camera_power', 'on'),
         cmd.set('focuser_power', 'off'),
-        cmd.set('autogain_mode', 'both')
+        cmd.set('autogain_mode', 'both', 1000)
         # cmd.get('level_filter'),
     ]
     for cmd_dict in cmds:

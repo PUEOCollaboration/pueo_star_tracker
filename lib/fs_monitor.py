@@ -553,15 +553,57 @@ class FSMonitor:
         return result
 
     def status_list(self) -> dict:
-        """Get status for monitored items
-        Example output:
-            { 'root': 'normal', 'ssd': 'warning', 'sd_card': 'critical' }
+        """
+        Build and return a dictionary describing system status for each monitored
+        filesystem.
+
+        Each entry in the returned mapping includes:
+
+            - 'status' : str
+                  High-level condition of the filesystem.
+                  Expected values:
+                      * 'normal'   – operating within safe limits
+                      * 'warning'  – approaching capacity limits
+                      * 'critical' – very low remaining free space
+
+            - 'used_pct' : float
+                  Disk usage percentage (0.0–100.0). Represents how much of the
+                  filesystem is currently *used*, not free.
+                  Can include fractional values, e.g., 12.15.
+
+        Returns
+        -------
+        dict
+            Mapping of filesystem names to their status information.
+
+        Example
+        -------
+        Example return structure:
+
+            {
+                "root": {
+                    "status": "normal",
+                    "used_pct": 42.0
+                },
+                "ssd": {
+                    "status": "warning",
+                    "used_pct": 78.5
+                },
+                "sd_card": {
+                    "status": "critical",
+                    "used_pct": 95.2
+                }
+            }
         """
         result = {}
         status = self.status()
 
         for fs, fs_status in status.items():
-            result[fs] = fs_status.get('status', '')
+            result[fs] = {
+                'status': fs_status.get('status', ''),
+                'used_pct': fs_status.get('current', {}).get('used_pct', 0.0),
+            }
+
         return result
 
     def status_json(self, *, indent: Optional[int] = 2, fmt: Optional[str] = 'iso') -> str:

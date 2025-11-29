@@ -2907,6 +2907,7 @@ class PueoStarCameraOperation:
                 # Context manager for a hardware autogain cycle.
                 with self.camera.hw_autogain_cycle():
                     dtc, utc_time, curr_utc_timestamp = self.utils.get_current_utc_timestamp()
+                    self.curr_time = time.monotonic()
                     self.curr_img = self.camera.capture()
                 self.curr_img_dtc = dtc
                 self.img_cnt += 1

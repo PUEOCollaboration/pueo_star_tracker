@@ -13,6 +13,7 @@ import os
 from contextlib import suppress
 import json
 
+
 class AstrometryNet:
     """
     A class to handle conversion of centroid data to FITS format and
@@ -447,14 +448,6 @@ class AstrometryNet:
             json.dump(result, f, indent=4, sort_keys=True)
 
         return result
-
-
-import os
-import re
-import numpy as np
-from typing import Dict, Any, Optional, List, Tuple
-from astropy.io import fits
-import logging
 
 
 class AstrometryNetParser:

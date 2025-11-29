@@ -684,7 +684,8 @@ class AstrometryNetParser:
 
                     # Calculate the position angle (up direction)
                     # This matches what astrometry.net reports
-                    roll = np.degrees(np.arctan2(-cd1_2, cd1_1))  # Note the negative sign
+                    roll = np.degrees(np.arctan2(-cd1_2, -cd2_2))
+
 
                     # Alternative: calculate from both CD matrix components
                     # roll = np.degrees(np.arctan2(cd2_1, cd2_2))
@@ -695,8 +696,8 @@ class AstrometryNetParser:
 
                 # Calculate pixel scale
                 if all(key in wcs_data for key in ['CD1_1', 'CD1_2', 'CD2_1', 'CD2_2']):
-                    pixel_scale_x = np.sqrt(cd1_1 ** 2 + cd1_2 ** 2) * 3600  # arcsec/pixel
-                    pixel_scale_y = np.sqrt(cd2_1 ** 2 + cd2_2 ** 2) * 3600  # arcsec/pixel
+                    pixel_scale_x = np.sqrt(cd1_1 ** 2 + cd2_1 ** 2) * 3600  # arcsec/pixel
+                    pixel_scale_y = np.sqrt(cd1_2 ** 2 + cd2_2 ** 2) * 3600  # arcsec/pixel
                     result['pixel_scale_arcsec'] = np.float64((pixel_scale_x + pixel_scale_y) / 2)
                     wcs_data['PIXSCALE'] = result['pixel_scale_arcsec']
 

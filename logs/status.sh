@@ -1,6 +1,8 @@
 #!/bin/bash
-# PUEO Server Status Tool v2.0
+# PUEO Server Status Tool v2.1
 # Manages VL Driver, Services, and Processes with start/stop/restart
+
+# Configuration variables, colors, paths, delays
 
 # Configuration
 TERMINATION_DELAY=2
@@ -16,8 +18,10 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# --- Driver Check Functions ---
+# --- Always print script title ---
+echo -e "${GREEN}PUEO Server Status Tool v2.1${NC}"
 
+# --- Driver Check Functions ---
 check_driver_installed() {
     # Check if driver module exists
     if [[ -f "/lib/modules/$(uname -r)/$DRIVER_NAME.ko" ]]; then
@@ -36,17 +40,16 @@ check_driver_installed() {
 }
 
 # --- Core Functions ---
-
 show_help() {
-    echo -e "${GREEN}PUEO Server Status Tool${NC}"
     echo "Usage: $0 [command]"
     echo "Commands:"
-    echo "  status       Show current status (default)"
-    echo "  start        Stop (if running) and start services"
-    echo "  stop         Kill all CEDAR/PUEO/WEB processes"
-    echo "  restart      Stop + Start services"
-    echo "  shutdown     Stop services and power off system"
-    echo "  -h, --help   Show this help"
+    echo "  status           Show current status (default)"
+    echo "  start            Stop (if running) and start services"
+    echo "  stop             Kill all CEDAR/PUEO/WEB processes"
+    echo "  restart          Stop + Start services"
+    echo "  shutdown         Stop services and power off system"
+    echo "  dev[elopment]    Stop + Start services without PUEO Server (for development)"
+    echo "  -h, --help       Show this help"
 }
 
 show_status() {
@@ -107,9 +110,10 @@ stop_services() {
 }
 
 start_services() {
+    local mode="${1:-production}"  # Use $1 if provided, otherwise "production"
     echo -e "${YELLOW}Starting services...${NC}"
     if [[ -f "$STARTUP_SCRIPT" ]]; then
-        bash "$STARTUP_SCRIPT"
+        bash "$STARTUP_SCRIPT" "$mode"
         echo -e "  ${GREEN}Executed: $STARTUP_SCRIPT${NC}"
 
         # Added startup delay
@@ -128,8 +132,21 @@ shutdown_server() {
     sudo shutdown now
 }
 
+# --- Available Commands ---
+AVAILABLE_COMMANDS=("start" "stop" "restart" "shutdown" "status" "dev" "development" "-h" "--help")
+
+# Check if command is provided, default to "status"
+CMD="${1:-status}"
+
+# Validate command
+if [[ ! " ${AVAILABLE_COMMANDS[*]} " =~ " ${CMD} " ]]; then
+    echo -e "${RED}Error: Invalid command '${CMD}'${NC}"
+    show_help
+    exit 1
+fi
+
 # --- Command Handling ---
-case "$1" in
+case "$CMD" in
     start)
         stop_services
         start_services
@@ -149,6 +166,14 @@ case "$1" in
         ;;
     shutdown)
         shutdown_server
+        ;;
+    dev|development)
+        # Map both 'dev' and 'development' to development mode
+        stop_services
+        start_services "development"
+        echo -e "\n${GREEN}Final Status:${NC}"
+        echo -e "\n${YELLOW}NOTE: [development] Start PUEU Server in PyCharm:${NC}"
+        show_status
         ;;
     status|"")
         show_status

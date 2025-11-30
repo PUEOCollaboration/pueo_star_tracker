@@ -185,7 +185,18 @@ class PueoStarCameraOperation:
         self.stdev = None
         self.best_focus = None
 
-        self.timestamp_fmt = "%y%m%d_%H%M%S.%f"  # File name timestamp friendly format
+        # Example: 251130_142512.123456
+        # self.timestamp_fmt = "%y%m%d_%H%M%S.%f"  # File name timestamp friendly format
+
+        # Changed filename timestamps:
+        #  - very readable
+        #  - visually close to standard ISO
+        #  - still lexicographically sortable
+        #  - includes T + Z so it's clearly UTC
+        #  - safe on Windows, Linux, macOS
+        #  - no ambiguity
+        # Example: 2025-11-30T14-25-12.123456Z
+        self.timestamp_fmt = "%Y-%m-%dT%H-%M-%S.%fZ"  # 6 decimals = microseconds
 
         self.image_list = []
         self.image_filename_list = []

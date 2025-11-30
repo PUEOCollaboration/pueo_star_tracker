@@ -384,7 +384,7 @@ class Utils:
         foi_scaled_shape = None
         if image_filename is not None:
             path, filename, extension = self.split_path(image_filename)
-            foi_filename = f"{final_path}/Final_overlay_image_{filename}_{timestamp_string}.png"
+            foi_filename = f"{final_path}/Final_overlay_image_{filename}.png" # _{timestamp_string}
             if is_save:
                 t0 = time.perf_counter()
                 # Save using png compression
@@ -398,7 +398,7 @@ class Utils:
             foi_scaled_shape = foi_scaled_filename = None
             if is_downsize:
                 # Saving final overlay image
-                foi_scaled_filename = f"{final_path}/Final_overlay_image_{filename}_{timestamp_string}_downscaled.png"
+                foi_scaled_filename = f"{final_path}/Final_overlay_image_{filename}_downscaled.png" # {timestamp_string}_
                 foi_scaled_shape = self.image_resize(overlay_image, scale_factors, foi_scaled_filename, resize_mode=resize_mode)
 
         # Display image
@@ -749,26 +749,23 @@ class Utils:
             histtype="stepfilled",
             linewidth=1.5,
             alpha=0.8,
+            log=True
         )
 
-        ax.set_xlabel("Pixel value [counts]")
+        ax.set_xlabel("Pixel value [ADU]")
         ax.set_ylabel("Frequency [pixels]")
 
         # Bold main title using fontweight
         ax.set_title(f'{title}\n', fontweight='bold')
 
         # Parameter names bold, values normal
-        param_line = f"$\\bf{{Gain:}}$ {current_gain}, " \
-                     f"$\\bf{{Exposure:}}$ {current_exposure_us} µs, " \
-                     f"$\\bf{{p999:}}$ {p999_value}"
-        ax.text(
-            0.5, 1.0, param_line, transform=ax.transAxes, ha="center", va="bottom", fontsize=10, color="black"
-        )
+        param_line = f"$\\bf{{Gain:}}$ {current_gain}   " \
+                     f"$\\bf{{Exposure:}}$ {current_exposure_us} µs   " \
+                     f"$\\bf{{99.9ᵗʰ\xa0percentile:}}$ {p999_value}"
+        ax.text(0.5, 1.0, param_line, transform=ax.transAxes, ha="center", va="bottom", fontsize=10, color="black")
 
         # Timestamp as annotation slightly right, two lines down
-        ax.text(
-            0.98, 0.96, dtc_fmt, transform=ax.transAxes, ha="right", va="top", fontsize=9, color="gray"
-        )
+        ax.text(0.98, 0.96, dtc_fmt, transform=ax.transAxes, ha="right", va="top", fontsize=9, color="gray")
 
         ax.tick_params(direction="in", top=True, right=True)
 

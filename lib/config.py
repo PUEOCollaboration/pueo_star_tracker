@@ -148,7 +148,7 @@ class Config(Dynamic):
     # P999 / mask behavior
     # autogain_use_masked_p999 = 1 means prefer p999_masked_original when available
     # autogain_min_mask_pixels is the minimum mask size required to trust the masked p999
-    autogain_use_masked_p999 = 1
+    autogain_use_masked_p999 = "auto"  # never|auto|forced
     autogain_min_mask_pixels = 500
 
     # [SOURCES]
@@ -599,7 +599,7 @@ class Config(Dynamic):
         self.autogain_max_exp_factor_up = self._config.getfloat('CAMERA', 'autogain_max_exp_factor_up', fallback=self.autogain_max_exp_factor_up)
         self.autogain_max_exp_factor_down = self._config.getfloat('CAMERA', 'autogain_max_exp_factor_down', fallback=self.autogain_max_exp_factor_down)
 
-        self.autogain_use_masked_p999 = self._config.getint('CAMERA', 'autogain_use_masked_p999', fallback=self.autogain_use_masked_p999)
+        self.autogain_use_masked_p999 = self._config.get('CAMERA', 'autogain_use_masked_p999', fallback=self.autogain_use_masked_p999)
         self.autogain_min_mask_pixels = self._config.getint('CAMERA', 'autogain_min_mask_pixels', fallback=self.autogain_min_mask_pixels)
 
         # [SOURCES]

@@ -2579,15 +2579,25 @@ class PueoStarCameraOperation:
 
         # --- Decide whether to use masked or unmasked p999 ---
 
-        mode = self.cfg.autogain_use_masked_p999  # 0=never, 1=auto, 2=force
+        # Mapping autogain_use_masked_p999 string to int
+        mode_map = {"never": 0, "auto": 1, "force": 2}
+
+        # Read the config value (string)
+        mode_str = str(self.cfg.autogain_use_masked_p999).lower().strip()
+
+        mode = mode_map.get(mode_str, -1)
+
         min_mask_pixels = self.cfg.autogain_min_mask_pixels
 
+        # Mapping mode (int) to full mode name (str):
         mode_str_map = {
             0: "never_masked",
             1: "auto_masked_if_enough_pixels",
             2: "force_masked_when_valid",
         }
         mode_str = mode_str_map.get(mode, f"unknown_mode_{mode}")
+        if mode == -1:
+            self.log.warning(f"Unknown mode: {mode_str}")
 
         use_masked = False
 

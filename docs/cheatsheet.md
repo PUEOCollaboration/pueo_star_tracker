@@ -180,8 +180,8 @@ Use case details procedure and steps that **must be** followed preparing the PUE
 - and cleaning up pilled old testing/pre-mission logs and data images. 
 
 The procedure consist of TWO phases:
- - **Launch Pad Standby** (camera is ready, doing nothing)
- - **Launch** (start capturing/solving)
+ - **Launch Pad Standby** (PUEO Camera is ready for launch, powered off)
+ - **Launch** (PUEO Camera power on start capturing/solving)
 
 A. **Launch Pad Ready Steps:**
 
@@ -221,7 +221,7 @@ sudo shutdown now
 On POWER on, the PUEO Server will run and start capturing.  
 **PUEO Server is now launch ready.** 
 
-B. **Launch - Fly** (start capturing/solving)
+B. **Launch Steps**
 1. **Power on system (boot)**
 2. Wait 2 mins; run get_settings:
 ```bash
@@ -268,7 +268,6 @@ ll 2025-12-02
 ``` 
 
 If any of the verifications steps fails **REPORT** issue.
-
 
 ### Manual Autofocus/Autogain
 1) How to perform a **manual autofocus**. Where to find file generated/images:

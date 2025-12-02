@@ -173,6 +173,103 @@ Reports VL installation state and CEDAR/PUEO process status with PIDs
    ```  
 6. **Stop server post-mission.**  
 
+### Pre-Mission/Mission Preparation Procedure
+
+Use case details procedure and steps that **must be** followed preparing the PUEO Cameras for mission launch. It covers:
+- setting configuration (config.ini) 
+- and cleaning up pilled old testing/pre-mission logs and data images. 
+
+The procedure consist of TWO phases:
+ - **Launch Pad Standby** (camera is ready, doing nothing)
+ - **Launch** (start capturing/solving)
+
+A. **Launch Pad Ready Steps:**
+
+1. Stop PUEO Server
+```bash
+# Change current folder to logs:
+cd ~/Projects/pcc/logs
+# Stop PUEO Server
+./status.sh stop
+```
+
+2. **Edit** ```config.ini``` in (```~/Projects/pcc/conf```):
+```ini
+run_chamber = False
+flight_mode = flight
+run_autonomous = True
+```
+
+3. **Delete** ```dynamic.ini``` in (```~/Projects/pcc/conf```):
+
+4. **Delete ALL logs and ALL data images**
+```bash
+# Change current folder to logs:
+cd ~/Projects/pcc/logs
+
+# Clear image directories (careful, only do this once BEFORE mission)
+./cleanup.sh
+# Clear debug and log files (careful, only do this once BEFORE mission)
+./cleanup_data.sh
+```
+
+4. **SHUTDOW System**:
+```bash
+sudo shutdown now
+```
+
+On POWER on, the PUEO Server will run and start capturing.  
+**PUEO Server is now launch ready.** 
+
+B. **Launch - Fly** (start capturing/solving)
+1. **Power on system (boot)**
+2. Wait 2 mins; run get_settings:
+```bash
+# Change current folder to pcc:
+cd ~/Projects/pcc/
+./pc.sh get_settings
+```
+
+Verify response:
+```json
+# Focuser check:
+  "aperture_pos": 0,
+  "aperture_f_val": "f32",  <-- the aperture_f_val is not ??, which would indicate focuser init failed.
+# Filesystem check:
+All statuses: "normal"
+ssd and sd_card used_pct a bit more than 0.0
+Example for sd_card    
+"sd_card": {
+    "status": "normal",
+    "used_pct": 0.25
+}
+3. Veryfy camera is taking images and server attempting solving:
+```bash
+# Change current folder to logs:
+cd ~/Projects/pcc/ssd_path
+
+# Get directory listing:
+ll
+
+# total 116
+# drwxr-xr-x 13 milc milc  4096 Nov 29 07:35 ./
+# drwxrwxr-x 18 milc milc  4096 Nov 24 11:02 ../
+# drwxrwxr-x  2 milc milc  4096 Nov 29 11:39 2025-12-02/  <--- TODAY
+
+# Verify pairs of png/txt files are being created for current date (today):
+
+ll 2025-12-02
+
+# total 4536
+# drwxrwxr-x  2 milc milc    4096 Dec  2 00:40 ./
+# drwxr-xr-x 14 milc milc    4096 Dec  2 00:40 ../
+# -rw-rw-r--  1 milc milc 4625832 Dec  2 00:40 2025-12-02T08-40-00.374023Z-raw.png
+# -rw-rw-r--  1 milc milc    7263 Dec  2 00:40 log_2025-12-02T08-40-00.374023Z.txt
+``` 
+
+If any of the verifications steps fails **REPORT** issue.
+
+
 ### Manual Autofocus/Autogain
 1) How to perform a **manual autofocus**. Where to find file generated/images:
 

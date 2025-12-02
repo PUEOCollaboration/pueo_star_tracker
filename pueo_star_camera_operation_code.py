@@ -966,10 +966,10 @@ class PueoStarCameraOperation:
             # Log iteration stats including control metric and saturation info
             self.logit(
                 f'Iteration stats: iter={loop_counts}, gain={new_gain_value} [cB], '
-                f'max={high_pix_value} [counts], '
-                f'control={control_value:.1f} [counts] ({metric_source}), '
+                f'max={high_pix_value} [ADU], '
+                f'control={control_value:.1f} [ADU] ({metric_source}), '
                 f'p99.9_all={p999_all:.1f}, '
-                f'min={low_pix_value} [counts], '
+                f'min={low_pix_value} [ADU], '
                 f'sat_pixels={num_at_sat} ({sat_frac:.2e} of image)'
             )
 
@@ -1063,7 +1063,7 @@ class PueoStarCameraOperation:
                         f.write(f"# High pixel value (max): {high_pix_value}\n")
                         f.write(f"# Control value [counts]: {control_value:.3f}\n")
                         f.write(f"# Control source: {metric_source}\n")
-                        f.write(f"# 99.9 percentile (all pixels): {p999_all:.3f}\n")
+                        f.write(f"# 99.9th percentile (all pixels): {p999_all:.3f}\n")
                         f.write(f"# Saturated pixels: {num_at_sat} ({sat_frac:.3e} of image)\n")
                         f.write(f"# Low pixel value (min): {low_pix_value}\n")
                         f.write(f"# Number of bins: {len(bins)}\n")

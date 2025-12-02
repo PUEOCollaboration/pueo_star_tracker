@@ -1503,6 +1503,7 @@ class Astrometry:
         # TODO: This is forced for now until cedar detect is implemented
         p999_original = None
         p999_masked_original = None
+        n_mask_pixels = None
         if self.solver in ['solver1', 'solver3']: #  or True:
             if True:
                 ##### Uncomment the following lines to use the source-finding functions independently
@@ -1519,7 +1520,7 @@ class Astrometry:
                 if True:
                     # Direct call to show exception on source_finder
                     source_finder_exec_time = time.monotonic()
-                    masked_image, sources_mask, sources_contours, p999_original, p999_masked_original = self.sf.source_finder(
+                    masked_image, sources_mask, sources_contours, p999_original, p999_masked_original, n_mask_pixels = self.sf.source_finder(
                         img,
                         log_file_path,
                         leveling_filter_downscale_factor,
@@ -1873,6 +1874,7 @@ class Astrometry:
             # This is OK!!!
             astrometry['p999_original'] = p999_original
             astrometry['p999_masked_original'] = p999_masked_original
+            astrometry['n_mask_pixels'] = n_mask_pixels
 
             logit(f"Astrometry: {str(astrometry)}")
 
@@ -1935,6 +1937,7 @@ class Astrometry:
             # Regardless of solution we still want to return
             astrometry['p999_original'] = p999_original
             astrometry['p999_masked_original'] = p999_masked_original
+            astrometry['n_mask_pixels'] = n_mask_pixels
             # Example combined:
             # astrometry['p999'] = (p999_original, p999_masked_original)
             # Access: p999_original = astrometry['p999'][0]

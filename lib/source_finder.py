@@ -134,7 +134,7 @@ class SourceFinder:
         If exclude_corners=True, the w×w corner blocks are set to 0.
         Returns a float32 kernel normalized to sum=1 (mean).
         """
-        S = int(S);
+        S = int(S)
         w = int(w)
         K = np.zeros((S, S), np.float32)
 
@@ -432,6 +432,8 @@ class SourceFinder:
         #create simple mask for autogain autoexposure thresholding
         simple_sources_mask = residual_img > (float(self.cfg.hyst_k_low)*estimated_noise)
         simple_sources_mask_u8 = (simple_sources_mask.astype(np.uint8) * 255)
+        n_mask_pixels = np.count_nonzero(simple_sources_mask_u8)
+
 
         logit("Creating cleaned masked_image. Using hysteresis mask. For autogain/exposure.")
         masked_original_image = cv2.bitwise_and(img, img, mask=simple_sources_mask_u8)
@@ -564,7 +566,7 @@ class SourceFinder:
                     file.write(f"median_length_px : {float(np.median(lengths)):.1f}\n")
                     file.write(f"median_area_px : {float(np.median([cv2.contourArea(c) for c in contours])):.1f}\n")
 
-        return masked_clean_image, sources_mask, top_contours, p999_original, p999_masked_original
+        return masked_clean_image, sources_mask, top_contours, p999_original, p999_masked_original, n_mask_pixels
 
 
 

@@ -231,19 +231,34 @@ cd ~/Projects/pcc/
 ```
 
 Verify response:
-```json
+```bash
 # Focuser check:
-  "aperture_pos": 0,
-  "aperture_f_val": "f32",  <-- the aperture_f_val is not ??, which would indicate focuser init failed.
+# --------------
+#   "aperture_pos": 0,
+#   "aperture_f_val": "f32",  <-- the aperture_f_val is not ??, which would indicate focuser init failed.
+#
 # Filesystem check:
-All statuses: "normal"
-ssd and sd_card used_pct a bit more than 0.0
-Example for sd_card    
-"sd_card": {
-    "status": "normal",
-    "used_pct": 0.25
-}
-3. Veryfy camera is taking images and server attempting solving:
+# -----------------
+# All statuses: "normal"
+# ssd and sd_card used_pct a bit more than 0.0
+# Example for sd_card    
+# "sd_card": {
+#     "status": "normal",
+#     "used_pct": 0.25
+# }
+
+# PUEO Server Mission Settings:
+# -----------------------------
+# Check next settings are: 
+#   chamber_mode": false,
+#   "flight_mode": "flight",
+#   "run_test": false,
+#   "run_telemetry": true,
+#   "autonomous": true,
+
+```
+
+3. Verify camera is taking images and server attempting solving:
 ```bash
 # Change current folder to logs:
 cd ~/Projects/pcc/ssd_path

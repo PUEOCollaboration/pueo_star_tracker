@@ -10,7 +10,7 @@ if ! command -v outb >/dev/null 2>&1; then
   exit 1
 fi
 
-sudo outb 0x1c91 0x07
+sudo outb 0x1c91 0x02
 
 sleep 5
 

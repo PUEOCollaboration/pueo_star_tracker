@@ -683,7 +683,8 @@ class PueoStarCamera(Camera):
         logit(f'{"ASI_BRIGHTNESS":>23s}: {self.cfg.pixel_bias}', color='yellow')
         self.set_control_value(asi.ASI_FLIP, self.cfg.asi_flip)
         logit(f'{"ASI_FLIP:":>23s} {self.cfg.asi_flip}', color='yellow')
-        self.set_control_value(asi.ASI_HIGH_SPEED_MODE, 1)  # enable high speed mode. Not caring about read noise.
+        #self.set_control_value(asi.ASI_HIGH_SPEED_MODE, 1)  # enable high speed mode. Not caring about read noise.
+        self.set_control_value(asi.ASI_HIGH_SPEED_MODE, 0)  # disable high speed mode. Not caring about read noise.
         logit(f'{"ASI_HIGH_SPEED_MODE:":>23s} 1', color='yellow')
         self.disable_dark_subtract()  # were not subtracting darks.
         logit(f'{"disable_dark_subtract":>23s} Yes', color='yellow')
@@ -694,7 +695,9 @@ class PueoStarCamera(Camera):
 
         # Windell decision: Setting 80 2025-11-26
         # asi_bandwidthoverload_max_value = self.get_controls()['BandWidth']['MaxValue'] # 100
-        asi_bandwidthoverload_custom_value = 80
+        #asi_bandwidthoverload_custom_value = 80
+        #changed to 40% by WT on 20251207
+        asi_bandwidthoverload_custom_value = 40
         # self.set_control_value(asi.ASI_BANDWIDTHOVERLOAD, asi_bandwidthoverload_max_value)
         self.set_control_value(asi.ASI_BANDWIDTHOVERLOAD, asi_bandwidthoverload_custom_value)
         logit(f'{"ASI_BANDWIDTHOVERLOAD:":>23s} {asi_bandwidthoverload_custom_value}', color='yellow')

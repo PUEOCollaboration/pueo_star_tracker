@@ -4,12 +4,11 @@
 set -euo pipefail
 
 # Owl SBC ONLY
-# Power down all USB
 if ! command -v outb >/dev/null 2>&1; then
   echo "ERROR: outb not found. Install with: sudo apt install ioport"
   exit 1
 fi
-
+#power off ports 2 and 4. 
 sudo outb 0x1c91 0x04
 
 sleep 5

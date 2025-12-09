@@ -1,5 +1,5 @@
 #!/bin/bash
-#make executable using: chmod +x usb_power_cycle_owl.sh
+#make executable using: chmod +x usb_power_cycle.sh
 #run by: ./usb_power_cycle.sh
 set -euo pipefail
 

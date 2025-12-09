@@ -302,6 +302,10 @@ class Utils:
         while text_size[0] < img_fraction*img.shape[0]:
             fontsize += 1
             text_size, _ = cv2.getTextSize(timestamp, font, fontsize, font_thickness)
+
+        #quick multiplier to make font size larger for inspection images. It is to make the overlay readable to the user.
+        img_fraction *= 1.5
+        
         text_x = 40
         text_y = 80
         line_spacing = 35

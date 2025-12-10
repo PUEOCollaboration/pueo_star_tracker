@@ -329,8 +329,8 @@ class Utils:
             # solved_txt = ' (Not solved)' if ra == dec == roll == 0.0 else ' (Solved)'
             astrometric_position = f"Astrometric Position ({solver}): ({ra:.4f}, {dec:.4f}, {roll:.4f}) deg"
             _rmse = astrometry.get('Cross-Boresight RMSE', 0.0) if 'Cross-Boresight RMSE' in astrometry else astrometry.get('RMSE', 0.0)
-            # rmse = f"RMSE: {_rmse/3600.0:.4E} deg"
-            rmse = f"RMSE: {_rmse:.3f} arcsec, RMS: ({ra_rms:.3f}, {dec_rms:.3f}, {roll_rms:.3f}) arcesc"
+            rmse = f"RMSE: {_rmse:.4E} arcsec"
+            #rmse = f"RMSE: {_rmse:.3f} arcsec, RMS: ({ra_rms:.3f}, {dec_rms:.3f}, {roll_rms:.3f}) arcesc"
             # velocity = f"Angular velocity: (omegax, omegay, omegaz) = ({omegax:.4E}, {omegay:.4E}, {omegaz:.4E}) deg/s"
             # Or even more explicitly:
             # velocity = f"Angular velocity: w_x = {omega[0]:.4E}, w_y = {omega[1]:.4E}, w_z = {omega[2]:.4E} deg/s"

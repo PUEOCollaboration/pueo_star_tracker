@@ -288,7 +288,7 @@ class Utils:
         # display_image(img, 'Final')
         overlay_image = self.convert_to_3d(img) # .copy()
         timestamp_fmt = self.reparse_timestamp(timestamp_string)  # "250106_050111.929213" --> "2025-01-06 05:01:11.929"
-        timestamp = f"Timestamp: {timestamp_fmt}"
+        timestamp = f"Start Timestamp: {timestamp_fmt}"
         # font properties and color
         font = cv2.FONT_HERSHEY_SIMPLEX
 

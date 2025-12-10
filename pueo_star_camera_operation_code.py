@@ -2895,6 +2895,7 @@ class PueoStarCameraOperation:
         if is_raw:
             self.logit(f"Taking photo: raw: {is_raw} mode: {self.flight_mode} @{dt}", color='cyan')  # Timestamp at END
         else:
+            self.logit("######################################## NEW CYCLE ########################################", color='cyan')
             self.logit(f"Taking photo: operation: {is_operation} solver: {self.solver} mode: {self.flight_mode} @{dt}", color='cyan')  # Timestamp at END
 
         self.curr_time = time.monotonic()

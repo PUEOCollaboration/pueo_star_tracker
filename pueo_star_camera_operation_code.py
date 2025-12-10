@@ -2356,7 +2356,9 @@ class PueoStarCameraOperation:
                 # TODO: HAve these captured differently!!!
                 self.astrometry['PlateScale'] = plate_scale_value
                 exposure = self.camera.get_control_values().get('Exposure', 'unknown')
+                gain_cb = self.camera.get_control_values().get('Gain', 'unknown')
                 self.astrometry['ExposureTime'] = f'{exposure} us' # microsecond
+                self.astrometry['Gain'] = f'{gain_cb} cB' # centibels
 
     def info_add_misc_info(self, omega_x, omega_y, omega_z, pk):
         with open(self.info_file, "a", encoding='utf-8') as file:

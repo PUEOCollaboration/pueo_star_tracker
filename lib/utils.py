@@ -341,7 +341,8 @@ class Utils:
 
             plate_scale = astrometry.get('PlateScale', '- arcsec/px')
             exposure_time = astrometry.get('ExposureTime', '-')
-            misc = f"Plate Scale: {plate_scale}, Exposure Time: {exposure_time}"
+            gain_cb = astrometry.get('Gain', '-')
+            misc = f"Plate Scale: {plate_scale}, Exposure Time: {exposure_time}, Gain: {gain_cb}"
 
             # overlay text
             cv2.putText(overlay_image, astrometric_position, (text_x, text_y), font, fontsize, font_color, font_thickness, line_type)

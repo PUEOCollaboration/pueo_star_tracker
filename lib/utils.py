@@ -252,7 +252,7 @@ class Utils:
 
         # Initial font size and dynamic adjustment
         fontsize = 1 / (ds_y / 3)
-        img_fraction = 0.25  # Target text width as a fraction of image width
+        img_fraction = 0.50  # Target text width as a fraction of image width
         text_size, _ = cv2.getTextSize(timestamp, font, fontsize, font_thickness)
         while text_size[0] < img_fraction * img.shape[1]:
             fontsize += 1 / (ds_y)  # / 2
@@ -297,14 +297,11 @@ class Utils:
         line_type = cv2.LINE_AA
         # Calculate text size to position it properly
         fontsize = 1  # starting font size
-        img_fraction = 0.25 # portion of image width you want text width to be
+        img_fraction = 0.50 # portion of image width you want text width to be
         text_size, _ = cv2.getTextSize(timestamp, font, fontsize, font_thickness)
         while text_size[0] < img_fraction*img.shape[0]:
             fontsize += 1
             text_size, _ = cv2.getTextSize(timestamp, font, fontsize, font_thickness)
-
-        #quick multiplier to make font size larger for inspection images. It is to make the overlay readable to the user.
-        img_fraction *= 1.5
         
         text_x = 40
         text_y = 80

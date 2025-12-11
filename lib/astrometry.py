@@ -1483,7 +1483,7 @@ class Astrometry:
         if return_partial_images:
             # Create partial results folder. For debugging
             if not os.path.exists(partial_results_path):
-                os.makedirs(partial_results_path)
+                self.utils.make_dirs_safe(partial_results_path)
             # save input image
             cv2.imwrite(os.path.join(partial_results_path, "0 - Input Image-bgr.png"), img_bgr)
             cv2.imwrite(os.path.join(partial_results_path, "0 - Input Image-img.png"), img)
@@ -1974,7 +1974,7 @@ class Astrometry:
         img_partial_results_path = os.path.join(partial_results_path, img_name)
         # create partial results dir
         if not os.path.exists(img_partial_results_path):
-            os.makedirs(img_partial_results_path)
+            self.utils.make_dirs_safe(img_partial_results_path)
 
         # perform astrometry
         astrometry, curr_star_centroids, contours_img = self.do_astrometry(

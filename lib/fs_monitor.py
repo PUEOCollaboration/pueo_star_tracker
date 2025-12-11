@@ -47,10 +47,10 @@ import json
 from dataclasses import dataclass, field
 from collections import deque
 from datetime import datetime, timedelta, timezone
-from typing import Dict, Any, Optional, List, Type
+from typing import Dict, Any, Optional, List, Type, Tuple
 from array import array
 import bisect
-
+import errno
 
 # ------------------ Configuration dataclass ---------------------------------
 @dataclass(frozen=True)
@@ -363,6 +363,9 @@ class FSMonitor:
         # Aggregates for long windows (daily summaries) {name: deque of (date_iso, folders, files, size_mb)}
         self._daily_aggregates: Dict[str, deque] = {}
 
+        # Current errors
+        self._current_errors: Dict[str, Tuple[int, str]] = {}  # ADD THIS LINE
+
         # Threading control
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
@@ -484,6 +487,12 @@ class FSMonitor:
             for name, meta in list(self._paths.items()):
                 try:
                     snap = self._check_single(name, meta, now=now_dt)
+
+                    # Store current error state in separate dict
+                    error_code = snap.get("error_code", 0)
+                    error_msg = snap.get("error", "")
+                    self._current_errors[name] = (error_code, error_msg)
+
                     # store compact sample
                     hb = self._history.get(name)
                     if hb is not None:
@@ -492,11 +501,13 @@ class FSMonitor:
                                   snap.get("files") or 0,
                                   snap.get("size_mb") or 0.0,
                                   snap.get("used_mb") or 0.0,
-                                  snap.get("total_mb") or 0.0)
+                                  snap.get("total_mb") or 0.0
+                                  ),
                         # daily aggregate update
                         self._update_daily_aggregate(name, now_dt.date(), snap)
                 except Exception:
                     self.log.exception("Error checking %s", name)
+                    self._current_errors[name] = (-1, "Exception during check")
 
             self.log_compact_status()  # Updates self.is_critical and log compact status
 
@@ -508,8 +519,12 @@ class FSMonitor:
             used = cur.get("used_pct", "<n/a>")
             folders = cur.get("folders", "<n/a>")
             files = cur.get("files", "<n/a>")
-            self.log.info("Status %s: level=%s used=%%%.2f folders=%s files=%s forecast=%s",
-                     name, st["status"], used if isinstance(used, float) else 0.0, folders, files, st["forecast"])
+            error_code = st.get("error_code", 0)
+            error_msg = st.get("error", "")
+            if error_code != 0:
+                self.log.error(f"Status {name}: level={st['status']} ERROR {error_code} - {error_msg}")
+            else:
+                self.log.info(f"Status {name}: level={st['status']} used=%{used:.2f} folders={folders} files={files} forecast={st['forecast']}")
 
     def status(self) -> Dict[str, Dict[str, Any]]:
         """Return the status mapping for all paths (same structure as original prototype)."""
@@ -521,20 +536,32 @@ class FSMonitor:
             for name, meta in self._paths.items():
                 hb = self._history.get(name)
                 current = hb.latest() if hb else None
+                # Get current error state
+                error_info = self._current_errors.get(name, (0, ""))
+                error_code, error_msg = error_info
                 status_level = "normal"
                 is_critical = False
                 if current:
-                    used_pct = ((current.get("used_mb", 0.0) / current.get("total_mb", 1.0) * 100.0)
-                                if current.get("total_mb") else 0.0)
-                    if used_pct >= meta["critical_pct"]:
-                        status_level = "critical"
-                        is_critical = True
-                    elif used_pct >= meta["warning_pct"]:
-                        status_level = "warning"
-                    # augment current with percent fields for compatibility
-                    current = dict(current)
-                    current["used_pct"] = round(used_pct, 2)
-                    current["free_pct"] = round(100.0 - used_pct, 2)
+                    # CHECK FOR ERRORS FIRST
+                    if error_code != 0:
+                        # Determine severity based on error code
+                        if error_code in [errno.ENOSPC, errno.EROFS, -3]:  # Critical errors
+                            status_level = "critical"
+                            is_critical = True
+                        else:
+                            status_level = "warning"  # Most errors are warnings
+                    else:
+                        used_pct = ((current.get("used_mb", 0.0) / current.get("total_mb", 1.0) * 100.0)
+                                    if current.get("total_mb") else 0.0)
+                        if used_pct >= meta["critical_pct"]:
+                            status_level = "critical"
+                            is_critical = True
+                        elif used_pct >= meta["warning_pct"]:
+                            status_level = "warning"
+                        # augment current with percent fields for compatibility
+                        current = dict(current)
+                        current["used_pct"] = round(used_pct, 2)
+                        current["free_pct"] = round(100.0 - used_pct, 2)
                 is_critical_all = is_critical_all or is_critical
                 # build trend map
                 trend = {}
@@ -548,6 +575,8 @@ class FSMonitor:
                     "current": current or {},
                     "trend": trend,
                     "forecast": forecast,
+                    "error_code": error_code,
+                    "error": error_msg,
                 }
         self.is_critical = is_critical_all # set to True if at least one of the monitored paths becomes critical.
         return result
@@ -571,6 +600,10 @@ class FSMonitor:
                   filesystem is currently *used*, not free.
                   Can include fractional values, e.g., 12.15.
 
+            - 'error' : str (optional)
+                  Error message if filesystem access failed.
+                  Only included when there's an error accessing the filesystem.
+
         Returns
         -------
         dict
@@ -592,6 +625,11 @@ class FSMonitor:
                 "sd_card": {
                     "status": "critical",
                     "used_pct": 95.2
+                },
+                "external_drive": {
+                    "status": "warning",
+                    "used_pct": 0.0,
+                    "error": "[Errno 13] Permission denied: '/mnt/external'"
                 }
             }
         """
@@ -599,10 +637,17 @@ class FSMonitor:
         status = self.status()
 
         for fs, fs_status in status.items():
-            result[fs] = {
+            entry = {
                 'status': fs_status.get('status', ''),
                 'used_pct': fs_status.get('current', {}).get('used_pct', 0.0),
             }
+
+            # Add error message if present (only error, not error_code)
+            error_msg = fs_status.get('error', '')
+            if error_msg:
+                entry['error'] = error_msg
+
+            result[fs] = entry
 
         return result
 
@@ -675,6 +720,8 @@ class FSMonitor:
             now = datetime.now(timezone.utc)
         path = meta["path"]
         max_depth = int(meta.get("max_depth", self.scan_max_depth))
+        error_code = 0
+        error_msg = ""
 
         # filesystem usage
         try:
@@ -684,10 +731,22 @@ class FSMonitor:
             free_mb = du.free / (1024 * 1024)
             used_pct = (used_mb / total_mb * 100.0) if total_mb > 0 else 0.0
             free_pct = 100.0 - used_pct
-        except FileNotFoundError:
-            raise
-        except Exception:
+        except FileNotFoundError as e:
+            error_code = errno.ENOENT
+            error_msg = str(e)
+            total_mb = used_mb = free_mb = used_pct = free_pct = 0.0
+        except PermissionError as e:
+            error_code = errno.EACCES
+            error_msg = str(e)
+            total_mb = used_mb = free_mb = used_pct = free_pct = 0.0
+        except OSError as e:
+            error_code = getattr(e, 'errno', -1)
+            error_msg = str(e)
+            total_mb = used_mb = free_mb = used_pct = free_pct = 0.0
+        except Exception as e:
             self.log.exception("Error getting disk usage for %s", path)
+            error_code = -1
+            error_msg = str(e)
             total_mb = used_mb = free_mb = used_pct = free_pct = 0.0
 
         snapshot: Dict[str, Any] = {
@@ -701,7 +760,14 @@ class FSMonitor:
             "total_mb": round(total_mb, 3),
             "used_pct": round(used_pct, 2),
             "free_pct": round(free_pct, 2),
+            "error_code": error_code,
+            "error": error_msg,
         }
+
+        # If we already have an error from disk_usage, skip scanning
+        if error_code != 0:
+            snapshot["note"] = f"error_{error_code}"
+            return snapshot
 
         # root path shortcut
         if self._is_root_path(path):
@@ -712,6 +778,7 @@ class FSMonitor:
         folder_count = 0
         file_count = 0
         size_bytes = 0
+        scan_error = False
         try:
             with os.scandir(path) as it:
                 day_dirs = []
@@ -743,12 +810,32 @@ class FSMonitor:
                                 continue
                             except PermissionError:
                                 continue
-        except FileNotFoundError:
+        except FileNotFoundError as e:
+            error_code = errno.ENOENT
+            error_msg = str(e)
             self.log.warning("Path %s not found during scan", path)
-        except PermissionError:
+            scan_error = True
+        except PermissionError as e:
+            error_code = errno.EACCES
+            error_msg = str(e)
             self.log.warning("Permission denied scanning %s", path)
-        except Exception:
+            scan_error = True
+        except OSError as e:
+            error_code = getattr(e, 'errno', -1)
+            error_msg = str(e)
+            self.log.exception("OS error scanning path %s", path)
+            scan_error = True
+        except Exception as e:
+            error_code = -2  # Scan-specific error
+            error_msg = str(e)
             self.log.exception("Error scanning path %s", path)
+            scan_error = True
+
+        # UPDATE snapshot with error info if scan failed
+        if scan_error:
+            snapshot["error_code"] = error_code
+            snapshot["error"] = error_msg
+            snapshot["note"] = f"scan_error_{error_code}"
 
         snapshot["folders"] = folder_count
         snapshot["files"] = file_count

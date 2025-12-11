@@ -119,10 +119,7 @@ class SourceFinder:
 
         # Save Background subtracted image
         if return_partial_images:
-            cv2.imwrite(
-                os.path.join(partial_results_path, "1.1 - Global Background subtracted image.png"),
-                cleaned_img,
-            )
+            cv2.imwrite(os.path.join(partial_results_path, "1.1 - Global Background subtracted image.png"), cleaned_img)
 
         return cleaned_img
 

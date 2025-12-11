@@ -327,10 +327,7 @@ class PueoStarCameraOperation:
         """Check if server is ready"""
         return self._status == 'Ready'
 
-    @staticmethod
-    def get_daily_path(path: str,
-                       fmt: str = '%Y-%m-%d',
-                       create_if_missing: bool = True) -> str:
+    def get_daily_path(self, path: str, fmt: str = '%Y-%m-%d', create_if_missing: bool = True) -> str:
         """
         Appends current date to path and optionally creates directory.
 
@@ -351,7 +348,9 @@ class PueoStarCameraOperation:
 
         # Create directory if requested and doesn't exist
         if create_if_missing and not os.path.exists(full_path):
-            os.makedirs(full_path, exist_ok=True)
+            success = self.utils.make_dirs_safe(full_path, exist_ok=True)
+            if not success:
+                self.logit(f"Error creating daily path for: {full_path}", color='red')
 
         return full_path
 
@@ -2897,7 +2896,7 @@ class PueoStarCameraOperation:
         if is_raw:
             self.logit(f"Taking photo: raw: {is_raw} mode: {self.flight_mode} @{dt}", color='cyan')  # Timestamp at END
         else:
-            self.logit("######################################## NEW CYCLE ########################################", color='cyan')
+            self.logit("#"*40 + " NEW CYCLE " + "#"*40, color='cyan')
             self.logit(f"Taking photo: operation: {is_operation} solver: {self.solver} mode: {self.flight_mode} @{dt}", color='cyan')  # Timestamp at END
 
         self.curr_time = time.monotonic()
@@ -3132,8 +3131,14 @@ class PueoStarCameraOperation:
             self.server.write(self.info_file, data_type='info_file', dst_filename=info_filename)
         # Copy info file to sd_card and ssd_path
         if self.is_flight:
-            shutil.copy2(self.info_file, self.get_daily_path(self.cfg.sd_card_path))
-            shutil.copy2(self.info_file, self.get_daily_path(self.cfg.ssd_path))
+            try:
+                shutil.copy2(self.info_file, self.get_daily_path(self.cfg.sd_card_path))
+            except Exception as e:
+                self.logit(f"Error saving info file to sd_card: {e}", color="red")
+            try:
+                shutil.copy2(self.info_file, self.get_daily_path(self.cfg.ssd_path))
+            except Exception as e:
+                self.logit(f"Error saving info file to ssd: {e}", color="red")
         # Create/update symlink to last info file
         self.utils.create_symlink(self.cfg.web_path, self.info_file, 'last_info_file.txt')
 

@@ -8,6 +8,9 @@ from pathlib import Path
 from typing import Union, List, Tuple
 from contextlib import suppress
 from typing import Optional
+import platform
+import errno
+import shutil
 
 # External imports
 from astropy.io import fits
@@ -30,6 +33,9 @@ class Utils:
         self.cfg = cfg
         self.log = logger or logging.getLogger("pueo")
 #        self.server = server
+        self._system = platform.system().lower()
+        self._is_windows = self._system == "windows"
+        self._is_linux = self._system == "linux"
 
     @staticmethod
     def get_current_utc_timestamp() -> Tuple[datetime.datetime, datetime.datetime, float]:
@@ -431,46 +437,6 @@ class Utils:
             # The image is already 3D
             return img
 
-    def image_downscale_orig(self, img, downscale_factors, image_filename, overlay=None, downscale_mode = 'resize'):
-        t0 = time.monotonic()
-        self.log.debug(f'downscale_factors: {downscale_factors} mode: {downscale_mode}')
-
-        self.print_img_info(img, 'orig')
-        img = self.convert_to_3d(img)
-        # display_image(img, "Output orig image")
-        if downscale_mode == 'downscale_local_mean':
-            # Convert each element of the tuple to an integer
-            downscale_factors_int = tuple(int(x) for x in downscale_factors)
-            try:
-                # Process multi-channel images
-                if img.ndim == 3:  # Color image (RGB or BGR)
-                    downscaled_img = np.stack([
-                        downscale_local_mean(img[:, :, channel], downscale_factors_int)
-                        for channel in range(img.shape[2])
-                    ], axis=-1)
-                else:  # Single-channel grayscale image
-                    downscaled_img = downscale_local_mean(img, downscale_factors_int)
-            except ValueError as e:
-                self.log.warning(f'Downscale failed, scaling as {min(downscale_factors_int)}')
-                downscaled_img = downscale_local_mean(img, min(downscale_factors_int))
-        elif downscale_mode == 'resize':
-            # TODO: Add code to resize the image by factors
-            pass
-        # Normalize back to uint8 if the image is float
-        if np.issubdtype(downscaled_img.dtype, np.floating):
-            downscaled_img = (downscaled_img * 255 / downscaled_img.max()).astype(np.uint8)
-
-        if overlay is not None:
-            self.log.debug(f'Adding an overlay over the downscaled image: {overlay}')
-            downscaled_img = self.overlay_raw(downscaled_img, downscale_factors, overlay)
-
-            # display_image(downscaled_img, "Output overlay image")
-
-        self.print_img_info(downscaled_img, 'orig')
-        # display_image(downscaled_img, "Output downscaled image")
-        cv2.imwrite(image_filename,downscaled_img)
-        self.log.debug(f'Saved downscaled image to sd path: {image_filename} in {get_dt(t0)}.')
-
     def convert_dummy_to_mono(img):
         """
         Convert dummy camera RGB image (2822x4144x3, uint8)
@@ -545,10 +511,13 @@ class Utils:
         temp_path = os.path.join(directory, temp_filename)
 
         # Save Image
+        success = True
         if save_mode == "stretch":
-            cv2.imwrite(temp_path, img_8bit, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
+            success = cv2.imwrite(temp_path, img_8bit, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
         elif save_mode == "normal":
-            cv2.imwrite(temp_path, img_16bit, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
+            success = cv2.imwrite(temp_path, img_16bit, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
+        if not success:
+            logit(f"Error saving image to {temp_path}", color="red")
 
         try:
             os.replace(temp_path, jpeg_path)
@@ -567,7 +536,7 @@ class Utils:
         # Save the image with JPEG 2000 compression
         success = cv2.imwrite(jp2path, image, compression_params)
         if not success:
-            raise ValueError("Failed to write the image. Check compression parameters or OpenCV backend.")
+            logit(f"Failed to write the image {jp2path}.", color="red")
 
     def create_symlink(self, path, filename, symlink_name='last_inspection_image.jpg', use_relative_path=True):
         """
@@ -590,7 +559,7 @@ class Utils:
                 os.remove(symlink_path)
 
             # Create parent directory if needed
-            os.makedirs(path, exist_ok=True)
+            self.make_dirs_safe(path, exist_ok=True)
 
             if use_relative_path:
                 # Calculate relative path from symlink directory to target file
@@ -881,7 +850,7 @@ class Utils:
             web_path = jpeg_settings.get('web_path', 'web/')
 
             # Ensure inspection_path exists
-            os.makedirs(inspection_path, exist_ok=True)
+            self.make_dirs_safe(inspection_path, exist_ok=True)
 
             # Create proper path for JPEG file
             base_filename = os.path.basename(image_filename)  # Get just the filename
@@ -925,7 +894,9 @@ class Utils:
 
         # Save as PNG
         if is_save:
-            cv2.imwrite(image_filename, resized_img, [int(cv2.IMWRITE_PNG_COMPRESSION), png_compression])
+            success = cv2.imwrite(image_filename, resized_img, [int(cv2.IMWRITE_PNG_COMPRESSION), png_compression])
+            if not success:
+                logit(f"Failed to write image {image_filename}.", color="red")
 
         # Create symlink for inspection image pointing to a sd_card saved RAW image.
         if is_inspection:
@@ -1082,6 +1053,77 @@ class Utils:
                 self.log.error(f"An OS error occurred while deleting '{file_path_str}': {e}")
 
         return successful_deletions
+
+    def make_dirs_safe(self, full_path: str, mode: int = 0o755, exist_ok: bool = True,
+                       check_space: bool = False) -> bool:
+        """
+        Safely create directories with error handling and logging.
+
+        Args:
+            full_path: Directory path to create
+            mode: Permission mode (0o755 default)
+            exist_ok: Don't raise error if directory exists (True)
+            check_space: Check disk space before creating (False)
+
+        Returns:
+            bool: True if successful, False on failure
+        """
+        # Check disk space first if requested
+        if check_space and not self._check_disk_space(full_path):
+            self.log.critical(f"No space left for: {full_path}")
+            return False
+
+        try:
+            os.makedirs(full_path, mode=mode, exist_ok=exist_ok)
+            self.log.info(f"Created directory: {full_path}")
+            return True
+
+        except FileExistsError:
+            if not exist_ok:
+                self.log.warning(f"Directory already exists: {full_path}")
+            return True
+
+        except PermissionError:
+            self.log.error(f"Permission denied: {full_path}")
+            return False
+
+        except FileNotFoundError:
+            self.log.critical(f"Path not found: {full_path}")
+            return False
+
+        except OSError as e:
+            if e.errno == errno.ENOSPC:
+                self.log.critical(f"No space left on device: {full_path}")
+                return False
+            elif e.errno == errno.EROFS:
+                self.log.error(f"Read-only filesystem: {full_path}")
+                return False
+            elif e.errno == errno.ENAMETOOLONG:
+                self.log.error(f"Path too long: {full_path}")
+                return False
+            else:
+                self.log.error(f"Failed to create {full_path}: {e}")
+                return False
+
+        except Exception as e:
+            self.log.error(f"Unexpected error creating {full_path}: {e}")
+            return False
+
+    def _check_disk_space(self, full_path: str, min_gb: float = 0.1) -> bool:
+        """Check if there's enough disk space."""
+        try:
+            # Get the mount point for the path
+            check_path = os.path.dirname(full_path) or full_path
+            total, used, free = shutil.disk_usage(check_path)
+            free_gb = free / (1024 ** 3)
+
+            if free_gb < min_gb:
+                self.log.warning(f"Low disk space: {free_gb:.1f}GB free at {full_path}")
+                return False
+            return True
+        except Exception:
+            # If we can't check space, assume it's okay
+            return True
 
 if __name__ == '__main__':
     ts_orig = '250106_094041.794214'

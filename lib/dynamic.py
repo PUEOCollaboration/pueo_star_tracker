@@ -156,9 +156,10 @@ class Dynamic:
             self._dynamic_config_parser['DYNAMIC'][param_name] = str(param_info['value'])
 
         # Write to file
-        os.makedirs(os.path.dirname(self._dynamic_config_file), exist_ok=True)
-        with open(self._dynamic_config_file, 'w') as configfile:
-            self._dynamic_config_parser.write(configfile)
+        with suppress(Exception):
+            os.makedirs(os.path.dirname(self._dynamic_config_file), exist_ok=True)
+            with open(self._dynamic_config_file, 'w') as configfile:
+                self._dynamic_config_parser.write(configfile)
         with suppress(AttributeError):
             self._log.debug(f'Updated dynamic {self._dynamic_config_file}')
 

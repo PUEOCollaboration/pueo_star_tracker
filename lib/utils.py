@@ -302,18 +302,21 @@ class Utils:
         font_thickness = 2
         line_type = cv2.LINE_AA
         # Calculate text size to position it properly
-        fontsize = 1  # starting font size
+        font_size = 1  # starting font size
         img_fraction = 0.50 # portion of image width you want text width to be
-        text_size, _ = cv2.getTextSize(timestamp, font, fontsize, font_thickness)
+        text_size, _ = cv2.getTextSize(timestamp, font, font_size, font_thickness)
         while text_size[0] < img_fraction*img.shape[0]:
-            fontsize += 1
-            text_size, _ = cv2.getTextSize(timestamp, font, fontsize, font_thickness)
-        
+            font_size += 1
+            text_size, _ = cv2.getTextSize(timestamp, font, font_size, font_thickness)
+
+        # Multiplier to make font size larger for inspection images. It is to make the overlay readable to the user.
+        img_fraction *= self.cfg.foi_font_multiplier # 1.5
+
         text_x = 40
         text_y = 80
         line_spacing = 35
         # overlay timestamp
-        cv2.putText(overlay_image, timestamp, (text_x, text_y), font, fontsize, font_color, font_thickness, line_type)
+        cv2.putText(overlay_image, timestamp, (text_x, text_y), font, font_size, font_color, font_thickness, line_type)
         text_y += text_size[1] + line_spacing  # Adjust Y-coordinate for the next text
 
         solver = astrometry['solver_name'] if astrometry else ''
@@ -351,22 +354,22 @@ class Utils:
             misc = f"Plate Scale: {plate_scale}, Exposure Time: {exposure_time}, Gain: {gain_cb}"
 
             # overlay text
-            cv2.putText(overlay_image, astrometric_position, (text_x, text_y), font, fontsize, font_color, font_thickness, line_type)
+            cv2.putText(overlay_image, astrometric_position, (text_x, text_y), font, font_size, font_color, font_thickness, line_type)
             text_y += text_size[1] + line_spacing
-            cv2.putText(overlay_image, rmse, (text_x, text_y), font, fontsize, font_color, font_thickness, line_type)
+            cv2.putText(overlay_image, rmse, (text_x, text_y), font, font_size, font_color, font_thickness, line_type)
             text_y += text_size[1] + line_spacing
-            cv2.putText(overlay_image, velocity, (text_x, text_y), font, fontsize, font_color, font_thickness, line_type)
+            cv2.putText(overlay_image, velocity, (text_x, text_y), font, font_size, font_color, font_thickness, line_type)
             text_y += text_size[1] + line_spacing
-            cv2.putText(overlay_image, probability_of_false_positive, (text_x, text_y), font, fontsize, font_color, font_thickness, line_type)
+            cv2.putText(overlay_image, probability_of_false_positive, (text_x, text_y), font, font_size, font_color, font_thickness, line_type)
             text_y += text_size[1] + line_spacing
-            cv2.putText(overlay_image, exec_time,(text_x, text_y), font, fontsize, font_color, font_thickness, line_type)
+            cv2.putText(overlay_image, exec_time,(text_x, text_y), font, font_size, font_color, font_thickness, line_type)
             text_y += text_size[1] + line_spacing
 
-            cv2.putText(overlay_image, misc,(text_x, text_y), font, fontsize, font_color, font_thickness, line_type)
+            cv2.putText(overlay_image, misc,(text_x, text_y), font, font_size, font_color, font_thickness, line_type)
             text_y += text_size[1] + line_spacing
 
             # Add legend for the circles
-            cv2.putText(overlay_image, 'Legend:',(text_x, text_y), font, fontsize, font_color, font_thickness, line_type)
+            cv2.putText(overlay_image, 'Legend:',(text_x, text_y), font, font_size, font_color, font_thickness, line_type)
             text_y += int(text_size[1] + line_spacing * 1.3)
             # OpenCV uses BGR
             color_blue = (255, 0, 0)
@@ -378,11 +381,11 @@ class Utils:
             for color, radius_scaling, description in colors:
                 text_cy = text_y - int(text_size[1] / 2) # Move center to text_size/2 up, since text_y is bottom of the text
                 cv2.circle(overlay_image, (text_x + int(2*sources_radius), text_cy), int(sources_radius*radius_scaling), color, 4)
-                cv2.putText(overlay_image, description, (text_x+int(4*sources_radius), text_y), font, fontsize, font_color, font_thickness, line_type)
+                cv2.putText(overlay_image, description, (text_x+int(4*sources_radius), text_y), font, font_size, font_color, font_thickness, line_type)
                 text_y += int(text_size[1] + line_spacing * 1.3)
 
         else:
-            cv2.putText(overlay_image, f"Not Solved ({solver})", (text_x, text_y), font, fontsize, font_color, font_thickness, line_type)
+            cv2.putText(overlay_image, f"Not Solved ({solver})", (text_x, text_y), font, font_size, font_color, font_thickness, line_type)
             text_y += text_size[1] + line_spacing  # Adjust Y-coordinate for the next text
 
         # Save image

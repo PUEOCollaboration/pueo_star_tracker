@@ -253,19 +253,20 @@ class Config(Dynamic):
     return_partial_images = True
 
     resize_mode = 'downscale'
-    scale_factor_x = 16
-    scale_factor_y = 16
+    scale_factor_x = 16.0
+    scale_factor_y = 16.0
     scale_factors = (scale_factor_x, scale_factor_y)
 
     raw_resize_mode = 'downscale'
-    raw_scale_factor_x = 8
-    raw_scale_factor_y = 8
+    raw_scale_factor_x = 8.0
+    raw_scale_factor_y = 8.0
     raw_scale_factors = (raw_scale_factor_x, raw_scale_factor_y)
 
     foi_resize_mode = 'downscale'
-    foi_scale_factor_x = 4
-    foi_scale_factor_y = 4
+    foi_scale_factor_x = 4.0
+    foi_scale_factor_y = 4.0
     foi_scale_factors = (foi_scale_factor_x, foi_scale_factor_y)
+    foi_font_multiplier = 1.5
 
     inspection_images_keep = 100
     inspection_quality = 80
@@ -753,6 +754,7 @@ class Config(Dynamic):
         self.foi_scale_factor_x = self._config.getfloat('IMAGES', 'foi_scale_factor_x', fallback=self.foi_scale_factor_x)
         self.foi_scale_factor_y = self._config.getfloat('IMAGES', 'foi_scale_factor_y', fallback=self.foi_scale_factor_y)
         self.foi_scale_factors = (self.foi_scale_factor_x, self.foi_scale_factor_y)
+        self.foi_font_multiplier = self._config.getfloat('IMAGES', 'foi_font_multiplier', fallback=self.foi_font_multiplier)
 
         self.inspection_images_keep = self._config.getint('IMAGES', 'inspection_images_keep', fallback=self.inspection_images_keep)
         self.inspection_quality = self._config.getint('IMAGES', 'inspection_quality', fallback=self.inspection_quality)

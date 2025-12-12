@@ -1022,7 +1022,7 @@ class Astrometry:
             fov_estimate=FOV,
             # fov_max_error=FOV * 0.10,  # Default None
             pattern_checking_stars=pattern_checking_stars,
-            # match_radius=0.01,  # Default 0.01
+            match_radius=0.015,  # Default 0.01
             # match_threshold=1e-3,
             solve_timeout=self.cfg.solve_timeout, # 5000.0, # Default None milliseconds
             # distortion=distortion,

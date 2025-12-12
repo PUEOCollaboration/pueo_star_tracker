@@ -1,3 +1,7 @@
+#!/usr/bin/env python3
+"""
+Astrometry PUEO Module
+"""
 # Standard imports
 from contextlib import suppress
 import logging
@@ -7,6 +11,7 @@ import time
 # from time import perf_counter as precision_timestamp
 import os
 from pathlib import Path
+
 # External imports
 # import matplotlib.pyplot as plt
 import cv2
@@ -19,16 +24,14 @@ import numpy as np
 # Custom imports
 from lib.config import Config
 from lib.common import current_timestamp, logit
-
 from lib.source_finder import SourceFinder
-
-from lib.compute_star_centroids import compute_centroids_from_still, compute_centroids_from_trail, \
-    compute_centroids_photutils, compute_centroids_from_trails_ellipse_method
+from lib.compute_star_centroids import compute_centroids_from_still, compute_centroids_from_trails_ellipse_method
 from lib.tetra3 import Tetra3
 from lib.cedar_solve import Tetra3 as Tetra3Cedar  # , cedar_detect_client
 from lib.cedar import Cedar
 from lib.astrometry_net import  AstrometryNet
 from lib.compute import Compute
+from lib.utils import Utils
 
 
 class Astrometry:
@@ -51,7 +54,10 @@ class Astrometry:
         self.solver = 'solver2'  # Default solver
 
         self.server = server  # Parent, PUEO Server Main Class Reference
-        self.utils = self.server.utils
+        try:
+            self.utils = self.server.utils
+        except AttributeError:
+            self.utils = Utils(self.cfg, self.log)
 
         self.sf = SourceFinder(self.cfg, self.log, self.server) # Giving the SourceFinder God Access
 
@@ -2039,6 +2045,7 @@ class Astrometry:
 
 # RUN LOCAL TESTS
 if __name__ == "__main__":
+
     astrometry = Astrometry(database_name=None)
     # run tests
     # run_tests(img_path="./test_images/cloudy_20240422.png", display=True)
@@ -2055,26 +2062,61 @@ if __name__ == "__main__":
     # ‘hip_main’ and ‘tyc_main’ are available from <https://cdsarc.u-strasbg.fr/ftp/cats/I/239/> (save the appropriate .dat file).
     # The downloaded catalogue must be placed in the tetra3 directory.
     # Windel database
-    print('Creating tetra3 Database: ')
-    t0 = time.monotonic()
-    astrometry.t3_cedar.generate_database(
-        max_fov=10.79, ## 2.58,
-        # min_fov=2.1,
-        save_as="fov_10.79_mag9.0_tyc_v11_cedar_database.npz",
-        star_catalog="tyc_main",  # tyc_main
-        # pattern_stars_per_fov=10,  # Removed for test, Default: 150
-        # verification_stars_per_fov=20, # was 20
-        star_max_magnitude=9,
-        pattern_max_error=0.005,
-        # star_min_separation=0.01,  # (this is in degrees)
-        # pattern_max_error=0.005,
-        # simplify_pattern=False,
-        # range_ra=None,
-        # range_dec=None,
-        # presort_patterns=True,
-        # save_largest_edge=False,
-        multiscale_step=1.5
-    )
+    db_version = 2
+
+    if db_version == 1:
+        print('Creating tetra3 Database (original): ')
+
+        t0 = time.monotonic()
+        astrometry.t3_cedar.generate_database(
+            max_fov=10.79, ## 2.58,
+            # min_fov=2.1,
+            save_as="fov_10.79_mag9.0_tyc_v11_cedar_database.npz",
+            star_catalog="tyc_main",  # tyc_main
+            # pattern_stars_per_fov=10,  # Removed for test, Default: 150
+            # verification_stars_per_fov=20, # was 20
+            star_max_magnitude=9,
+            pattern_max_error=0.005,
+            # star_min_separation=0.01,  # (this is in degrees)
+            # pattern_max_error=0.005,
+            # simplify_pattern=False,
+            # range_ra=None,
+            # range_dec=None,
+            # presort_patterns=True,
+            # save_largest_edge=False,
+            multiscale_step=1.5
+        )
+    elif db_version == 2:
+        print('Creating tetra3 Database v2 2025-12-12 (Windell solving optimisations): ')
+        # Request: Generate a new database with the following parameters?
+        #     max_fov=10.79,
+        #     min_fov=None,
+        #     star_catalog='tyc_main',
+        #     star_max_magnitude=9.0,
+        #     pattern_stars_per_fov=12,
+        #     verification_stars_per_fov=40,
+        #     pattern_max_error=0.005,
+        #     multiscale_step=1.5,
+
+        t0 = time.monotonic()
+        astrometry.t3_cedar.generate_database(
+            max_fov=10.79,
+            min_fov=None,
+            save_as="fov_10.79_mag9.0_tyc_v12_cedar_database.npz",
+            star_catalog="tyc_main",        # tyc_main
+            pattern_stars_per_fov=12,       # Removed for test, Default: 150
+            verification_stars_per_fov=40,  # was not set
+            star_max_magnitude=9.0,
+            pattern_max_error=0.005,
+            # star_min_separation=0.01,     # (this is in degrees)
+            # pattern_max_error=0.005,
+            # simplify_pattern=False,
+            # range_ra=None,
+            # range_dec=None,
+            # presort_patterns=True,
+            # save_largest_edge=False,
+            multiscale_step=1.5
+        )
     from common import get_dt
 
     print(f'Completed in {get_dt(t0)}.')

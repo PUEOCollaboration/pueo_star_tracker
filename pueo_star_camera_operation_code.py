@@ -453,239 +453,239 @@ class PueoStarCameraOperation:
         self.server.write(image_file, data_type='image_file', is_preserve=is_preserve)
 
     def fit_best_focus(self, focus_image_path, focus_positions, focus_scores,
-                   diameter_scores, max_focus_position, focus_method):
-    """
-    Fit best focus from:
-      - focus_scores (contrast/edge metric) via Gaussian curve_fit
-      - diameter_scores (HFD/diameter) via quadratic polyfit (vertex)
+                       diameter_scores, max_focus_position, focus_method):
+        """
+        Fit best focus from:
+          - focus_scores (contrast/edge metric) via Gaussian curve_fit
+          - diameter_scores (HFD/diameter) via quadratic polyfit (vertex)
 
-    Always saves:
-      - focus_score.png
-      - diameters_score.png
-    even if fits fail.
+        Always saves:
+          - focus_score.png
+          - diameters_score.png
+        even if fits fail.
 
-    Returns:
-      (best_focus_pos_int, stdev_float)
-    """
+        Returns:
+          (best_focus_pos_int, stdev_float)
+        """
 
-    # --- Robust path handling (keep your existing "+ 'focus_score.png'" style working) ---
-    sigma_error = float(self.cfg.sigma_error_value)
-    if focus_image_path and not focus_image_path.endswith(os.sep):
-        focus_image_path = focus_image_path + os.sep
+        # --- Robust path handling (keep your existing "+ 'focus_score.png'" style working) ---
+        sigma_error = float(self.cfg.sigma_error_value)
+        if focus_image_path and not focus_image_path.endswith(os.sep):
+            focus_image_path = focus_image_path + os.sep
 
-    # --- Ensure arrays + consistent ordering (IMPORTANT) ---
-    focus_positions = np.asarray(focus_positions, dtype=np.float64)
-    focus_scores = np.asarray(focus_scores, dtype=np.float64)
-    diameter_scores = np.asarray(diameter_scores, dtype=np.float64)
+        # --- Ensure arrays + consistent ordering (IMPORTANT) ---
+        focus_positions = np.asarray(focus_positions, dtype=np.float64)
+        focus_scores = np.asarray(focus_scores, dtype=np.float64)
+        diameter_scores = np.asarray(diameter_scores, dtype=np.float64)
 
-    order = np.argsort(focus_positions)
-    focus_positions = focus_positions[order]
-    focus_scores = focus_scores[order]
-    diameter_scores = diameter_scores[order]
+        order = np.argsort(focus_positions)
+        focus_positions = focus_positions[order]
+        focus_scores = focus_scores[order]
+        diameter_scores = diameter_scores[order]
 
-    # --- Init outputs so we never reference undefined variables later ---
-    gauss_best_pos = None
-    gauss_stdev = sigma_error
+        # --- Init outputs so we never reference undefined variables later ---
+        gauss_best_pos = None
+        gauss_stdev = sigma_error
 
-    qfit_best_pos = None
-    qfit_stdev = sigma_error
+        qfit_best_pos = None
+        qfit_stdev = sigma_error
 
-    # ------------------------------------------------------------
-    # 1) Gaussian fit on focus_scores (contrast) -> focus_score.png
-    # ------------------------------------------------------------
-    def _gaussian(x, a, x0, sigma, c):
-        return a * np.exp(-0.5 * ((x - x0) / sigma) ** 2) + c
+        # ------------------------------------------------------------
+        # 1) Gaussian fit on focus_scores (contrast) -> focus_score.png
+        # ------------------------------------------------------------
+        def _gaussian(x, a, x0, sigma, c):
+            return a * np.exp(-0.5 * ((x - x0) / sigma) ** 2) + c
 
-    try:
-        x = focus_positions.copy()
-        y = focus_scores.copy()
-
-        ok = np.isfinite(x) & np.isfinite(y)
-        x = x[ok]
-        y = y[ok]
-
-        if x.size < 4:
-            raise ValueError("Need at least 4 valid focus-score points for Gaussian fit.")
-
-        # crude initial guesses
-        y_min = float(np.min(y))
-        y_max = float(np.max(y))
-        a0 = max(1e-9, y_max - y_min)
-        x0_0 = float(x[np.argmax(y)])  # peak contrast
-        # width guess: ~1/4 of scan span (avoid 0)
-        sigma0 = max(1.0, 0.25 * float(np.max(x) - np.min(x)))
-        c0 = y_min
-
-        p0 = [a0, x0_0, sigma0, c0]
-
-        popt, pcov = curve_fit(_gaussian, x, y, p0=p0, maxfev=20000)
-
-        a, x0, sig, c = popt
-        if not np.isfinite(x0):
-            raise ValueError("Gaussian fit returned non-finite x0.")
-
-        # stdev of x0 from covariance if available
         try:
-            gauss_stdev = float(np.sqrt(max(pcov[1, 1], 0.0)))
-        except Exception:
-            gauss_stdev = sigma_error
+            x = focus_positions.copy()
+            y = focus_scores.copy()
 
-        trial_best_focus_gauss = int(round(float(x0)))
+            ok = np.isfinite(x) & np.isfinite(y)
+            x = x[ok]
+            y = y[ok]
 
-        # Bound check
-        if 0 <= trial_best_focus_gauss <= max_focus_position:
-            gauss_best_pos = trial_best_focus_gauss
-        else:
-            self.logit(
-                f"Gaussian best focus {trial_best_focus_gauss} out of limits 0..{max_focus_position}; ignoring Gaussian."
-            )
+            if x.size < 4:
+                raise ValueError("Need at least 4 valid focus-score points for Gaussian fit.")
 
-        # Plot (fit + data)
-        fit_x = np.linspace(float(np.min(x)), float(np.max(x)), 300)
-        fit_y = _gaussian(fit_x, *popt)
+            # crude initial guesses
+            y_min = float(np.min(y))
+            y_max = float(np.max(y))
+            a0 = max(1e-9, y_max - y_min)
+            x0_0 = float(x[np.argmax(y)])  # peak contrast
+            # width guess: ~1/4 of scan span (avoid 0)
+            sigma0 = max(1.0, 0.25 * float(np.max(x) - np.min(x)))
+            c0 = y_min
 
-        plt.figure()
-        plt.plot(x, y, 'b', label='Focus Data')
-        plt.plot(fit_x, fit_y, 'r--', label='Gaussian fit')
-        plt.legend()
-        plt.xlabel('Focus Position, counts')
-        plt.ylabel('Sequence Contrast/Covariance')
-        plt.title(f'Gaussian fit x0={float(x0):.2f}, stdev~{gauss_stdev:.3g}')
-        self.plt_savefig(plt, focus_image_path + 'focus_score.png')
+            p0 = [a0, x0_0, sigma0, c0]
 
-    except Exception as e:
-        self.log.error(f'Gaussian fitting Error: {e}')
-        self.logit(f"There was an error with Gaussian fitting: {e}")
+            popt, pcov = curve_fit(_gaussian, x, y, p0=p0, maxfev=20000)
 
-        # Always save raw-data plot even if fit fails
-        try:
+            a, x0, sig, c = popt
+            if not np.isfinite(x0):
+                raise ValueError("Gaussian fit returned non-finite x0.")
+
+            # stdev of x0 from covariance if available
+            try:
+                gauss_stdev = float(np.sqrt(max(pcov[1, 1], 0.0)))
+            except Exception:
+                gauss_stdev = sigma_error
+
+            trial_best_focus_gauss = int(round(float(x0)))
+
+            # Bound check
+            if 0 <= trial_best_focus_gauss <= max_focus_position:
+                gauss_best_pos = trial_best_focus_gauss
+            else:
+                self.logit(
+                    f"Gaussian best focus {trial_best_focus_gauss} out of limits 0..{max_focus_position}; ignoring Gaussian."
+                )
+
+            # Plot (fit + data)
+            fit_x = np.linspace(float(np.min(x)), float(np.max(x)), 300)
+            fit_y = _gaussian(fit_x, *popt)
+
             plt.figure()
-            plt.plot(focus_positions, focus_scores, 'b', label='Focus Data (raw)')
+            plt.plot(x, y, 'b', label='Focus Data')
+            plt.plot(fit_x, fit_y, 'r--', label='Gaussian fit')
             plt.legend()
             plt.xlabel('Focus Position, counts')
             plt.ylabel('Sequence Contrast/Covariance')
-            plt.title('Gaussian fit FAILED (raw data saved)')
+            plt.title(f'Gaussian fit x0={float(x0):.2f}, stdev~{gauss_stdev:.3g}')
             self.plt_savefig(plt, focus_image_path + 'focus_score.png')
-        except Exception as e2:
-            self.log.error(f'Failed to save focus_score.png raw plot: {e2}')
 
-    # ----------------------------------------------------------------
-    # 2) Quadratic fit on diameter_scores (HFD): y = a x^2 + b x + c
-    #     -> diameters_score.png (always saved)
-    # ----------------------------------------------------------------
-    try:
-        x = focus_positions.copy()
-        y = diameter_scores.copy()
+        except Exception as e:
+            self.log.error(f'Gaussian fitting Error: {e}')
+            self.logit(f"There was an error with Gaussian fitting: {e}")
 
-        ok = np.isfinite(x) & np.isfinite(y) & (y > 0)
-        x = x[ok]
-        y = y[ok]
+            # Always save raw-data plot even if fit fails
+            try:
+                plt.figure()
+                plt.plot(focus_positions, focus_scores, 'b', label='Focus Data (raw)')
+                plt.legend()
+                plt.xlabel('Focus Position, counts')
+                plt.ylabel('Sequence Contrast/Covariance')
+                plt.title('Gaussian fit FAILED (raw data saved)')
+                self.plt_savefig(plt, focus_image_path + 'focus_score.png')
+            except Exception as e2:
+                self.log.error(f'Failed to save focus_score.png raw plot: {e2}')
 
-        # drop obvious penalty outliers if you use 1e6 etc.
-        y_lim = 1e5
-        if np.count_nonzero(y < y_lim) >= 3:
-            keep = (y < y_lim)
-            x = x[keep]
-            y = y[keep]
-
-        if x.size < 3:
-            raise ValueError("Need at least 3 valid diameter points for quadratic fit.")
-
-        # polyfit with covariance
-        (a, b, c), cov = np.polyfit(x, y, deg=2, cov=True)
-
-        # Vertex x0 = -b/(2a) (min only meaningful if a>0)
-        if not np.isfinite(a) or a <= 0:
-            x_vertex = float(x[np.argmin(y)])
-            stdev_x0 = float("nan")
-            self.logit("Quadratic a<=0; falling back to discrete minimum diameter.")
-        else:
-            x_vertex = float(-b / (2.0 * a))
-
-            # uncertainty of vertex from cov(a,b) only
-            dx_da = float(b / (2.0 * a * a))
-            dx_db = float(-1.0 / (2.0 * a))
-            cov_ab = cov[:2, :2]
-            var_x0 = float(np.array([dx_da, dx_db]) @ cov_ab @ np.array([dx_da, dx_db]).T)
-            stdev_x0 = float(np.sqrt(max(var_x0, 0.0)))
-
-        trial_best_q = int(round(x_vertex))
-
-        # Fit curve for plotting
-        fit_x_q = np.linspace(float(np.min(x)), float(np.max(x)), 300)
-        fit_y_q = a * fit_x_q * fit_x_q + b * fit_x_q + c
-
-        # RMSE (informative)
-        yhat = a * x * x + b * x + c
-        resid = y - yhat
-        rmse = float(np.sqrt(np.mean(resid * resid))) if resid.size else float("nan")
-
-        # Plot (fit + data)
-        plt.figure()
-        plt.plot(x, y, 'b', label='Diameter Data (HFD)')
-        plt.plot(fit_x_q, fit_y_q, 'r--', label='Quadratic fit')
-        plt.legend()
-        plt.xlabel('Focus Position, counts')
-        plt.ylabel('Diameter (HFD)')
-        plt.title(f'Quadratic vertex={x_vertex:.2f}, rmse={rmse:.4g}')
-        self.plt_savefig(plt, focus_image_path + 'diameters_score.png')
-
-        # Accept if in bounds
-        if 0 <= trial_best_q <= max_focus_position:
-            qfit_best_pos = trial_best_q
-            qfit_stdev = float(stdev_x0) if np.isfinite(stdev_x0) else sigma_error
-        else:
-            self.logit(
-                f'Quadratic best focus {trial_best_q} out of limits 0..{max_focus_position}; ignoring quadratic.'
-            )
-
-    except Exception as e:
-        self.log.error(f'Quadratic fit (diameter/HFD) Error: {e}')
-        self.logit(f"There was an error with quadratic fitting: {e}")
-
-        # Always save raw-data plot even if fit fails
+        # ----------------------------------------------------------------
+        # 2) Quadratic fit on diameter_scores (HFD): y = a x^2 + b x + c
+        #     -> diameters_score.png (always saved)
+        # ----------------------------------------------------------------
         try:
+            x = focus_positions.copy()
+            y = diameter_scores.copy()
+
+            ok = np.isfinite(x) & np.isfinite(y) & (y > 0)
+            x = x[ok]
+            y = y[ok]
+
+            # drop obvious penalty outliers if you use 1e6 etc.
+            y_lim = 1e5
+            if np.count_nonzero(y < y_lim) >= 3:
+                keep = (y < y_lim)
+                x = x[keep]
+                y = y[keep]
+
+            if x.size < 3:
+                raise ValueError("Need at least 3 valid diameter points for quadratic fit.")
+
+            # polyfit with covariance
+            (a, b, c), cov = np.polyfit(x, y, deg=2, cov=True)
+
+            # Vertex x0 = -b/(2a) (min only meaningful if a>0)
+            if not np.isfinite(a) or a <= 0:
+                x_vertex = float(x[np.argmin(y)])
+                stdev_x0 = float("nan")
+                self.logit("Quadratic a<=0; falling back to discrete minimum diameter.")
+            else:
+                x_vertex = float(-b / (2.0 * a))
+
+                # uncertainty of vertex from cov(a,b) only
+                dx_da = float(b / (2.0 * a * a))
+                dx_db = float(-1.0 / (2.0 * a))
+                cov_ab = cov[:2, :2]
+                var_x0 = float(np.array([dx_da, dx_db]) @ cov_ab @ np.array([dx_da, dx_db]).T)
+                stdev_x0 = float(np.sqrt(max(var_x0, 0.0)))
+
+            trial_best_q = int(round(x_vertex))
+
+            # Fit curve for plotting
+            fit_x_q = np.linspace(float(np.min(x)), float(np.max(x)), 300)
+            fit_y_q = a * fit_x_q * fit_x_q + b * fit_x_q + c
+
+            # RMSE (informative)
+            yhat = a * x * x + b * x + c
+            resid = y - yhat
+            rmse = float(np.sqrt(np.mean(resid * resid))) if resid.size else float("nan")
+
+            # Plot (fit + data)
             plt.figure()
-            plt.plot(focus_positions, diameter_scores, 'b', label='Diameter Data (raw)')
+            plt.plot(x, y, 'b', label='Diameter Data (HFD)')
+            plt.plot(fit_x_q, fit_y_q, 'r--', label='Quadratic fit')
             plt.legend()
             plt.xlabel('Focus Position, counts')
             plt.ylabel('Diameter (HFD)')
-            plt.title('Quadratic fit FAILED (raw data saved)')
+            plt.title(f'Quadratic vertex={x_vertex:.2f}, rmse={rmse:.4g}')
             self.plt_savefig(plt, focus_image_path + 'diameters_score.png')
-        except Exception as e2:
-            self.log.error(f'Failed to save diameters_score.png raw plot: {e2}')
 
-    # --------------------------------------
-    # 3) Decide which result to return
-    # --------------------------------------
-    gauss_ok = (gauss_best_pos is not None)
-    q_ok = (qfit_best_pos is not None)
+            # Accept if in bounds
+            if 0 <= trial_best_q <= max_focus_position:
+                qfit_best_pos = trial_best_q
+                qfit_stdev = float(stdev_x0) if np.isfinite(stdev_x0) else sigma_error
+            else:
+                self.logit(
+                    f'Quadratic best focus {trial_best_q} out of limits 0..{max_focus_position}; ignoring quadratic.'
+                )
 
-    # Pick based on focus_method preference (minimal + predictable)
-    if focus_method == 'sequence_contrast':
-        if gauss_ok:
-            return int(gauss_best_pos), float(gauss_stdev)
+        except Exception as e:
+            self.log.error(f'Quadratic fit (diameter/HFD) Error: {e}')
+            self.logit(f"There was an error with quadratic fitting: {e}")
+
+            # Always save raw-data plot even if fit fails
+            try:
+                plt.figure()
+                plt.plot(focus_positions, diameter_scores, 'b', label='Diameter Data (raw)')
+                plt.legend()
+                plt.xlabel('Focus Position, counts')
+                plt.ylabel('Diameter (HFD)')
+                plt.title('Quadratic fit FAILED (raw data saved)')
+                self.plt_savefig(plt, focus_image_path + 'diameters_score.png')
+            except Exception as e2:
+                self.log.error(f'Failed to save diameters_score.png raw plot: {e2}')
+
+        # --------------------------------------
+        # 3) Decide which result to return
+        # --------------------------------------
+        gauss_ok = (gauss_best_pos is not None)
+        q_ok = (qfit_best_pos is not None)
+
+        # Pick based on focus_method preference (minimal + predictable)
+        if focus_method == 'sequence_contrast':
+            if gauss_ok:
+                return int(gauss_best_pos), float(gauss_stdev)
+            if q_ok:
+                return int(qfit_best_pos), float(qfit_stdev)
+
+        if focus_method == 'sequence_diameter':
+            if q_ok:
+                return int(qfit_best_pos), float(qfit_stdev)
+            if gauss_ok:
+                return int(gauss_best_pos), float(gauss_stdev)
+
+        # Default fallback priority: quadratic, then gaussian
         if q_ok:
             return int(qfit_best_pos), float(qfit_stdev)
-
-    if focus_method == 'sequence_diameter':
-        if q_ok:
-            return int(qfit_best_pos), float(qfit_stdev)
         if gauss_ok:
             return int(gauss_best_pos), float(gauss_stdev)
 
-    # Default fallback priority: quadratic, then gaussian
-    if q_ok:
-        return int(qfit_best_pos), float(qfit_stdev)
-    if gauss_ok:
-        return int(gauss_best_pos), float(gauss_stdev)
-
-    # Total failure fallback
-    self.logit(
-        "fit_best_focus: both quadratic and gaussian fits failed; "
-        f"falling back to cfg.lab_best_focus={self.cfg.lab_best_focus}, sigma_error={sigma_error}."
-    )
-    return int(self.cfg.lab_best_focus), sigma_error
+        # Total failure fallback
+        self.logit(
+            "fit_best_focus: both quadratic and gaussian fits failed; "
+            f"falling back to cfg.lab_best_focus={self.cfg.lab_best_focus}, sigma_error={sigma_error}."
+        )
+        return int(self.cfg.lab_best_focus), sigma_error
 
     def read_filename_focus_positions(self, focus_image_path, focus_positions, focus_scores):
         # get the path/directory

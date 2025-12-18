@@ -552,125 +552,83 @@ class PueoStarCameraOperation:
 
 
         # ------------------------------------------------------------------
-        # 2) Quadratic fit on diameter scores (HFD): y = a x^2 + b x + c
+        # 2) V-fit on diameters using abs_line (existing "sequence_diameter")
         # ------------------------------------------------------------------
-        qfit_best_pos = None
-        qfit_stdev = None
+        vfit_best_pos = None
+        vfit_stdev = None
 
         try:
-            x = focus_positions.astype(np.float64)
-            y = diameter_scores.astype(np.float64)
+            a0 = 1.0
+            h0 = 0.5 * (focus_positions.min() + focus_positions.max())
+            c0 = float(diameter_scores.min())
 
-            # Drop non-finite, non-positive, and obvious penalties
-            ok = np.isfinite(x) & np.isfinite(y) & (y > 0)
-            x = x[ok]
-            y = y[ok]
+            p0_v = [a0, h0, c0]
 
-            y_lim = 1e5
-            if np.count_nonzero(y < y_lim) >= 3:
-                keep = (y < y_lim)
-                x = x[keep]
-                y = y[keep]
+            popt_v, pcov_v = curve_fit(self.abs_line, focus_positions, diameter_scores, p0=p0_v)
 
-            if x.size < 3:
-                raise ValueError("Need at least 3 valid diameter points for quadratic fit.")
+            fit_x_v = np.linspace(focus_positions.min(), focus_positions.max(), fit_points)
+            a = popt_v[0]
+            h = popt_v[1]  # V-vertex (focus position)
+            c = popt_v[2]
 
-            # Fit quadratic with covariance
-            (a, b, c), cov = np.polyfit(x, y, deg=2, cov=True)
+            trial_best_v = int(round(h))
 
-            # Vertex x0 = -b/(2a)
-            if not np.isfinite(a) or a <= 0:
-                x_vertex = float(x[np.argmin(y)])
-                stdev_x0 = float("nan")
-                note = "a<=0 fallback to discrete min"
-            else:
-                x_vertex = float(-b / (2.0 * a))
-
-                # Uncertainty in vertex via cov(a,b)
-                dx_da = float(b / (2.0 * a * a))
-                dx_db = float(-1.0 / (2.0 * a))
-                cov_ab = cov[:2, :2]
-                var_x0 = float(np.array([dx_da, dx_db]) @ cov_ab @ np.array([dx_da, dx_db]).T)
-                stdev_x0 = float(np.sqrt(max(var_x0, 0.0)))
-                note = ""
-
-            trial_best_q = int(round(x_vertex))
-
-            # Always plot *something* (fit if we have it)
-            fit_x_q = np.linspace(float(x.min()), float(x.max()), fit_points)
-            y_fit = a * fit_x_q * fit_x_q + b * fit_x_q + c
-
-            yhat_pts = a * x * x + b * x + c
-            resid = y - yhat_pts
-            rmse = float(np.sqrt(np.mean(resid * resid))) if resid.size else float("nan")
+            self.logit('V-fit (diameter) parameters:')
+            self.logit(f'a (slope) = {popt_v[0]} +- {np.sqrt(pcov_v[0, 0])}')
+            self.logit(f'h (x offset) = {popt_v[1]} +- {np.sqrt(pcov_v[1, 1])}')
+            self.logit(f'c (y offset) = {popt_v[2]} +- {np.sqrt(pcov_v[2, 2])}')
 
             plt.figure()
-            plt.plot(x, y, 'b', label='Diameter Data (HFD)')
-            plt.plot(fit_x_q, y_fit, 'r--', label='Quadratic fit')
+            plt.plot(focus_positions, diameter_scores, 'b', label='Focus Data')
+            plt.plot(fit_x_v, self.abs_line(fit_x_v, *popt_v), 'r--', label='Absolute Line Fit')
             plt.legend()
             plt.xlabel('Focus Position, counts')
-            plt.ylabel('Diameter (HFD)')
-            plt.title(f'x_vertex: {round(x_vertex, 2)}, rmse: {rmse:.4g}')
+            plt.ylabel('Diameter')
+            plt.title(f'x offset: {round(h, 2)}, y offset: {round(c, 2)}, slope: {round(a, 2)}')
             self.plt_savefig(plt, focus_image_path + 'diameters_score.png')
 
-            self.logit('Quadratic fit (diameter/HFD) parameters:')
-            self.logit(f'a = {a}')
-            self.logit(f'b = {b}')
-            self.logit(f'c = {c}')
-            self.logit(f'x_vertex = {x_vertex} (stdev~{stdev_x0})')
-            if note:
-                self.logit(f'note: {note}')
-
-            if 0 <= trial_best_q <= max_focus_position:
-                qfit_best_pos = trial_best_q
-                qfit_stdev = float(stdev_x0) if np.isfinite(stdev_x0) else sigma_error
+            if 0 <= trial_best_v <= max_focus_position:
+                vfit_best_pos = trial_best_v
+                # uncertainty in h as a proxy for stdev in focus units
+                vfit_stdev = float(np.sqrt(pcov_v[1, 1]))
             else:
                 self.logit(
-                    f'Quadratic best focus {trial_best_q} out of limits 0..{max_focus_position}; ignoring quadratic fit.'
+                    f'V-fit best focus {trial_best_v} out of limits 0..{max_focus_position}; '
+                    'ignoring V-fit.'
                 )
-
         except Exception as e:
-            self.log.error(f'Quadratic fit (diameter/HFD) Error: {e}')
-            self.logit(f"There was an error with quadratic fitting: {e}")
-
-            # Minimal robustness: still save a raw-data plot so you always get diameters_score.png
-            try:
-                plt.figure()
-                plt.plot(focus_positions, diameter_scores, 'b', label='Diameter Data (raw)')
-                plt.legend()
-                plt.xlabel('Focus Position, counts')
-                plt.ylabel('Diameter (HFD)')
-                plt.title('Quadratic fit failed: raw data')
-                self.plt_savefig(plt, focus_image_path + 'diameters_score.png')
-            except Exception:
-                pass
-
+            self.log.error(f'V-fit (diameter) Error: {e}')
+            self.logit(f"There was an error with V-fitting: {e}")
 
         # ------------------------------------------------------------------
         # 3) Decide which result to use
         # ------------------------------------------------------------------
-        q_ok = qfit_best_pos is not None
+        v_ok = vfit_best_pos is not None
         gauss_ok = gauss_best_pos is not None
 
-        if q_ok and gauss_ok:
+        if v_ok and gauss_ok:
             self.logit(
-                f"fit_best_focus: both fits OK; using QUADRATIC (diameter/HFD) at pos={qfit_best_pos}, "
+                f"fit_best_focus: both fits OK; using V-fit (diameter) at pos={vfit_best_pos}, "
                 f"Gaussian (edge) best at pos={gauss_best_pos} for comparison."
             )
-            return int(qfit_best_pos), float(qfit_stdev)
+            return int(vfit_best_pos), float(vfit_stdev)
 
-        if q_ok:
+        if v_ok:
             self.logit(
-                f"fit_best_focus: using QUADRATIC (diameter/HFD) at pos={qfit_best_pos}; Gaussian fit not usable."
+                f"fit_best_focus: using V-fit (diameter) at pos={vfit_best_pos}; "
+                "Gaussian fit not usable."
             )
-            return int(qfit_best_pos), float(qfit_stdev)
+            return int(vfit_best_pos), float(vfit_stdev)
 
         if gauss_ok:
-            self.logit("fit_best_focus: quadratic fit failed; using Gaussian (edge) fit.")
+            self.logit(f"fit_best_focus: V-fit failed; using Gaussian (edge) fit at pos={gauss_best_pos}.")
             return int(gauss_best_pos), float(gauss_stdev)
 
+        # ------------------------------------------------------------------
+        # 4) Final fallback: lab_best_focus + sigma_error_value
+        # ------------------------------------------------------------------
         self.logit(
-            "fit_best_focus: both quadratic and Gaussian fit failed; "
+            "fit_best_focus: both V-fit and Gaussian fit failed; "
             f"falling back to cfg.lab_best_focus={self.cfg.lab_best_focus} "
             f"and sigma_error_value={sigma_error}."
         )

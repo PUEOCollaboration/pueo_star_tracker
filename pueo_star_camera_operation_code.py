@@ -708,22 +708,6 @@ class PueoStarCameraOperation:
         else:
             self.logit("Image has no hot pixels.")
 
-    # def check_pixed_count_diff(self, desired_max_pix_value, pixel_count_tolerance, high_pix_value):
-        difference = np.subtract(np.int64(desired_max_pix_value), np.int64(high_pix_value))
-        if high_pix_value > desired_max_pix_value + pixel_count_tolerance:
-            self.logit("Counts too high.")
-            self.logit(f"Pixel count difference: {difference}")
-            return True
-        elif high_pix_value < desired_max_pix_value - pixel_count_tolerance:
-            self.logit("Counts too low.")
-            self.logit(f"Pixel count difference: {difference}")
-            return True
-        else:
-            # highest value is high enough.
-            self.logit("Pixels counts are in range. Ending iterations.")
-            self.logit(f"Pixel count difference: {difference}")
-            return False
-
     def check_gain_exposure_routine(self, curr_img, desired_max_pix_value, pixel_saturated_value,
                                     pixel_count_tolerance) -> bool:
         bins = np.linspace(0, pixel_saturated_value, self.cfg.autogain_num_bins)
@@ -1838,7 +1822,6 @@ class PueoStarCameraOperation:
         # Take final image at lab best focus (not the fitted position)
         inserted_string = 'f' + str(int(round(final_focus_pos)))
         self.capture_timestamp_save(focus_image_path, inserted_string)
-
 
         # --- Write autofocus summary (best-effort; never break autofocus) ---
         try:

@@ -624,7 +624,7 @@ class PueoStarCameraOperation:
     def read_filename_focus_positions(self, focus_image_path, focus_positions, focus_scores):
         # get the path/directory
         # focus_positions = []
-        for focus_image_filename in os.listdir(focus_image_path):
+        for focus_image_filename in sorted(os.listdir(focus_image_path)):
             # check if the image ends with png
             if focus_image_filename.endswith(".png"):
                 self.logit(f'  file: {focus_image_filename} focus_lookup', color='yellow')

@@ -1835,9 +1835,9 @@ class PueoStarCameraOperation:
         )
         self.focuser.move_focus_position(final_focus_pos)
 
-# Take final image at lab best focus (not the fitted position)
-inserted_string = 'f' + str(int(round(final_focus_pos)))
-self.capture_timestamp_save(focus_image_path, inserted_string)
+        # Take final image at lab best focus (not the fitted position)
+        inserted_string = 'f' + str(int(round(final_focus_pos)))
+        self.capture_timestamp_save(focus_image_path, inserted_string)
 
 
         # --- Write autofocus summary (best-effort; never break autofocus) ---

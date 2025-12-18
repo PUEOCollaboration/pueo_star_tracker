@@ -534,9 +534,22 @@ class PueoStarCameraOperation:
                     f'Gaussian best focus {trial_best} out of limits 0..{max_focus_position}; '
                     'ignoring Gaussian fit.'
                 )
-        except Exception as e:
+
+       except Exception as e:
             self.log.error(f'Gaussian fitting Error: {e}')
             self.logit(f"There was an error with Gaussian fitting: {e}")
+            # --- Always save a raw-data plot even if the fit fails ---
+            try:
+                plt.figure()
+                plt.plot(focus_positions, focus_scores, 'b', label='Focus Data (raw)')
+                plt.legend()
+                plt.xlabel('Focus Position, counts')
+                plt.ylabel('Sequence Contrast/Covariance')
+                plt.title(f'Gaussian fit FAILED: {e}')
+                self.plt_savefig(plt, focus_image_path + 'focus_score.png')
+            except Exception as e2:
+                self.log.error(f'Failed to save raw focus_score.png: {e2}')
+
 
         # ------------------------------------------------------------------
         # 2) V-fit on diameters using abs_line (existing "sequence_diameter")

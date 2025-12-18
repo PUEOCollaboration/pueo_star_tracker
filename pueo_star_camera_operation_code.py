@@ -1623,7 +1623,23 @@ class PueoStarCameraOperation:
         measured_focus_positions = []
         count = 1
         focus_positions = np.linspace(focus_start_pos, focus_stop_pos, focus_step_count)
-
+        
+        # --- Autofocus summary file (minimal add) ---
+        summary_lines = []
+        summary_ts = time.strftime("%Y%m%d_%H%M%S")
+        summary_path = None
+        try:
+            # focus_image_path is already used for saving images; reuse it for the summary
+            summary_path = os.path.join(focus_image_path, f"autofocus_summary_{summary_ts}.txt")
+            summary_lines.append("Autofocus summary")
+            summary_lines.append(f"timestamp: {summary_ts}")
+            summary_lines.append(f"focus_method: {focus_method}")
+            summary_lines.append(f"scan: start={focus_start_pos}, stop={focus_stop_pos}, steps={focus_step_count}")
+            summary_lines.append("")
+            summary_lines.append("idx\tcmd_pos\tmeas_pos\tedgescore\tdiamscore")
+        except Exception as e:
+            self.logit(f"WARNING: could not initialize autofocus summary path: {e}")
+            
         if self.focuser.aperture_position == 'closed':
             self.logit('Opening Aperture.')
             self.focuser.open_aperture()

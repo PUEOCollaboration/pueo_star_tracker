@@ -1768,6 +1768,15 @@ class PueoStarCameraOperation:
             # Store for contrast-based autofocus (sequence_contrast)
             focus_scores.append(edge_score)
 
+            # --- Summary line for this step (no changes to scoring logic) ---
+            try:
+                summary_lines.append(
+                    f"{count}\t{float(focus_positions[i]):.3f}\t{float(measured_focus_positions[-1]):.3f}\t"
+                    f"{float(edge_score):.6g}\t{float(diameter_score):.6g}"
+                )
+            except Exception:
+                pass
+
             count += 1
 
         self.logit('Processing focus images.')
@@ -1824,6 +1833,21 @@ class PueoStarCameraOperation:
         # Take final image at estimated best focus
         inserted_string = 'f' + str(int(round(trial_best_focus_pos)))
         self.capture_timestamp_save(focus_image_path, inserted_string)
+
+        # --- Write autofocus summary (best-effort; never break autofocus) ---
+        try:
+            if summary_path:
+                summary_lines.append("")
+                summary_lines.append("FIT RESULTS")
+                summary_lines.append(f"trial_best_focus_pos: {float(trial_best_focus_pos):.6g}")
+                summary_lines.append(f"stdev: {float(stdev):.6g}")
+
+                with open(summary_path, "w", encoding="utf-8") as f:
+                    f.write("\n".join(summary_lines) + "\n")
+
+                self.logit(f"Wrote autofocus summary: {summary_path}")
+        except Exception as e:
+            self.logit(f"WARNING: failed to write autofocus summary file: {e}")
 
         self.logit(f'do_autofocus_routine completed in {get_dt(t0)}.', color='cyan')
         return trial_best_focus_pos, stdev

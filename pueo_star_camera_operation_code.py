@@ -1532,7 +1532,7 @@ class PueoStarCameraOperation:
 
                 self.logit(f'Old Exposure Value: {old_exposure_value}')
                 self.logit(f'New Exposure Value: {new_exposure_value}')
-                self.camera.set_control_value(asi.ASI_GAIN, new_exposure_value)
+                self.camera.set_control_value(asi.ASI_EXPOSURE, new_exposure_value)
             else:
                 self.logit(f'Image Saturated.')
                 new_exposure_value = 0.5 * old_exposure_value

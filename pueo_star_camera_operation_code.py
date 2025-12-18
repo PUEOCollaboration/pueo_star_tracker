@@ -474,9 +474,9 @@ class PueoStarCameraOperation:
         """
         sigma_error = float(self.cfg.sigma_error_value)
 
-        # Sort focus_positions & focus_scores like original code did
-        list1, list2 = zip(*sorted(zip(focus_positions, focus_scores)))
-        focus_positions, focus_scores = (list(t) for t in zip(*sorted(zip(list1, list2))))
+        # Keep positions, focus_scores, and diameter_scores aligned
+        triples = sorted(zip(focus_positions, focus_scores, diameter_scores), key=lambda t: t[0])
+        focus_positions, focus_scores, diameter_scores = (np.array(x, dtype=float) for x in zip(*triples))
 
         focus_positions = np.array(focus_positions, dtype=float)
         focus_scores = np.array(focus_scores, dtype=float)

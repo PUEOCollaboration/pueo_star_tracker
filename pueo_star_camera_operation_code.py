@@ -1826,13 +1826,19 @@ class PueoStarCameraOperation:
             self.log.error(traceback.format_exception(e))
             logit(e, color='red')
 
-        # Move the focus to the best found position.
-        self.logit(f"Moving Focus to best focus position: {int(round(trial_best_focus_pos))}")
-        self.focuser.move_focus_position(trial_best_focus_pos)
+        # --- Do NOT apply fitted focus; return to lab best focus instead ---
+        final_focus_pos = self.cfg.lab_best_focus
 
-        # Take final image at estimated best focus
-        inserted_string = 'f' + str(int(round(trial_best_focus_pos)))
-        self.capture_timestamp_save(focus_image_path, inserted_string)
+        self.logit(
+            f"Autofocus fit result (not applied): {int(round(trial_best_focus_pos))}. "
+            f"Returning focus to lab best: {int(round(final_focus_pos))}"
+        )
+        self.focuser.move_focus_position(final_focus_pos)
+
+# Take final image at lab best focus (not the fitted position)
+inserted_string = 'f' + str(int(round(final_focus_pos)))
+self.capture_timestamp_save(focus_image_path, inserted_string)
+
 
         # --- Write autofocus summary (best-effort; never break autofocus) ---
         try:

@@ -1833,7 +1833,7 @@ class PueoStarCameraOperation:
         try:
             trial_best_focus_pos, stdev = self.fit_best_focus(
             focus_image_path, np.asarray(measured_focus_positions, dtype=np.float64), focus_scores,
-            diameter_scores, max_focus_position, focus_method
+            diameter_scores, max_focus_position, focus_method)
 
             # Calculate focus deviation range
             focus_min_pos = self.cfg.lab_best_focus * (1 - self.cfg.autofocus_max_deviation)

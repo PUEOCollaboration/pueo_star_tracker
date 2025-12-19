@@ -472,6 +472,11 @@ class PueoStarCameraOperation:
 
         img = intensity_img.astype(np.float32)
         hfds = []
+        
+        filtered = [cnt for cnt in contours
+            if min_size <= cv2.contourArea(cnt) <= max_size]
+        #take largest 30 and take contours.
+        contours = sorted(filtered, key=cv2.contourArea, reverse=True)[:30]
 
         for cnt in contours:
             area = cv2.contourArea(cnt)
@@ -1768,7 +1773,13 @@ class PueoStarCameraOperation:
 
         diameters = np.array(diameters, dtype=float)
         self.logit("--------Focus Routine: Diameter List (mask-based, area-equivalent)--------")
-        self.logit(str(diameters))
+        self.logit(
+            f"Diameters: n={diameters.size}, "
+            f"median={float(np.median(diameters)):.3f}, mean={float(np.mean(diameters)):.3f}, "
+            f"min={float(np.min(diameters)):.3f}, max={float(np.max(diameters)):.3f}"
+        )
+        self.logit(np.array2string(diameters, threshold=40, edgeitems=10, precision=3))
+
         return diameters
 
     def do_autofocus_routine(self, focus_image_path, focus_start_pos, focus_stop_pos, focus_step_count,

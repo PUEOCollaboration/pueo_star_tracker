@@ -451,128 +451,13 @@ class PueoStarCameraOperation:
         plt.savefig(image_file)
         plt.close()
         self.server.write(image_file, data_type='image_file', is_preserve=is_preserve)
-        
-    def get_centroid_hfds(self, intensity_img, mask_u8):
-        """
-        True HFD (Half-Flux Diameter) per blob using encircled flux to 50%.
-        Returns np.array of HFDs in pixels, or [-1] if none.
-        """
-        if mask_u8 is None:
-            return [-1,]
-        mask = mask_u8.astype(np.uint8)
-        if mask.max() <= 1:
-            mask = (mask > 0).astype(np.uint8) * 255
-
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        if not contours:
-            return [-1,]
-
-        min_size = self.cfg.img_min_size
-        max_size = self.cfg.img_max_size
-
-        img = intensity_img.astype(np.float32)
-        hfds = []
-        
-        filtered = [cnt for cnt in contours
-            if min_size <= cv2.contourArea(cnt) <= max_size]
-        #take largest 15 and take contours.
-        contours = sorted(filtered, key=cv2.contourArea, reverse=True)[:15]
-
-        for cnt in contours:
-            area = cv2.contourArea(cnt)
-            if area < min_size or area > max_size:
-                continue
-
-            M = cv2.moments(cnt)
-            if M["m00"] <= 0:
-                continue
-            cx = M["m10"] / M["m00"]
-            cy = M["m01"] / M["m00"]
-
-            blob = np.zeros_like(mask)
-            cv2.drawContours(blob, [cnt], -1, 255, thickness=-1)
-
-            ys, xs = np.nonzero(blob)
-            if xs.size < 5:
-                continue
-
-            vals = img[ys, xs]
-            vals = np.maximum(vals, 0.0)  # guard against slight negative background residuals
-            total = float(vals.sum())
-            if total <= 0:
-                continue
-
-            rs = np.sqrt((xs - cx) ** 2 + (ys - cy) ** 2)
-            order = np.argsort(rs)
-            rs = rs[order]
-            vals = vals[order]
-            csum = np.cumsum(vals)
-
-            r50 = float(rs[np.searchsorted(csum, 0.5 * total)])
-            hfds.append(2.0 * r50)
-
-        if not hfds:
-            return [-1,]
-        return np.asarray(hfds, dtype=float)
-        
-    def plot_hfd_curve(self, focus_image_path, focus_positions, hfd_scores, fit_points=300):
-        """
-        Save hfd_score.png (raw curve always). If enough points exist, overlay a quadratic fit.
-        """
-        # keep your existing save style compatible
-        if focus_image_path and not focus_image_path.endswith(os.sep):
-            focus_image_path = focus_image_path + os.sep
-
-        x = np.asarray(focus_positions, dtype=np.float64)
-        y = np.asarray(hfd_scores, dtype=np.float64)
-
-        # drop non-finite and penalties
-        ok = np.isfinite(x) & np.isfinite(y) & (y > 0) & (y < 1e5)
-        x = x[ok]
-        y = y[ok]
-
-        if x.size == 0:
-            # still save something
-            plt.figure()
-            plt.title("HFD curve: no valid points")
-            self.plt_savefig(plt, focus_image_path + "hfd_score.png")
-            return
-
-        order = np.argsort(x)
-        x = x[order]
-        y = y[order]
-
-        plt.figure()
-        plt.plot(x, y, 'b', label='HFD (median per step)')
-
-        title = "HFD vs Focus"
-        # optional quadratic overlay
-        if x.size >= 3:
-            try:
-                (a, b, c), _ = np.polyfit(x, y, deg=2, cov=True)
-                fx = np.linspace(float(x.min()), float(x.max()), fit_points)
-                fy = a * fx * fx + b * fx + c
-                plt.plot(fx, fy, 'r--', label='Quadratic fit')
-
-                if np.isfinite(a) and a != 0:
-                    x0 = -b / (2.0 * a)
-                    y0 = a * x0 * x0 + b * x0 + c
-                    title = f"HFD vs Focus (x0={x0:.2f}, HFDmin={y0:.3f}px)"
-            except Exception:
-                pass
-
-        plt.legend()
-        plt.xlabel("Focus Position (measured)")
-        plt.ylabel("HFD (pixels)")
-        plt.title(title)
-        self.plt_savefig(plt, focus_image_path + "hfd_score.png")
 
     def fit_best_focus(self, focus_image_path, focus_positions, focus_scores,
                        diameter_scores, max_focus_position, focus_method):
         """
         Fit best focus from:
           - focus_scores (contrast/edge metric) via Gaussian curve_fit
-          - diameter_scores (HFD/diameter) via quadratic polyfit (vertex)
+          - diameter_scores (diameter) via quadratic polyfit (vertex)
 
         Always saves:
           - focus_score.png
@@ -685,7 +570,7 @@ class PueoStarCameraOperation:
                 self.log.error(f'Failed to save focus_score.png raw plot: {e2}')
 
         # ----------------------------------------------------------------
-        # 2) Quadratic fit on diameter_scores (HFD): y = a x^2 + b x + c
+        # 2) Quadratic fit on diameter_scores diameter: y = a x^2 + b x + c
         #     -> diameters_score.png (always saved)
         # ----------------------------------------------------------------
         try:
@@ -737,11 +622,11 @@ class PueoStarCameraOperation:
 
             # Plot (fit + data)
             plt.figure()
-            plt.plot(x, y, 'b', label='Diameter Data (HFD)')
+            plt.plot(x, y, 'b', label='Diameter Data')
             plt.plot(fit_x_q, fit_y_q, 'r--', label='Quadratic fit')
             plt.legend()
             plt.xlabel('Focus Position, counts')
-            plt.ylabel('Diameter (HFD)')
+            plt.ylabel('Diameter')
             plt.title(f'Quadratic vertex={x_vertex:.2f}, rmse={rmse:.4g}')
             self.plt_savefig(plt, focus_image_path + 'diameters_score.png')
 
@@ -755,7 +640,7 @@ class PueoStarCameraOperation:
                 )
 
         except Exception as e:
-            self.log.error(f'Quadratic fit (diameter/HFD) Error: {e}')
+            self.log.error(f'Quadratic fit diameter Error: {e}')
             self.logit(f"There was an error with quadratic fitting: {e}")
 
             # Always save raw-data plot even if fit fails
@@ -764,7 +649,7 @@ class PueoStarCameraOperation:
                 plt.plot(focus_positions, diameter_scores, 'b', label='Diameter Data (raw)')
                 plt.legend()
                 plt.xlabel('Focus Position, counts')
-                plt.ylabel('Diameter (HFD)')
+                plt.ylabel('Diameter')
                 plt.title('Quadratic fit FAILED (raw data saved)')
                 self.plt_savefig(plt, focus_image_path + 'diameters_score.png')
             except Exception as e2:
@@ -1791,7 +1676,6 @@ class PueoStarCameraOperation:
         t0 = time.monotonic()
         focus_scores = []
         diameter_scores = []
-        hfd_scores = []
         measured_focus_positions = []
         count = 1
         focus_positions = np.linspace(focus_start_pos, focus_stop_pos, focus_step_count)
@@ -1902,14 +1786,6 @@ class PueoStarCameraOperation:
                 sigma_gauss=float(self.cfg.hyst_sigma_gauss),
                 sigma_floor=float(self.cfg.hyst_sigma_floor),
             )
-            
-            # flux-based HFD per blob
-            hfds = self.get_centroid_hfds(cleaned_img, sources_mask_u8)  # returns np.array or [-1]
-            if (hfds is None) or (hasattr(hfds, "__len__") and len(hfds) == 1 and float(hfds[0]) < 0):
-                hfd_score = 1e6
-            else:
-                hfd_score = float(np.median(hfds))
-            hfd_scores.append(hfd_score)
 
             # Apply mask to cleaned image for diameter measurement
             masked_image = cv2.bitwise_and(cleaned_img, cleaned_img, mask=sources_mask_u8)
@@ -2005,12 +1881,6 @@ class PueoStarCameraOperation:
             self.log.error(traceback.format_exception(e))
             logit(e, color='red')
             
-        # save HFD plot (uses measured positions if available) ---
-        try:
-            x_for_plot = np.asarray(measured_focus_positions, dtype=np.float64)
-            self.plot_hfd_curve(focus_image_path, x_for_plot, hfd_scores)
-        except Exception as e:
-            self.logit(f"WARNING: failed to save HFD plot: {e}")
 
         # --- Do NOT apply fitted focus; return to lab best focus instead ---
         final_focus_pos = self.cfg.lab_best_focus

@@ -475,8 +475,8 @@ class PueoStarCameraOperation:
         
         filtered = [cnt for cnt in contours
             if min_size <= cv2.contourArea(cnt) <= max_size]
-        #take largest 30 and take contours.
-        contours = sorted(filtered, key=cv2.contourArea, reverse=True)[:30]
+        #take largest 15 and take contours.
+        contours = sorted(filtered, key=cv2.contourArea, reverse=True)[:15]
 
         for cnt in contours:
             area = cv2.contourArea(cnt)

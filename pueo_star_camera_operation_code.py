@@ -1638,7 +1638,7 @@ class PueoStarCameraOperation:
             return [-1, ]
 
         min_size = self.cfg.img_min_size
-        max_size = self.cfg.img_max_size
+        max_size = self.cfg.img_max_size*3
 
         diameters = []
         for cnt in contours:

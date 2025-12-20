@@ -438,7 +438,7 @@ class SourceFinder:
         before_roi_clamp = int(np.count_nonzero(sources_mask_u8))
         
         # --- Clamp hysteresis sources mask to centered ROI (for centroiding) ---
-        ROI_KEEP_FRAC_X = 0.90
+        ROI_KEEP_FRAC_X = 0.80
         ROI_KEEP_FRAC_Y = 0.90
 
         h, w = sources_mask_u8.shape[:2]

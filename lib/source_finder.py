@@ -17,6 +17,22 @@ class SourceFinder:
         self.cfg = cfg
         self.log = logger or logging.getLogger("pueo")
         self.server = server
+        
+    @staticmethod
+    def _center_roi_view(arr, frac_x=1.0, frac_y=1.0):
+        """
+        Return a centered ROI view (no copy) and (x0, y0) offset.
+        """
+        h, w = arr.shape[:2]
+        fx = max(0.01, min(1.0, float(frac_x)))
+        fy = max(0.01, min(1.0, float(frac_y)))
+
+        roi_w = max(1, int(round(w * fx)))
+        roi_h = max(1, int(round(h * fy)))
+
+        x0 = (w - roi_w) // 2
+        y0 = (h - roi_h) // 2
+        return arr[y0:y0 + roi_h, x0:x0 + roi_w], (x0, y0)
 
     def threshold_with_noise(
             self,
@@ -429,22 +445,30 @@ class SourceFinder:
         #create simple mask for autogain autoexposure thresholding
         simple_sources_mask = residual_img > (float(self.cfg.hyst_k_low)*estimated_noise)
         simple_sources_mask_u8 = (simple_sources_mask.astype(np.uint8) * 255)
-        n_mask_pixels = np.count_nonzero(simple_sources_mask_u8)
+        
+        
+        # --- HARD-CODED center ROI for autogain/autoexposure percentile stats ---
+        ROI_FRAC_X = 0.60  # middle 60% of width
+        ROI_FRAC_Y = 0.60  # middle 60% of height
 
+        roi_mask_u8, _ = self._center_roi_view(simple_sources_mask_u8, ROI_FRAC_X, ROI_FRAC_Y)
+        n_mask_pixels = int(np.count_nonzero(roi_mask_u8))
 
         logit("Creating cleaned masked_image. Using hysteresis mask. For autogain/exposure.")
         masked_original_image = cv2.bitwise_and(img, img, mask=simple_sources_mask_u8)
-
+        
         # Compute p99.9 EXCLUDING saturated pixels (>= cfg.pixel_saturated_value_raw16).
         pixel_saturated_value = self.cfg.pixel_saturated_value_raw16
 
-        # Unmasked: p99.9 of valid (unsaturated) pixels
-        valid_original = img[img < pixel_saturated_value]
+        roi_img, _ = self._center_roi_view(img, ROI_FRAC_X, ROI_FRAC_Y)
+        roi_masked, _ = self._center_roi_view(masked_original_image, ROI_FRAC_X, ROI_FRAC_Y)
+
+        # Unmasked: p99.9 of valid (unsaturated) pixels in ROI
+        valid_original = roi_img[roi_img < pixel_saturated_value]
         if valid_original.size > 0:
             p999_original = np.percentile(valid_original, 99.9)
         else:
-            # Fallback: if everything is saturated, use full-array p99.9
-            p999_original = np.percentile(img, 99.9)
+            p999_original = np.percentile(roi_img, 99.9)
 
         # TODO: Create histogram!!!
         # Run: _clean_image_histogram in a thread (don't wait)
@@ -454,7 +478,11 @@ class SourceFinder:
             self.server.utils.meta['dtc'] = self.server.curr_img_dtc
             basename = self.server.curr_image_name
             target_path = self.cfg.inspection_path
-            histogram_filename = self.server.utils.create_image_histogram(cleaned_img, basename, target_path, postfix="_cleaned_image_histogram", title="Clean Image Histogram")
+            histogram_filename = self.server.utils.create_image_histogram(
+                cleaned_img, basename, target_path,
+                postfix="_cleaned_image_histogram",
+                title="Clean Image Histogram"
+            )
             self.server.utils.create_symlink(self.cfg.web_path, histogram_filename, 'last_inspection_histogram_cleaned_image.jpg')
             self.server.utils.meta['p999_value'] = -1
             self.log.debug(f'Histogram {histogram_filename} completed {get_dt(t0)}.')
@@ -462,15 +490,16 @@ class SourceFinder:
         # Launch the thread and detach it (don't wait)
         threading.Thread(target=_clean_image_histogram, daemon=True).start()
 
-        # Masked: p99.9 of valid (unsaturated) pixels
-        valid_masked = masked_original_image[masked_original_image < pixel_saturated_value]
+        # Masked: p99.9 of valid (unsaturated) pixels in ROI
+        valid_masked = roi_masked[roi_masked < pixel_saturated_value]
         if valid_masked.size > 0:
             p999_masked_original = np.percentile(valid_masked, 99.9)
         else:
-            p999_masked_original = np.percentile(masked_original_image, 99.9)
+            p999_masked_original = np.percentile(roi_masked, 99.9)
 
-        logit(f"p999_original (excl. saturated): {p999_original}")
-        logit(f"p999_masked_original (excl. saturated): {p999_masked_original}")
+        logit(f"p999_original (ROI excl. saturated): {p999_original}")
+        logit(f"p999_masked_original (ROI excl. saturated): {p999_masked_original}")
+        logit(f"n_mask_pixels (ROI): {n_mask_pixels}")
 
         # Defer trail/still decision to astrometry.py classifier; only honor explicit override
         use_trail_mode = bool(is_trail) if is_trail is not None else False

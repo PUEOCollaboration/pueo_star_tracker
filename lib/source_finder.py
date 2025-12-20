@@ -496,9 +496,9 @@ class SourceFinder:
         # Unmasked: p99.9 of valid (unsaturated) pixels in ROI
         valid_original = roi_img[roi_img < pixel_saturated_value]
         if valid_original.size > 0:
-            p999_original = np.percentile(valid_original, 99.9)
+            p999_original = np.percentile(valid_original, 99.95)
         else:
-            p999_original = np.percentile(roi_img, 99.9)
+            p999_original = np.percentile(roi_img, 99.95)
 
         # TODO: Create histogram!!!
         # Run: _clean_image_histogram in a thread (don't wait)
@@ -523,9 +523,9 @@ class SourceFinder:
         # Masked: p99.9 of valid (unsaturated) pixels in ROI
         valid_masked = roi_masked[roi_masked < pixel_saturated_value]
         if valid_masked.size > 0:
-            p999_masked_original = np.percentile(valid_masked, 99.9)
+            p999_masked_original = np.percentile(valid_masked, 99.95)
         else:
-            p999_masked_original = np.percentile(roi_masked, 99.9)
+            p999_masked_original = np.percentile(roi_masked, 99.95)
 
         logit(f"p999_original (ROI excl. saturated): {p999_original}")
         logit(f"p999_masked_original (ROI excl. saturated): {p999_masked_original}")

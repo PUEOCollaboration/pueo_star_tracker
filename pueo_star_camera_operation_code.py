@@ -1777,8 +1777,8 @@ class PueoStarCameraOperation:
             residual_img = self.sf.subtract_background(cleaned_img, final_local_levels)
 
             # --- Threshold using a single noise-scaled threshold (no hysteresis) ---
-            self.logit("Creating mask using single-threshold (k=5.0, no hysteresis) for autofocus.")
-            k_single = 5.0  # single k-sigma threshold for autofocus
+            self.logit("Creating mask using single-threshold (k=6.0, no hysteresis) for autofocus.")
+            k_single = 6.0  # single k-sigma threshold for autofocus
 
             sources_mask, sources_mask_u8 = self.sf.threshold_with_noise(
                 residual_img,

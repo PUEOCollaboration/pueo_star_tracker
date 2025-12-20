@@ -421,7 +421,7 @@ class SourceFinder:
 
         if return_partial_images:
             logit("Writing leveled_image.")
-            cv2.imwrite(os.path.join(partial_results_path, "residual_img.png"), residual_img)\
+            cv2.imwrite(os.path.join(partial_results_path, "residual_img.png"), residual_img)
 
         sources_mask, sources_mask_u8 = self.threshold_with_noise(
             residual_img,
@@ -526,7 +526,16 @@ class SourceFinder:
             p999_masked_original = np.percentile(valid_masked, 99.95)
         else:
             p999_masked_original = np.percentile(roi_masked, 99.95)
+            
+        # --- Optional: saturation/headroom stats (ROI) ---
+        n_sat_roi = int(np.count_nonzero(roi_img >= pixel_saturated_value))
+        sat_frac_roi = n_sat_roi / float(roi_img.size) if roi_img.size else 0.0
 
+        valid_roi = roi_img[roi_img < pixel_saturated_value]
+        max_valid_roi = int(valid_roi.max()) if valid_roi.size else int(roi_img.max())
+
+        logit(f"sat_frac_roi: {sat_frac_roi:.6g}  n_sat_roi: {n_sat_roi}")
+        logit(f"max_valid_roi: {max_valid_roi}  headroom: {int(pixel_saturated_value - max_valid_roi)} counts")
         logit(f"p999_original (ROI excl. saturated): {p999_original}")
         logit(f"p999_masked_original (ROI excl. saturated): {p999_masked_original}")
         logit(f"n_mask_pixels (ROI): {n_mask_pixels}")

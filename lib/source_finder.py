@@ -476,22 +476,36 @@ class SourceFinder:
         simple_sources_mask = residual_img > (float(self.cfg.hyst_k_low)*estimated_noise)
         simple_sources_mask_u8 = (simple_sources_mask.astype(np.uint8) * 255)
         
-        
-        # --- HARD-CODED center ROI for autogain/autoexposure percentile stats ---
-        ROI_FRAC_X = 0.60  # middle 60% of width
-        ROI_FRAC_Y = 0.60  # middle 60% of height
-
-        roi_mask_u8, _ = self._center_roi_view(simple_sources_mask_u8, ROI_FRAC_X, ROI_FRAC_Y)
-        n_mask_pixels = int(np.count_nonzero(roi_mask_u8))
-
-        logit("Creating cleaned masked_image. Using hysteresis mask. For autogain/exposure.")
+        # Apply simple mask to original image (for autogain/autoexposure masked percentile stats)
         masked_original_image = cv2.bitwise_and(img, img, mask=simple_sources_mask_u8)
-        
-        # Compute p99.9 EXCLUDING saturated pixels (>= cfg.pixel_saturated_value_raw16).
-        pixel_saturated_value = self.cfg.pixel_saturated_value_raw16
 
-        roi_img, _ = self._center_roi_view(img, ROI_FRAC_X, ROI_FRAC_Y)
-        roi_masked, _ = self._center_roi_view(masked_original_image, ROI_FRAC_X, ROI_FRAC_Y)
+        # Saturation threshold
+        pixel_saturated_value = self.cfg.pixel_saturated_value_raw16
+        
+        # Circle diameter = 85% of width, and ignore 5% top + 5% bottom.
+        ROI_CIRCLE_DIAM_FRAC_W = 0.85
+        ROI_STRIP_FRAC_Y = 0.05
+
+        h, w = img.shape[:2]
+        roi_stats_mask_u8 = np.zeros((h, w), dtype=np.uint8)
+
+        # 1) Big circle (allowed to clip at top/bottom)
+        cx, cy = w // 2, h // 2
+        r = int(round(0.5 * ROI_CIRCLE_DIAM_FRAC_W * w))
+        cv2.circle(roi_stats_mask_u8, (cx, cy), r, 255, thickness=-1)
+
+        # 2) Remove top/bottom strips
+        y0 = int(round(ROI_STRIP_FRAC_Y * h))
+        y1 = int(round((1.0 - ROI_STRIP_FRAC_Y) * h))
+        roi_stats_mask_u8[:y0, :] = 0
+        roi_stats_mask_u8[y1:, :] = 0
+
+        # Count simple-threshold mask pixels *inside* ROI (optional but consistent)
+        n_mask_pixels = int(np.count_nonzero((simple_sources_mask_u8 > 0) & (roi_stats_mask_u8 > 0)))
+
+        roi_img = img[roi_stats_mask_u8 > 0]
+        roi_masked = masked_original_image[roi_stats_mask_u8 > 0]
+
 
         # Unmasked: p99.9 of valid (unsaturated) pixels in ROI
         valid_original = roi_img[roi_img < pixel_saturated_value]

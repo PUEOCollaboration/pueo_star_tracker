@@ -1672,6 +1672,11 @@ class PueoStarCameraOperation:
         """
         focus_method: ['sequence_contrast', 'sequence_diameter', 'sequence_twostep']
         """
+        
+        # --- HARD-CODED center ROI for autofocus scoring ---
+        ROI_FRAC_X = 0.75  # middle 75% of width
+        ROI_FRAC_Y = 0.75  # middle 75% of height
+        
         # TODO: Implement sequence_twostep focus_method
         t0 = time.monotonic()
         focus_scores = []
@@ -1787,11 +1792,15 @@ class PueoStarCameraOperation:
                 sigma_floor=float(self.cfg.hyst_sigma_floor),
             )
 
-            # Apply mask to cleaned image for diameter measurement
-            masked_image = cv2.bitwise_and(cleaned_img, cleaned_img, mask=sources_mask_u8)
+            # Crop BOTH cleaned image and mask to the same ROI
+            roi_cleaned, _ = self.sf._center_roi_view(cleaned_img, ROI_FRAC_X, ROI_FRAC_Y)
+            roi_mask_u8, _ = self.sf._center_roi_view(sources_mask_u8, ROI_FRAC_X, ROI_FRAC_Y)
+
+            # Apply ROI mask to ROI cleaned image for diameter measurement
+            masked_image = cv2.bitwise_and(roi_cleaned, roi_cleaned, mask=roi_mask_u8)
 
             # Mask-based equivalent diameters
-            equiv_diameters = self.get_centroid_diameters(masked_image, is_array=True)
+            equiv_diameters = self.get_centroid_diameters(roi_mask_u8, is_array=True)
 
             if (
                     equiv_diameters is None or
@@ -1818,7 +1827,7 @@ class PueoStarCameraOperation:
             diameter_scores.append(diameter_score)
 
             # Edge-contrast metric on cleaned background-subtracted image
-            edge_score = self.focus_score_starfield_edge(cleaned_img, top_frac=1.0)
+            edge_score = self.focus_score_starfield_edge(roi_cleaned, top_frac=1.0)
             self.logit(f'Edge-contrast Focus score: {edge_score:.6g}')
 
             # Store for contrast-based autofocus (sequence_contrast)

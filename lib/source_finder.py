@@ -434,6 +434,36 @@ class SourceFinder:
             sigma_gauss=float(self.cfg.hyst_sigma_gauss),
             sigma_floor=float(self.cfg.hyst_sigma_floor),
         )
+        
+        before_roi_clamp = int(np.count_nonzero(sources_mask_u8))
+        
+        # --- Clamp hysteresis sources mask to centered ROI (for centroiding) ---
+        ROI_KEEP_FRAC_X = 0.90
+        ROI_KEEP_FRAC_Y = 0.90
+
+        h, w = sources_mask_u8.shape[:2]
+        roi_w = max(1, int(round(w * ROI_KEEP_FRAC_X)))
+        roi_h = max(1, int(round(h * ROI_KEEP_FRAC_Y)))
+        x0 = (w - roi_w) // 2
+        y0 = (h - roi_h) // 2
+        x1 = x0 + roi_w
+        y1 = y0 + roi_h
+        
+        logit(f"ROI clamp box: x[{x0}:{x1}] y[{y0}:{y1}] (keep {ROI_KEEP_FRAC_X*100:.1f}% x {ROI_KEEP_FRAC_Y*100:.1f}%)")
+
+        # Zero out detections outside ROI (in-place)
+        sources_mask_u8[:y0, :] = 0
+        sources_mask_u8[y1:, :] = 0
+        sources_mask_u8[:, :x0] = 0
+        sources_mask_u8[:, x1:] = 0
+        
+        after_roi_clamp = int(np.count_nonzero(sources_mask_u8))
+        logit(f"hyst mask pixels before/after ROI clamp: {before_roi_clamp} -> {after_roi_clamp}  "
+        f"({(100.0*after_roi_clamp/max(before_roi_clamp,1)):.1f}% kept)")
+
+        # Keep the boolean mask consistent with the u8 mask
+        sources_mask = (sources_mask_u8 > 0)
+
         if return_partial_images:
             logit("writing hysteresis sources mask to disk.")
             cv2.imwrite(os.path.join(partial_results_path, "hyst_sources_mask.png"), sources_mask_u8)

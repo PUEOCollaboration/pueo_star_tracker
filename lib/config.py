@@ -183,6 +183,18 @@ class Config(Dynamic):
     level_filter_type = 'median'
     ring_filter_type = 'mean'
 
+    # Centroiding ROI clamp (after hysteresis mask) settings:
+    roi_keep_frac_x = 0.80
+    roi_keep_frac_y = 0.90
+
+    # Autogain/autoexposure ROI (center-rectangle version)
+    roi_frac_x = 0.60
+    roi_frac_y = 0.60
+
+    # Autogain/autoexposure ROI (composite circle + top/bottom strip version)
+    roi_circle_diam_frac_w = 0.85
+    roi_strip_frac_y = 0.05
+
     # [STARTRACKER]
     star_tracker_body_rates_max_distance = 100
     focal_ratio = 22692.68
@@ -635,6 +647,18 @@ class Config(Dynamic):
         self.level_filter = self._config.getint('SOURCES', 'level_filter', fallback=self.level_filter)
         self.level_filter_type = self._config.get('SOURCES', 'level_filter_type', fallback=self.level_filter_type)
         self.ring_filter_type = self._config.get('SOURCES', 'ring_filter_type', fallback=self.ring_filter_type)
+
+        # Centroiding ROI clamp (after hysteresis mask) settings:
+        self.roi_keep_frac_x = self._config.getfloat('SOURCES', 'roi_keep_frac_x', fallback=self.roi_keep_frac_x)
+        self.roi_keep_frac_y = self._config.getfloat('SOURCES', 'roi_keep_frac_y', fallback=self.roi_keep_frac_y)
+
+        # Autogain/autoexposure ROI (center-rectangle version)
+        self.roi_frac_x = self._config.getfloat('SOURCES', 'roi_frac_x', fallback=self.roi_frac_x)
+        self.roi_frac_y = self._config.getfloat('SOURCES', 'roi_frac_y', fallback=self.roi_frac_y)
+
+        # Autogain/autoexposure ROI (composite circle + top/bottom strip version)
+        self.roi_circle_diam_frac_w = self._config.getfloat('SOURCES', 'roi_circle_diam_frac_w', fallback=self.roi_circle_diam_frac_w)
+        self.roi_strip_frac_y = self._config.getfloat('SOURCES', 'roi_strip_frac_y', fallback=self.roi_strip_frac_y)
 
         # [STARTRACKER]
         self.star_tracker_body_rates_max_distance = self._config.getint('STARTRACKER', 'star_tracker_body_rates_max_distance', fallback=self.star_tracker_body_rates_max_distance)

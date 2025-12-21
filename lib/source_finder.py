@@ -19,7 +19,7 @@ class SourceFinder:
         self.server = server
         
     @staticmethod
-    def _center_roi_view(arr, frac_x=1.0, frac_y=1.0):
+    def center_roi_view(arr, frac_x=1.0, frac_y=1.0):
         """
         Return a centered ROI view (no copy) and (x0, y0) offset.
         """
@@ -438,18 +438,18 @@ class SourceFinder:
         before_roi_clamp = int(np.count_nonzero(sources_mask_u8))
         
         # --- Clamp hysteresis sources mask to centered ROI (for centroiding) ---
-        ROI_KEEP_FRAC_X = 0.80
-        ROI_KEEP_FRAC_Y = 0.90
+        roi_keep_frac_x = self.cfg.roi_keep_frac_x  # 0.80
+        roi_keep_frac_y = self.cfg.roi_keep_frac_y  # 0.90
 
         h, w = sources_mask_u8.shape[:2]
-        roi_w = max(1, int(round(w * ROI_KEEP_FRAC_X)))
-        roi_h = max(1, int(round(h * ROI_KEEP_FRAC_Y)))
+        roi_w = max(1, int(round(w * roi_keep_frac_x)))
+        roi_h = max(1, int(round(h * roi_keep_frac_y)))
         x0 = (w - roi_w) // 2
         y0 = (h - roi_h) // 2
         x1 = x0 + roi_w
         y1 = y0 + roi_h
         
-        logit(f"ROI clamp box: x[{x0}:{x1}] y[{y0}:{y1}] (keep {ROI_KEEP_FRAC_X*100:.1f}% x {ROI_KEEP_FRAC_Y*100:.1f}%)")
+        logit(f"ROI clamp box: x[{x0}:{x1}] y[{y0}:{y1}] (keep {roi_keep_frac_x*100:.1f}% x {roi_keep_frac_y*100:.1f}%)")
 
         # Zero out detections outside ROI (in-place)
         sources_mask_u8[:y0, :] = 0
@@ -483,20 +483,20 @@ class SourceFinder:
         pixel_saturated_value = self.cfg.pixel_saturated_value_raw16
         
         # Circle diameter = 85% of width, and ignore 5% top + 5% bottom.
-        ROI_CIRCLE_DIAM_FRAC_W = 0.85
-        ROI_STRIP_FRAC_Y = 0.05
+        roi_circle_diam_frac_w = self.cfg.roi_circle_diam_frac_w  #  0.85
+        roi_strip_frac_y = self.cfg.roi_strip_frac_y  # 0.05
 
         h, w = img.shape[:2]
         roi_stats_mask_u8 = np.zeros((h, w), dtype=np.uint8)
 
         # 1) Big circle (allowed to clip at top/bottom)
         cx, cy = w // 2, h // 2
-        r = int(round(0.5 * ROI_CIRCLE_DIAM_FRAC_W * w))
+        r = int(round(0.5 * roi_circle_diam_frac_w * w))
         cv2.circle(roi_stats_mask_u8, (cx, cy), r, 255, thickness=-1)
 
         # 2) Remove top/bottom strips
-        y0 = int(round(ROI_STRIP_FRAC_Y * h))
-        y1 = int(round((1.0 - ROI_STRIP_FRAC_Y) * h))
+        y0 = int(round(roi_strip_frac_y * h))
+        y1 = int(round((1.0 - roi_strip_frac_y) * h))
         roi_stats_mask_u8[:y0, :] = 0
         roi_stats_mask_u8[y1:, :] = 0
 

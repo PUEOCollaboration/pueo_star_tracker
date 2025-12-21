@@ -1672,10 +1672,9 @@ class PueoStarCameraOperation:
         """
         focus_method: ['sequence_contrast', 'sequence_diameter', 'sequence_twostep']
         """
-        
-        # --- HARD-CODED center ROI for autofocus scoring ---
-        ROI_FRAC_X = 0.75  # middle 75% of width
-        ROI_FRAC_Y = 0.75  # middle 75% of height
+
+        roi_frac_x = self.cfg.roi_frac_x  # 0.75  # middle 75% of width
+        roi_frac_y = self.cfg.roi_frac_y  # 0.75  # middle 75% of height
         
         # TODO: Implement sequence_twostep focus_method
         t0 = time.monotonic()
@@ -1793,8 +1792,8 @@ class PueoStarCameraOperation:
             )
 
             # Crop BOTH cleaned image and mask to the same ROI
-            roi_cleaned, _ = self.sf._center_roi_view(cleaned_img, ROI_FRAC_X, ROI_FRAC_Y)
-            roi_mask_u8, _ = self.sf._center_roi_view(sources_mask_u8, ROI_FRAC_X, ROI_FRAC_Y)
+            roi_cleaned, _ = self.sf.center_roi_view(cleaned_img, roi_frac_x, roi_frac_y)
+            roi_mask_u8, _ = self.sf.center_roi_view(sources_mask_u8, roi_frac_x, roi_frac_y)
 
             # Apply ROI mask to ROI cleaned image for diameter measurement
             masked_image = cv2.bitwise_and(roi_cleaned, roi_cleaned, mask=roi_mask_u8)

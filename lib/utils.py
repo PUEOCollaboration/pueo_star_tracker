@@ -280,6 +280,39 @@ class Utils:
         cv2.putText(overlay_image, message, (text_x + 2, text_y + 2), font, fontsize, shadow_color, font_thickness, line_type)
         cv2.putText(overlay_image, message, (text_x, text_y), font, fontsize, font_color, font_thickness, line_type)
 
+        # --- Optional: draw ROI overlay(s) published by SourceFinder ---
+        rois = Utils.meta.get("overlay_rois", None)
+        if rois:
+            h, w = overlay_image.shape[:2]
+            color = (0, 255, 255)  # yellow
+            thickness = 2
+
+            # (A) Composite stats ROI: circle + strip bounds
+            if "stats_circle_diam_frac_w" in rois and "stats_strip_frac_y" in rois:
+                diam_frac_w = float(rois["stats_circle_diam_frac_w"])
+                strip_frac_y = float(rois["stats_strip_frac_y"])
+
+                cx, cy = w // 2, h // 2
+                r = int(round(0.5 * diam_frac_w * w))
+                y_top = int(round(strip_frac_y * h))
+                y_bot = int(round((1.0 - strip_frac_y) * h))
+
+                cv2.circle(overlay_image, (cx, cy), r, color, thickness, cv2.LINE_AA)
+                cv2.line(overlay_image, (0, y_top), (w - 1, y_top), color, thickness, cv2.LINE_AA)
+                cv2.line(overlay_image, (0, y_bot), (w - 1, y_bot), color, thickness, cv2.LINE_AA)
+
+            # (B) Centroiding clamp ROI: centered rectangle
+            if "keep_rect_frac_x" in rois and "keep_rect_frac_y" in rois:
+                fx = float(rois["keep_rect_frac_x"])
+                fy = float(rois["keep_rect_frac_y"])
+                rw = max(1, int(round(w * fx)))
+                rh = max(1, int(round(h * fy)))
+                x0 = (w - rw) // 2
+                y0 = (h - rh) // 2
+                x1 = x0 + rw
+                y1 = y0 + rh
+                cv2.rectangle(overlay_image, (x0, y0), (x1, y1), color, thickness, cv2.LINE_AA)
+
         return overlay_image
 
     def display_overlay_info(self, img, timestamp_string, astrometry, omega, display=True, image_filename=None, final_path='./output', partial_results_path="./partial_results", scale_factors=(8, 8), resize_mode='downscale', png_compression=0, is_save=True, is_downsize=True):
@@ -463,7 +496,8 @@ class Utils:
             print("Image is already monochrome or not a dummy RGB.")
             return img  # Return unchanged if not dummy RGB
 
-    def save_as_jpeg_with_stretch(self, img_16bit, save_mode, jpeg_path, quality=80, lower_percentile=1, upper_percentile=99):
+    def save_as_jpeg_with_stretch(self, img_16bit, save_mode, jpeg_path, quality=80, lower_percentile=1, upper_percentile=99,
+                              overlay=None, downscale_factors=(1.0, 1.0)):
         """
         Convert 16-bit monochrome ASI image to 8-bit JPEG with contrast stretching.
 
@@ -516,6 +550,8 @@ class Utils:
         # Save Image
         success = True
         if save_mode == "stretch":
+            if overlay is not None or Utils.meta.get("overlay_rois") is not None:
+                img_8bit = self.overlay_raw(img_8bit, downscale_factors, overlay or "")
             success = cv2.imwrite(temp_path, img_8bit, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
         elif save_mode == "normal":
             success = cv2.imwrite(temp_path, img_16bit, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
@@ -760,7 +796,7 @@ class Utils:
         plt.close() # Closing, dropping a plot
         return filename
 
-    def image_resize(self, img, scale_factors, image_filename, overlay=None, resize_mode='downscale',
+    def self.save(self, img, scale_factors, image_filename, overlay=None, resize_mode='downscale',
                      png_compression=0,
                      is_inspection=False, jpeg_settings: dict | None = None,
                      is_save_jp2=False, is_save=True):
@@ -873,7 +909,8 @@ class Utils:
                 # Clear and explicit naming
                 #  -> last_inspection_image_normal.jpg or last_inspection_image_stretch.jpg
                 symlink_name = f"{symlink_stem}_{save_mode}{symlink_ext}" if len(save_modes) > 1 else symlink_base_name
-                self.save_as_jpeg_with_stretch(resized_img, save_mode, jpeg_filename, quality, lower_percentile, upper_percentile)
+                self.save_as_jpeg_with_stretch(resized_img, save_mode, jpeg_filename, quality, lower_percentile, upper_percentile,
+                               overlay=overlay, downscale_factors=scale_factors)
                 # Create symlink to the latest image
                 self.create_symlink(web_path, jpeg_filename, symlink_name)
 

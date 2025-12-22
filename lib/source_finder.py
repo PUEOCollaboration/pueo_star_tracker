@@ -438,8 +438,9 @@ class SourceFinder:
         before_roi_clamp = int(np.count_nonzero(sources_mask_u8))
         
         # --- Clamp hysteresis sources mask to centered ROI (for centroiding) ---
-        roi_keep_frac_x = self.cfg.roi_keep_frac_x  # 0.80
-        roi_keep_frac_y = self.cfg.roi_keep_frac_y  # 0.90
+        roi_keep_frac_x = float(self.cfg.roi_keep_frac_x)  # e.g. 0.90
+        roi_keep_frac_y = float(self.cfg.roi_keep_frac_y)  # e.g. 0.90
+
 
         h, w = sources_mask_u8.shape[:2]
         roi_w = max(1, int(round(w * roi_keep_frac_x)))
@@ -483,8 +484,21 @@ class SourceFinder:
         pixel_saturated_value = self.cfg.pixel_saturated_value_raw16
         
         # Circle diameter = 85% of width, and ignore 5% top + 5% bottom.
-        roi_circle_diam_frac_w = self.cfg.roi_circle_diam_frac_w  #  0.85
-        roi_strip_frac_y = self.cfg.roi_strip_frac_y  # 0.05
+        roi_circle_diam_frac_w = float(self.cfg.roi_circle_diam_frac_w)  # e.g. 0.85
+        roi_strip_frac_y = float(self.cfg.roi_strip_frac_y)              # e.g. 0.05
+
+        
+        # Publish ROI params so utils.overlay_raw() can draw them
+        if self.server is not None and self.server.utils is not None:
+            self.server.utils.meta["overlay_rois"] = {
+                # Composite ROI used for p999 stats
+                "stats_circle_diam_frac_w": float(roi_circle_diam_frac_w),
+                "stats_strip_frac_y": float(roi_strip_frac_y),
+
+                # ROI clamp used for centroiding (already computed above)
+                "keep_rect_frac_x": float(roi_keep_frac_x),
+                "keep_rect_frac_y": float(roi_keep_frac_y),
+            }
 
         h, w = img.shape[:2]
         roi_stats_mask_u8 = np.zeros((h, w), dtype=np.uint8)

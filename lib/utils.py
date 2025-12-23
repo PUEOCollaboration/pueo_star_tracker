@@ -796,7 +796,7 @@ class Utils:
         plt.close() # Closing, dropping a plot
         return filename
 
-    def save(self, img, scale_factors, image_filename, overlay=None, resize_mode='downscale',
+    def image_resize(self, img, scale_factors, image_filename, overlay=None, resize_mode='downscale',
                      png_compression=0,
                      is_inspection=False, jpeg_settings: dict | None = None,
                      is_save_jp2=False, is_save=True):

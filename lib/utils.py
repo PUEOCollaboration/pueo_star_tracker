@@ -1268,7 +1268,7 @@ if __name__ == '__main__':
     ts = Utils.reparse_timestamp(ts_orig)
     print(f'{ts_orig} --> {ts}')
 
-    class TestCofig:
+    class TestConfig:
         """Test CFG"""
         # Centroiding ROI clamp (after hysteresis mask) settings:
         roi_keep_frac_x = 0.80
@@ -1285,7 +1285,7 @@ if __name__ == '__main__':
         # Enables adding rois overlay
         overlay_rois = True
 
-    u = Utils(cfg=TestCofig())
+    u = Utils(cfg=TestConfig())
     u.test_overlay_roi()
 
 

@@ -513,9 +513,9 @@ class SourceFinder:
         # Unmasked: p99.9 of valid (unsaturated) pixels in ROI
         valid_original = roi_img[roi_img < pixel_saturated_value]
         if valid_original.size > 0:
-            p999_original = np.percentile(valid_original, 99.95)
+            p999_original = np.percentile(valid_original, self.cfg.percentile_threshold)  # percentile_threshold = 99.95
         else:
-            p999_original = np.percentile(roi_img, 99.95)
+            p999_original = np.percentile(roi_img, self.cfg.percentile_threshold)
 
         # TODO: Create histogram!!!
         # Run: _clean_image_histogram in a thread (don't wait)

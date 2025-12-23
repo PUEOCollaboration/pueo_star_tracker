@@ -133,6 +133,9 @@ class Config(Dynamic):
     autogain_mode = 'gain' # gain or both
     autogain_desired_max_pixel_value = 32767
 
+    # Autogain/Autoexposure target threshold level
+    percentile_threshold = 99.95
+
     # Preferred "center" gain when exposure changes
     autogain_mid_gain_setting = 300
 
@@ -547,6 +550,8 @@ class Config(Dynamic):
         self.min_exposure_setting = self._config.getint('LENS_FOCUS_CONSTANTS', 'min_exposure_setting', fallback=self.min_exposure_setting)
 
         self.autogain_desired_max_pixel_value = self._config.getint('LENS_FOCUS_CONSTANTS', 'autogain_desired_max_pixel_value', fallback=self.autogain_desired_max_pixel_value)
+
+        self.percentile_threshold = self._config.getfloat('LENS_FOCUS_CONSTANTS', 'percentile_threshold', fallback=self.percentile_threshold)
 
         self.lab_best_aperture_position = self._config.getint('LENS_FOCUS_CONSTANTS', 'lab_best_aperture_position', fallback=self.lab_best_aperture_position)
         self.lab_best_focus = self._config.getint('LENS_FOCUS_CONSTANTS', 'lab_best_focus', fallback=self.lab_best_focus)

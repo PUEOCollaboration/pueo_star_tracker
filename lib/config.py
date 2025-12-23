@@ -195,6 +195,9 @@ class Config(Dynamic):
     roi_circle_diam_frac_w = 0.85
     roi_strip_frac_y = 0.05
 
+    # Include overlay of rois
+    overlay_rois = True
+
     # [STARTRACKER]
     star_tracker_body_rates_max_distance = 100
     focal_ratio = 22692.68
@@ -659,6 +662,9 @@ class Config(Dynamic):
         # Autogain/autoexposure ROI (composite circle + top/bottom strip version)
         self.roi_circle_diam_frac_w = self._config.getfloat('SOURCES', 'roi_circle_diam_frac_w', fallback=self.roi_circle_diam_frac_w)
         self.roi_strip_frac_y = self._config.getfloat('SOURCES', 'roi_strip_frac_y', fallback=self.roi_strip_frac_y)
+
+        # Include overlay rois
+        self.overlay_rois = self._config.getboolean('SOURCES', 'overlay_rois', fallback=self.overlay_rois)
 
         # [STARTRACKER]
         self.star_tracker_body_rates_max_distance = self._config.getint('STARTRACKER', 'star_tracker_body_rates_max_distance', fallback=self.star_tracker_body_rates_max_distance)

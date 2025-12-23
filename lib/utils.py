@@ -224,8 +224,8 @@ class Utils:
             # print(f"Invalid timestamp format: {timestamp_str}")
             return timestamp_str
 
-    @staticmethod
-    def overlay_raw(img, downscale_factors, message):
+
+    def overlay_raw(self, img, downscale_factors, message):
         """
         Add an overlay to the image with a timestamp and a message.
 
@@ -281,43 +281,123 @@ class Utils:
         cv2.putText(overlay_image, message, (text_x, text_y), font, fontsize, font_color, font_thickness, line_type)
 
         # --- Optional: draw ROI overlay(s) published by SourceFinder ---
-        rois = Utils.meta.get("overlay_rois", None)
-        if rois:
-            h, w = overlay_image.shape[:2]
-            color = (0, 255, 255)  # yellow
-            thickness = 2
-
-            # (A) Composite stats ROI: circle + strip bounds
-            if "stats_circle_diam_frac_w" in rois and "stats_strip_frac_y" in rois:
-                diam_frac_w = float(rois["stats_circle_diam_frac_w"])
-                strip_frac_y = float(rois["stats_strip_frac_y"])
-
-                cx, cy = w // 2, h // 2
-                r = int(round(0.5 * diam_frac_w * w))
-                y_top = int(round(strip_frac_y * h))
-                y_bot = int(round((1.0 - strip_frac_y) * h))
-
-                cv2.circle(overlay_image, (cx, cy), r, color, thickness, cv2.LINE_AA)
-                cv2.line(overlay_image, (0, y_top), (w - 1, y_top), color, thickness, cv2.LINE_AA)
-                cv2.line(overlay_image, (0, y_bot), (w - 1, y_bot), color, thickness, cv2.LINE_AA)
-
-            # (B) Centroiding clamp ROI: centered rectangle
-            if "keep_rect_frac_x" in rois and "keep_rect_frac_y" in rois:
-                fx = float(rois["keep_rect_frac_x"])
-                fy = float(rois["keep_rect_frac_y"])
-                rw = max(1, int(round(w * fx)))
-                rh = max(1, int(round(h * fy)))
-                x0 = (w - rw) // 2
-                y0 = (h - rh) // 2
-                x1 = x0 + rw
-                y1 = y0 + rh
-                cv2.rectangle(overlay_image, (x0, y0), (x1, y1), color, thickness, cv2.LINE_AA)
+        self.overlay_rois(overlay_image)
 
         return overlay_image
 
-    def display_overlay_info(self, img, timestamp_string, astrometry, omega, display=True, image_filename=None, final_path='./output', partial_results_path="./partial_results", scale_factors=(8, 8), resize_mode='downscale', png_compression=0, is_save=True, is_downsize=True):
-        """Displays text overlay information about astrometry on output image.
+    def overlay_rois(self, image, is_inspection=False):
         """
+        Draw ROI outlines on the input image.
+
+        This function renders two independent Region-of-Interest (ROI) outlines:
+          1) A centered rectangular ROI defined by fractional width/height
+             configuration parameters.
+          2) A vertically clipped circular ROI. The clipped circle is rendered
+             as a fully closed outline consisting of:
+               - Left and right circular arcs
+               - Horizontal closure segments at the top and bottom clip limits
+
+        The geometry is computed analytically to avoid rasterization and clipping
+        artifacts. Only outline geometry is drawn:
+          - No filled regions
+          - No shading or transparency
+          - No construction or guide lines
+
+        Parameters
+        ----------
+        image : np.ndarray
+            Input image in BGR format. The image is modified in place.
+        is_inspection : bool
+            Used to diferential colors for inspection images
+        """
+
+        if not self.cfg.overlay_rois:
+            return
+
+        try:
+            h, w = image.shape[:2]
+
+            if is_inspection:
+                rect_color = (255, 0, 0)  # blue
+                oval_color = (127, 255, 0)  # mix
+            else:
+                rect_color = (255, 0, 0)   # blue
+                oval_color = (0, 255, 255) # yellow
+            thickness = 2
+
+            # ------------------------------------------------------------------
+            # ROI 1: centered rectangle
+            # ------------------------------------------------------------------
+            fx = self.cfg.roi_keep_frac_x
+            fy = self.cfg.roi_keep_frac_y
+
+            rw = max(1, int(round(w * fx)))
+            rh = max(1, int(round(h * fy)))
+            x0 = (w - rw) // 2
+            y0 = (h - rh) // 2
+            x1 = x0 + rw
+            y1 = y0 + rh
+
+            cv2.rectangle(image, (x0, y0), (x1, y1),
+                          rect_color, thickness, cv2.LINE_AA)
+
+            # ------------------------------------------------------------------
+            # ROI 2: clipped circle outline (fully closed)
+            # ------------------------------------------------------------------
+            diam_frac_w = self.cfg.roi_circle_diam_frac_w
+            strip_frac_y = self.cfg.roi_strip_frac_y
+
+            cx, cy = w // 2, h // 2
+            r = int(round(0.5 * diam_frac_w * w))
+
+            y_top = int(round(strip_frac_y * h))
+            y_bot = int(round((1.0 - strip_frac_y) * h))
+
+            # --- Draw left/right arcs as polyline ---
+            pts = []
+            for y in range(y_top, y_bot + 1):
+                dy = y - cy
+                v = r * r - dy * dy
+                if v <= 0:
+                    continue
+                dx = int(round(np.sqrt(v)))
+                pts.append((cx - dx, y))
+                pts.append((cx + dx, y))
+
+            # Sort to form a continuous outline
+            left = sorted(pts[::2], key=lambda p: p[1])
+            right = sorted(pts[1::2], key=lambda p: p[1], reverse=True)
+            arc_pts = np.array(left + right, dtype=np.int32)
+
+            cv2.polylines(
+                image,
+                [arc_pts],
+                isClosed=False,
+                color=oval_color,
+                thickness=thickness,
+                lineType=cv2.LINE_AA,
+            )
+
+            # --- Draw horizontal closure segments ---
+            for y in (y_top, y_bot):
+                dy = y - cy
+                v = r * r - dy * dy
+                if v > 0:
+                    dx = int(round(np.sqrt(v)))
+                    cv2.line(
+                        image,
+                        (cx - dx, y),
+                        (cx + dx, y),
+                        oval_color,
+                        thickness,
+                        cv2.LINE_AA,
+                    )
+
+        except Exception as e:
+            self.log.error(f"Error adding rois overlay: {e}")
+
+    def display_overlay_info(self, img, timestamp_string, astrometry, omega, display=True, image_filename=None, final_path='./output', partial_results_path="./partial_results", scale_factors=(8, 8), resize_mode='downscale', png_compression=0, is_save=True, is_downsize=True):
+        """Displays text overlay information about astrometry on output image - used on the final overlay image (foi)."""
 
         # Normalize back to uint8 if the image is float
         if np.issubdtype(img.dtype, np.uint16):
@@ -421,6 +501,9 @@ class Utils:
             cv2.putText(overlay_image, f"Not Solved ({solver})", (text_x, text_y), font, font_size, font_color, font_thickness, line_type)
             text_y += text_size[1] + line_spacing  # Adjust Y-coordinate for the next text
 
+        # Add rois overlay if enabled in config via overlay_rois = True
+        self.overlay_rois(overlay_image)
+
         # Save image
         # foi_name = f"./partial_results/Final_overlay_image_{timestamp_string}.png"
         foi_filename = os.path.join(partial_results_path, f"Final_overlay_image_{timestamp_string}.png")
@@ -496,8 +579,7 @@ class Utils:
             print("Image is already monochrome or not a dummy RGB.")
             return img  # Return unchanged if not dummy RGB
 
-    def save_as_jpeg_with_stretch(self, img_16bit, save_mode, jpeg_path, quality=80, lower_percentile=1, upper_percentile=99,
-                              overlay=None, downscale_factors=(1.0, 1.0)):
+    def save_as_jpeg_with_stretch(self, img_16bit, save_mode, jpeg_path, quality=80, lower_percentile=1, upper_percentile=99):
         """
         Convert 16-bit monochrome ASI image to 8-bit JPEG with contrast stretching.
 
@@ -550,10 +632,10 @@ class Utils:
         # Save Image
         success = True
         if save_mode == "stretch":
-            if overlay is not None or Utils.meta.get("overlay_rois") is not None:
-                img_8bit = self.overlay_raw(img_8bit, downscale_factors, overlay or "")
+            self.overlay_rois(img_8bit, is_inspection=True)
             success = cv2.imwrite(temp_path, img_8bit, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
         elif save_mode == "normal":
+            self.overlay_rois(img_16bit)
             success = cv2.imwrite(temp_path, img_16bit, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
         if not success:
             logit(f"Error saving image to {temp_path}", color="red")
@@ -909,8 +991,7 @@ class Utils:
                 # Clear and explicit naming
                 #  -> last_inspection_image_normal.jpg or last_inspection_image_stretch.jpg
                 symlink_name = f"{symlink_stem}_{save_mode}{symlink_ext}" if len(save_modes) > 1 else symlink_base_name
-                self.save_as_jpeg_with_stretch(resized_img, save_mode, jpeg_filename, quality, lower_percentile, upper_percentile,
-                               overlay=overlay, downscale_factors=scale_factors)
+                self.save_as_jpeg_with_stretch(resized_img, save_mode, jpeg_filename, quality, lower_percentile, upper_percentile)
                 # Create symlink to the latest image
                 self.create_symlink(web_path, jpeg_filename, symlink_name)
 
@@ -1165,9 +1246,47 @@ class Utils:
             # If we can't check space, assume it's okay
             return True
 
+    def test_overlay_roi(self):
+        # Ensure output directory exists
+        os.makedirs("output", exist_ok=True)
+
+        # Load the test image
+        input_path = "output/test_image.png"
+        image = cv2.imread(input_path)
+
+        # Apply ROI overlay
+        self.overlay_rois(image)
+        overlay_image = image
+
+        # Save the result
+        output_path = "output/test_image_overlay.png"
+        success = cv2.imwrite(output_path, overlay_image)
+
+
 if __name__ == '__main__':
     ts_orig = '250106_094041.794214'
-    ts = Utils().reparse_timestamp(ts_orig)
+    ts = Utils.reparse_timestamp(ts_orig)
     print(f'{ts_orig} --> {ts}')
+
+    class TestCofig:
+        """Test CFG"""
+        # Centroiding ROI clamp (after hysteresis mask) settings:
+        roi_keep_frac_x = 0.80
+        roi_keep_frac_y = 0.90
+
+        # Autogain/autoexposure ROI (center-rectangle version)
+        roi_frac_x = 0.60
+        roi_frac_y = 0.60
+
+        # Autogain/autoexposure ROI (composite circle + top/bottom strip version)
+        roi_circle_diam_frac_w = 0.85
+        roi_strip_frac_y = 0.05
+
+        # Enables adding rois overlay
+        overlay_rois = True
+
+    u = Utils(cfg=TestCofig())
+    u.test_overlay_roi()
+
 
 # Last line

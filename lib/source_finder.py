@@ -1,4 +1,6 @@
 import os
+from contextlib import suppress
+
 import cv2
 import numpy as np
 from astropy.stats import sigma_clipped_stats
@@ -486,19 +488,6 @@ class SourceFinder:
         # Circle diameter = 85% of width, and ignore 5% top + 5% bottom.
         roi_circle_diam_frac_w = float(self.cfg.roi_circle_diam_frac_w)  # e.g. 0.85
         roi_strip_frac_y = float(self.cfg.roi_strip_frac_y)              # e.g. 0.05
-
-        
-        # Publish ROI params so utils.overlay_raw() can draw them
-        if self.server is not None and self.server.utils is not None:
-            self.server.utils.meta["overlay_rois"] = {
-                # Composite ROI used for p999 stats
-                "stats_circle_diam_frac_w": float(roi_circle_diam_frac_w),
-                "stats_strip_frac_y": float(roi_strip_frac_y),
-
-                # ROI clamp used for centroiding (already computed above)
-                "keep_rect_frac_x": float(roi_keep_frac_x),
-                "keep_rect_frac_y": float(roi_keep_frac_y),
-            }
 
         h, w = img.shape[:2]
         roi_stats_mask_u8 = np.zeros((h, w), dtype=np.uint8)

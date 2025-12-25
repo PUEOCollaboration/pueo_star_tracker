@@ -281,6 +281,7 @@ class Config(Dynamic):
     raw_scale_factor_y = 8.0
     raw_scale_factors = (raw_scale_factor_x, raw_scale_factor_y)
 
+    foi_images_keep = 200
     foi_resize_mode = 'downscale'
     foi_scale_factor_x = 4.0
     foi_scale_factor_y = 4.0
@@ -360,6 +361,7 @@ class Config(Dynamic):
     sd_card_path = 'sd_card_path/'
 
     final_path = 'output/'
+    final_path_daily = False
 
     calibration_params_file = 'calibration_params_best.txt'
     gui_images_path = 'images'
@@ -787,6 +789,7 @@ class Config(Dynamic):
         self.raw_scale_factor_y = self._config.getfloat('IMAGES', 'raw_scale_factor_y', fallback=self.raw_scale_factor_y)
         self.raw_scale_factors = (self.raw_scale_factor_x, self.raw_scale_factor_y)
 
+        self.foi_images_keep = self._config.getint('IMAGES', 'foi_images_keep', fallback=self.foi_images_keep)
         self.foi_resize_mode = self._config.get('IMAGES', 'foi_resize_mode', fallback=self.foi_resize_mode)
         self.foi_scale_factor_x = self._config.getfloat('IMAGES', 'foi_scale_factor_x', fallback=self.foi_scale_factor_x)
         self.foi_scale_factor_y = self._config.getfloat('IMAGES', 'foi_scale_factor_y', fallback=self.foi_scale_factor_y)
@@ -827,6 +830,7 @@ class Config(Dynamic):
         self.ssd_path = self._config.get('PATHS', 'ssd_path', fallback=self.ssd_path)
         self.sd_card_path = self._config.get('PATHS', 'sd_card_path', fallback=self.sd_card_path)
         self.final_path = self._config.get('PATHS', 'final_path', fallback=self.final_path)
+        self.final_path_daily = self._config.getboolean('PATHS', 'final_path_daily', fallback=self.final_path_daily)
 
         self.calibration_params_file = self._config.get('PATHS', 'calibration_params_file', fallback=self.calibration_params_file)
         self.gui_images_path = self._config.get('PATHS', 'gui_images_path', fallback=self.gui_images_path)

@@ -707,7 +707,7 @@ class Utils:
             self.log.error(f"Unexpected error: {e}")
             return False
 
-    def delete_trash(self,
+    def delete_trash_old(self,
         trash: Union[str, List[Tuple[float, str]]],
         ext: str = '.txt',
         keep: int = 5
@@ -768,7 +768,74 @@ class Utils:
             except OSError as e:
                 self.log.debug(f"Error deleting {file}: {e}")
 
-    import os
+    def delete_trash(self,
+                     trash: Union[str, List[Tuple[float, str]]],
+                     ext: Union[str, List[str]] = '.txt',
+                     keep: int = 5
+                     ) -> None:
+        """
+        Deletes the oldest files, keeping the most recent 'keep' files.
+        Handles both folder paths and pre-processed file lists.
+
+        Args:
+            trash: Either:
+                - A folder path (str) to scan for files with given extension(s), or
+                - A list of tuples [(timestamp, filepath)] of files to process
+            ext: File extension or list of extensions to filter by
+                 (used only if trash is a folder path)
+            keep: Number of most recent files to preserve
+
+        Behavior:
+            - For folder input: Finds all files with given extension(s), gets their creation times,
+              and deletes oldest, keeping newest 'keep' files.
+            - For list input: Processes the given files directly using existing tuple logic.
+        """
+        if not trash:
+            self.log.debug("Trash is empty. Nothing to delete.")
+            return
+
+        if keep <= 0:
+            self.log.debug("Invalid keep value. Must be greater than 0.")
+            return
+
+        # Normalize extensions
+        if isinstance(ext, str):
+            extensions = [ext]
+        else:
+            extensions = ext
+
+        # Handle folder path input
+        if isinstance(trash, str):
+            folder_path = Path(trash)
+            if not folder_path.exists():
+                self.log.debug(f"Folder not found: {folder_path}")
+                return
+
+            # Create list of (creation_time, filepath) tuples
+            file_list = []
+            for extension in extensions:
+                for file in folder_path.glob(f'*{extension}'):
+                    try:
+                        ctime = file.stat().st_ctime
+                        file_list.append((ctime, str(file)))
+                    except OSError as e:
+                        self.log.debug(f"Error processing {file}: {e}")
+                        continue
+
+            trash = file_list
+
+        # Processing file list
+        trash.sort(key=lambda item: item[0])  # Sort by timestamp (oldest first)
+        files_to_delete = trash[:-keep] if keep < len(trash) else []
+
+        for timestamp, file in files_to_delete:
+            try:
+                os.remove(file)
+                self.log.debug(f"Deleted: {file} (timestamp: {timestamp})")
+            except FileNotFoundError:
+                self.log.debug(f"File not found: {file}")
+            except OSError as e:
+                self.log.debug(f"Error deleting {file}: {e}")
 
     def target_filename(self, basename, target_path=None, ext=None, postfix=None):
         """
@@ -1005,7 +1072,7 @@ class Utils:
             histogram_filename = self.create_image_histogram(img, histogram_base, postfix="_image_histogram", title="Raw Image Histogram")  # adds : _histogram.jpg
             self.create_symlink(web_path, histogram_filename, 'last_inspection_histogram_raw_image.jpg')
 
-            # Cleanup
+            # Cleanup inspection folder
             self.delete_trash(inspection_path, ext='.jpg', keep=images_keep)
 
         if overlay is not None:

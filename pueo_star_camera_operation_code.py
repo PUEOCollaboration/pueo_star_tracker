@@ -3087,7 +3087,9 @@ class PueoStarCameraOperation:
         self.logit(f"Max pixel: {np.max(self.curr_img)}, Min pixel: {np.min(self.curr_img)}. ")
 
         # Write image info to log
-        self.info_file = f"{self.get_daily_path(self.cfg.final_path)}/log_{timestamp_string}.txt"
+        final_daily_path = self.get_daily_path(self.cfg.final_path) if self.cfg.final_path_daily else self.cfg.final_path
+        self.info_file = f"{final_daily_path}/log_{timestamp_string}.txt"
+
         self.info_add_image_info(camera_settings, curr_utc_timestamp)
 
         # Perform astrometry
@@ -3187,27 +3189,23 @@ class PueoStarCameraOperation:
                 self.contours_img, timestamp_string,
                 self.astrometry, self.omega, False,
                 self.curr_image_name,
-                self.get_daily_path(self.cfg.final_path),
+                final_daily_path,
                 self.cfg.partial_results_path,
                 self.cfg.foi_scale_factors,
                 self.cfg.foi_resize_mode,
                 self.cfg.png_compression,
                 self.is_flight)
 
-
             # Create/update symlink to last foi file
             self.utils.create_symlink(self.cfg.web_path, self.foi_scaled_name, 'last_final_overlay_image_downscaled.png')
 
             if self.cfg.enable_gui_data_exchange and self.foi_scaled_name is not None:
                 self.server.write(self.foi_scaled_name, data_type='image_file', dst_filename=self.curr_scaled_name)
-            # else:
-            #     cprint('Error no scaled image', color='red')
-            #     self.log.error('foi_scaled_name was None, no downscaled image generated.')
 
-            # Delete prev files (output folder), keeping only Last one.
-            deleted_cnt = self.utils.delete_files(self.prev_foi_name, self.prev_foi_scaled_name, self.prev_info_file)
-            if deleted_cnt:
-                self.log.debug(f'Cleanup deleted {deleted_cnt} files (foi, info file).')
+            # Delete prev files (output folder), keeping only Last one X.
+            # Cleanup final folder (./output) with foi images and info files:
+            # Note: the final path folder has 2 files info and png, to preserve 100 images we need to multiply by 2
+            self.utils.delete_trash(final_daily_path, ext=['.png', '.txt'], keep=int(2 * self.cfg.foi_images_keep))
 
             self.prev_time = self.curr_time
             self.prev_img = self.curr_img

@@ -301,17 +301,18 @@ class Utils:
         artifacts. Only outline geometry is drawn:
           - No filled regions
           - No shading or transparency
-          - No construction or guide lines
+          - No construction or guidelines
 
         Parameters
         ----------
         image : np.ndarray
             Input image in BGR format. The image is modified in place.
         is_inspection : bool
-            Used to diferential colors for inspection images
+            Used to differentiate colors for inspection images
         """
 
-        if not self.cfg.overlay_rois:
+        if (not self.cfg.overlay_rois or
+                is_inspection and not self.cfg.overlay_rois_inspection):
             return
 
         try:
@@ -635,7 +636,7 @@ class Utils:
             self.overlay_rois(img_8bit, is_inspection=True)
             success = cv2.imwrite(temp_path, img_8bit, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
         elif save_mode == "normal":
-            self.overlay_rois(img_16bit)
+            self.overlay_rois(img_16bit, is_inspection=True)
             success = cv2.imwrite(temp_path, img_16bit, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
         if not success:
             logit(f"Error saving image to {temp_path}", color="red")

@@ -200,6 +200,7 @@ class Config(Dynamic):
 
     # Include overlay of rois
     overlay_rois = True
+    overlay_rois_inspection = False
 
     # [STARTRACKER]
     star_tracker_body_rates_max_distance = 100
@@ -670,6 +671,7 @@ class Config(Dynamic):
 
         # Include overlay rois
         self.overlay_rois = self._config.getboolean('SOURCES', 'overlay_rois', fallback=self.overlay_rois)
+        self.overlay_rois_inspection = self._config.getboolean('SOURCES', 'overlay_rois_inspection', fallback=self.overlay_rois_inspection)
 
         # [STARTRACKER]
         self.star_tracker_body_rates_max_distance = self._config.getint('STARTRACKER', 'star_tracker_body_rates_max_distance', fallback=self.star_tracker_body_rates_max_distance)

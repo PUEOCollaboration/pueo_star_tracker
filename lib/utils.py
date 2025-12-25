@@ -398,8 +398,40 @@ class Utils:
             self.log.error(f"Error adding rois overlay: {e}")
 
     def display_overlay_info(self, img, timestamp_string, astrometry, omega, display=True, image_filename=None, final_path='./output', partial_results_path="./partial_results", scale_factors=(8, 8), resize_mode='downscale', png_compression=0, is_save=True, is_downsize=True):
-        """Displays text overlay information about astrometry on output image - used on the final overlay image (foi)."""
+        """
+        Overlay astrometry and image metadata on a camera image.
 
+        Displays or saves a visual overlay on the input image, showing:
+        - Timestamp, astrometric solution (RA, Dec, Roll) or "Not solved"
+        - RMSE, probability of false positive
+        - Angular velocity (omega)
+        - Execution time and solver info
+        - Plate scale, exposure, gain
+        - Legend for detected, valid, and matched stars
+        - Optional ROIs overlay
+
+        Handles both solved and unsolved astrometry:
+        - Missing numeric values are displayed as NaN
+        - Solver name and execution times are always shown
+
+        Args:
+            img (ndarray): Input image (uint8 or uint16)
+            timestamp_string (str): Timestamp of acquisition
+            astrometry (dict): Astrometry solution data
+            omega (tuple): Angular velocity (deg/s)
+            display (bool): If True, display overlay image
+            image_filename (str, optional): Base filename for saving overlay
+            final_path (str): Path for saving final overlay
+            partial_results_path (str): Path for saving partial results
+            scale_factors (tuple): Downscale factors for saved overlay
+            resize_mode (str): Resize method for downscaled overlay
+            png_compression (int): PNG compression level
+            is_save (bool): If True, save overlay image
+            is_downsize (bool): If True, save downscaled version
+
+        Returns:
+            tuple: (foi_filename, overlay_image.shape, foi_scaled_filename, foi_scaled_shape)
+        """
         # Normalize back to uint8 if the image is float
         if np.issubdtype(img.dtype, np.uint16):
             img = np.uint8(img / 256)
@@ -419,12 +451,12 @@ class Utils:
         font_size = 1  # starting font size
         img_fraction = 0.50 # portion of image width you want text width to be
         text_size, _ = cv2.getTextSize(timestamp, font, font_size, font_thickness)
-        while text_size[0] < img_fraction*img.shape[0]:
-            font_size += 1
-            text_size, _ = cv2.getTextSize(timestamp, font, font_size, font_thickness)
-
         # Multiplier to make font size larger for inspection images. It is to make the overlay readable to the user.
         img_fraction *= self.cfg.foi_font_multiplier # 1.5
+
+        while text_size[0] < img_fraction*img.shape[0]: # Need to use 1-width, not 0-height
+            font_size += 1
+            text_size, _ = cv2.getTextSize(timestamp, font, font_size, font_thickness)
 
         text_x = 40
         text_y = 80
@@ -433,74 +465,76 @@ class Utils:
         cv2.putText(overlay_image, timestamp, (text_x, text_y), font, font_size, font_color, font_thickness, line_type)
         text_y += text_size[1] + line_spacing  # Adjust Y-coordinate for the next text
 
-        solver = astrometry['solver_name'] if astrometry else ''
-        if astrometry and astrometry.get('RA', 0):
-            # astrometry info
-            ra = astrometry.get('RA', 0.0)
-            dec = astrometry.get('Dec', 0.0)
-            roll = astrometry.get('Roll', 0.0)
+        solver = astrometry['solver_name'] if astrometry else '-'
+        solved = astrometry.get('RA') is not None
+        # Add overlay solved or not
 
-            ra_rms = astrometry.get('RA_RMS', 0.0)
-            dec_rms = astrometry.get('Dec_RMS', 0.0)
-            roll_rms = astrometry.get('Roll_RMS', 0.0)
+        # astrometry info
+        ra = np.nan if astrometry.get('RA') is None else astrometry['RA']
+        dec = np.nan if astrometry.get('Dec') is None else astrometry['Dec']
+        roll = np.nan if astrometry.get('Roll') is None else astrometry['Roll']
 
-            # body rates info
-            #omegax = omega[0]
-            #omegay = omega[1]
-            #omegaz = omega[2]
+        use_individal_rms = False
+        if use_individal_rms:
+            ra_rms = np.nan if astrometry.get('RA_RMS') is None else astrometry['RA_RMS']
+            dec_rms = np.nan if astrometry.get('Dec_RMS') is None else astrometry['Dec_RMS']
+            roll_rms = np.nan if astrometry.get('Roll_RMS') is None else astrometry['Roll_RMS']
 
-            # solved_txt = ' (Not solved)' if ra == dec == roll == 0.0 else ' (Solved)'
+        if solved:
             astrometric_position = f"Astrometric Position ({solver}): ({ra:.4f}, {dec:.4f}, {roll:.4f}) deg"
-            _rmse = astrometry.get('Cross-Boresight RMSE', 0.0) if 'Cross-Boresight RMSE' in astrometry else astrometry.get('RMSE', 0.0)
-            rmse = f"RMSE: {_rmse:.4E} arcsec"
-            #rmse = f"RMSE: {_rmse:.3f} arcsec, RMS: ({ra_rms:.3f}, {dec_rms:.3f}, {roll_rms:.3f}) arcesc"
-            # velocity = f"Angular velocity: (omegax, omegay, omegaz) = ({omegax:.4E}, {omegay:.4E}, {omegaz:.4E}) deg/s"
-            # Or even more explicitly:
-            # velocity = f"Angular velocity: w_x = {omega[0]:.4E}, w_y = {omega[1]:.4E}, w_z = {omega[2]:.4E} deg/s"
-            velocity = f"Angular velocity: w = ({omega[0]:.6f}, {omega[1]:.6f}, {omega[2]:.6f}) deg/s"
-
-            probability_of_false_positive = f"Probability of False Positive: {astrometry['Prob']:.4E}"
-            exec_time = f"Execution time: {astrometry['total_exec_time']:.3f} s, Solver: {astrometry['solver_exec_time']:.3f} s"
-
-            plate_scale = astrometry.get('PlateScale', '- arcsec/px')
-            exposure_time = astrometry.get('ExposureTime', '-')
-            gain_cb = astrometry.get('Gain', '-')
-            misc = f"Plate Scale: {plate_scale}, Exposure Time: {exposure_time}, Gain: {gain_cb}"
-
-            # overlay text
-            cv2.putText(overlay_image, astrometric_position, (text_x, text_y), font, font_size, font_color, font_thickness, line_type)
-            text_y += text_size[1] + line_spacing
-            cv2.putText(overlay_image, rmse, (text_x, text_y), font, font_size, font_color, font_thickness, line_type)
-            text_y += text_size[1] + line_spacing
-            cv2.putText(overlay_image, velocity, (text_x, text_y), font, font_size, font_color, font_thickness, line_type)
-            text_y += text_size[1] + line_spacing
-            cv2.putText(overlay_image, probability_of_false_positive, (text_x, text_y), font, font_size, font_color, font_thickness, line_type)
-            text_y += text_size[1] + line_spacing
-            cv2.putText(overlay_image, exec_time,(text_x, text_y), font, font_size, font_color, font_thickness, line_type)
-            text_y += text_size[1] + line_spacing
-
-            cv2.putText(overlay_image, misc,(text_x, text_y), font, font_size, font_color, font_thickness, line_type)
-            text_y += text_size[1] + line_spacing
-
-            # Add legend for the circles
-            cv2.putText(overlay_image, 'Legend:',(text_x, text_y), font, font_size, font_color, font_thickness, line_type)
-            text_y += int(text_size[1] + line_spacing * 1.3)
-            # OpenCV uses BGR
-            color_blue = (255, 0, 0)
-            color_green = (0, 255, 0)
-            color_red = (0, 0, 255)
-            colors = [(color_red, 0.6, 'Detected source'), (color_blue, 0.8, 'Valid source'), (color_green, 1.0, 'Matched star')]
-            # print(f'Text suze: {text_size}')
-            sources_radius = overlay_image.shape[0] / 80
-            for color, radius_scaling, description in colors:
-                text_cy = text_y - int(text_size[1] / 2) # Move center to text_size/2 up, since text_y is bottom of the text
-                cv2.circle(overlay_image, (text_x + int(2*sources_radius), text_cy), int(sources_radius*radius_scaling), color, 4)
-                cv2.putText(overlay_image, description, (text_x+int(4*sources_radius), text_y), font, font_size, font_color, font_thickness, line_type)
-                text_y += int(text_size[1] + line_spacing * 1.3)
-
         else:
-            cv2.putText(overlay_image, f"Not Solved ({solver})", (text_x, text_y), font, font_size, font_color, font_thickness, line_type)
-            text_y += text_size[1] + line_spacing  # Adjust Y-coordinate for the next text
+            astrometric_position = f"Astrometric Position ({solver}): Not solved."
+
+        _rmse = astrometry.get('Cross-Boresight RMSE') or astrometry.get('RMSE') or np.nan
+        rmse = f"RMSE: {(np.nan if _rmse is None else _rmse):.4E} arcsec"
+
+        #rmse = f"RMSE: {_rmse:.3f} arcsec, RMS: ({ra_rms:.3f}, {dec_rms:.3f}, {roll_rms:.3f}) arcesc"
+        # velocity = f"Angular velocity: (omegax, omegay, omegaz) = ({omegax:.4E}, {omegay:.4E}, {omegaz:.4E}) deg/s"
+        # Or even more explicitly:
+        # velocity = f"Angular velocity: w_x = {omega[0]:.4E}, w_y = {omega[1]:.4E}, w_z = {omega[2]:.4E} deg/s"
+        velocity = f"Angular velocity: w = ({omega[0]:.6f}, {omega[1]:.6f}, {omega[2]:.6f}) deg/s"
+
+        _prob = astrometry.get('Prob')
+        probability_of_false_positive = f"Probability of False Positive: {(np.nan if _prob is None else _prob):.4E}"
+
+        exec_time = f"Execution time: {astrometry.get('total_exec_time', 0.0):.3f} s, Solver: {astrometry.get('solver_exec_time', 0.0):.3f} s"
+
+        plate_scale = astrometry.get('PlateScale', '- arcsec/px')
+
+        exposure_time = astrometry.get('ExposureTime', '-')
+        gain_cb = astrometry.get('Gain', '-')
+        misc = f"Plate Scale: {plate_scale}, Exposure Time: {exposure_time}, Gain: {gain_cb}"
+
+        # overlay text
+        cv2.putText(overlay_image, astrometric_position, (text_x, text_y), font, font_size, font_color, font_thickness, line_type)
+        text_y += text_size[1] + line_spacing
+        cv2.putText(overlay_image, rmse, (text_x, text_y), font, font_size, font_color, font_thickness, line_type)
+        text_y += text_size[1] + line_spacing
+        cv2.putText(overlay_image, velocity, (text_x, text_y), font, font_size, font_color, font_thickness, line_type)
+        text_y += text_size[1] + line_spacing
+        cv2.putText(overlay_image, probability_of_false_positive, (text_x, text_y), font, font_size, font_color, font_thickness, line_type)
+        text_y += text_size[1] + line_spacing
+        cv2.putText(overlay_image, exec_time,(text_x, text_y), font, font_size, font_color, font_thickness, line_type)
+        text_y += text_size[1] + line_spacing
+
+        cv2.putText(overlay_image, misc,(text_x, text_y), font, font_size, font_color, font_thickness, line_type)
+        text_y += text_size[1] + line_spacing
+
+        # Add legend for the circles
+        cv2.putText(overlay_image, 'Legend:',(text_x, text_y), font, font_size, font_color, font_thickness, line_type)
+        text_y += int(text_size[1] + line_spacing * 1.3)
+        # OpenCV uses BGR
+        color_blue = (255, 0, 0)
+        color_green = (0, 255, 0)
+        color_red = (0, 0, 255)
+        colors = [(color_red, 0.6, 'Detected source'), (color_blue, 0.8, 'Valid source'), (color_green, 1.0, 'Matched star')]
+        # print(f'Text suze: {text_size}')
+        sources_radius = overlay_image.shape[0] / 80
+        for color, radius_scaling, description in colors:
+            text_cy = text_y - int(text_size[1] / 2) # Move center to text_size/2 up, since text_y is bottom of the text
+            cv2.circle(overlay_image, (text_x + int(2*sources_radius), text_cy), int(sources_radius*radius_scaling), color, 4)
+            cv2.putText(overlay_image, description, (text_x+int(4*sources_radius), text_y), font, font_size, font_color, font_thickness, line_type)
+            text_y += int(text_size[1] + line_spacing * 1.3)
 
         # Add rois overlay if enabled in config via overlay_rois = True
         self.overlay_rois(overlay_image)

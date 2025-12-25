@@ -213,7 +213,7 @@ cd ~/Projects/pcc/logs
 ./cleanup_data.sh
 ```
 
-4. **SHUTDOW System**:
+4. **SHUTDOWN System**:
 ```bash
 sudo shutdown now
 ```
@@ -283,6 +283,67 @@ ll 2025-12-02
 ``` 
 
 If any of the verifications steps fails **REPORT** issue.
+
+### In-flight PUEO Update Procedure
+
+1. Create `Update Package` using dev/test environment linked with github:
+```bash
+# On Windows (Powershell) in pcc root folder:
+& "C:\Program Files\Git\bin\bash.exe" ./pgz.sh 2025-11-30 | tee logs/pgz.log
+# On linux:
+./pgz.sh 2025-11-30 | tee logs/pgz.log
+# Creates a package in the logs subfolder e.g.: logs/pcc_update_20251223T202818Z.zip 
+```
+
+Package (example): pcc_update_20251223T202818Z.zip
+
+Prepare package (Reason: size reduce):
+ - remove optional folders and files: docs, data from the pacakge
+  
+Package Content (FYI):  *marked files/folders are to be removed before sharing the package
+
+```txt
+    Date      Time    Attr         Size   Compressed  Name
+-------------------- ----- ------------ ------------  ------------------------
+ 2025-12-23 21:28:19 D....            0            0  conf
+ 2025-12-23 13:17:21 ....A        29717        11035  conf\config.ini
+*2025-12-23 21:28:20 D....            0            0  data
+*2025-12-12 11:13:31 ....A      6587817      6587817  data\fov_10.79_mag9.0_tyc_v12_cedar_database.npz
+*2025-12-23 21:28:20 D....            0            0  docs
+*2025-12-02 09:56:53 ....A        15838         4896  docs\cheatsheet.md
+ 2025-12-23 21:28:22 D....            0            0  lib
+ 2025-12-12 11:39:18 ....A       102052        22796  lib\astrometry.py
+ 2025-12-10 22:54:53 ....A        43846        10927  lib\camera.py
+ 2025-12-23 13:15:52 ....A        48801         9880  lib\config.py
+ 2025-12-11 08:55:07 ....A        11430         3004  lib\dynamic.py
+ 2025-12-11 09:55:40 ....A        45926        11613  lib\fs_monitor.py
+ 2025-12-23 13:04:44 ....A        30479         8278  lib\source_finder.py
+ 2025-12-23 12:48:27 ....A        56663        14799  lib\utils.py
+ 2025-12-23 20:34:34 ....A         9504         2919  pcd.sh
+ 2025-12-23 21:08:51 ....A         2272         1081  pgz.sh
+ 2025-12-21 14:32:04 ....A       175505        40439  pueo_star_camera_operation_code.py
+ 2025-12-10 22:54:53 ....A          370          251  usb_power_cycle.sh
+```
+
+1. Upload and place the package to the camera system to the `~/Projects/pcc` (project root).
+2. Stop PUEO Server:
+```bash
+cd logs
+./status.sh stop
+```
+
+3. Extract archive:
+```bash
+# Note: The -o flag performs the same "overwrite without prompting" action).
+  cd ~/Projects/pcc
+  unzip -o pcc_update_20251223T202818Z.zip
+```
+
+4. Start PUEO Server:
+```bash
+cd logs
+./status.sh start
+```
 
 ### Manual Autofocus/Autogain
 1) How to perform a **manual autofocus**. Where to find file generated/images:
@@ -377,8 +438,6 @@ options:
 
 ### Manual TAKE IMAGE
 1) How to **take a single image** at exposure time and gain. Where to find it?
-
-**Really Windell?**
 
 ```bash
 ./pc.sh stop 

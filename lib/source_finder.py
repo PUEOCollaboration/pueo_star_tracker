@@ -545,9 +545,9 @@ class SourceFinder:
         # Masked: p99.9 of valid (unsaturated) pixels in ROI
         valid_masked = roi_masked[roi_masked < pixel_saturated_value]
         if valid_masked.size > 0:
-            p999_masked_original = np.percentile(valid_masked, 99.95)
+            p999_masked_original = np.percentile(valid_masked, self.cfg.percentile_threshold)
         else:
-            p999_masked_original = np.percentile(roi_masked, 99.95)
+            p999_masked_original = np.percentile(roi_masked, self.cfg.percentile_threshold)
             
         # --- Optional: saturation/headroom stats (ROI) ---
         n_sat_roi = int(np.count_nonzero(roi_img >= pixel_saturated_value))

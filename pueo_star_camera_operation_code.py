@@ -2772,7 +2772,22 @@ class PueoStarCameraOperation:
         #         abs(max_exp_factor_down - 1.0) < 1e-6
         # )
 
-        exposure_lock = self.cfg.autogain_mode == 'gain'
+        mode_autogain = str(self.cfg.autogain_mode).lower().strip()
+
+        #lock exposure when doing gain-only mode
+        exposure_lock = (mode_autogain == 'gain')
+
+        #lock gain when doing exposure-only mode
+        gain_lock = (mode_autogain == 'exposure')
+
+        fixed_gain_value = None
+        if gain_lock:
+            fixed_gain_value = int(round(self.cfg.lab_best_gain))
+            if fixed_gain_value > max_gain_hw:
+                fixed_gain_value = int(round(max_gain_hw))
+            elif fixed_gain_value < min_gain_hw:
+                fixed_gain_value = int(round(min_gain_hw))
+
 
         lab_best_exposure = None
         if exposure_lock:
@@ -2811,6 +2826,10 @@ class PueoStarCameraOperation:
         # If exposure is locked, never trigger coarse exposure branch
         if exposure_lock:
             railed_in_wrong_direction = False
+            
+        # If gain is locked, ALWAYS use the coarse exposure branch (exposure-only control loop)
+        if gain_lock:
+            railed_in_wrong_direction = True
 
         # --- Summary state we'll fill then log once ---
 
@@ -2851,11 +2870,22 @@ class PueoStarCameraOperation:
             # Use a floor so we don't divide by zero; keep actual high_pix_value for logs.
             high_for_ratio = max(high_pix_value, 1.0)
             ratio = desired_max_pix_value / float(high_for_ratio)  # >1 => too dark, <1 => too bright
+            
+            # Saturation test based on the ROI p999 value (high_pix_value)
+            is_saturated = high_pix_value > desired_max_pix_value
 
             if ratio > 1.0:
+                # too dark → scale up (capped)
                 exp_factor = min(ratio, max_exp_factor_up)
             else:
-                exp_factor = max(ratio, max_exp_factor_down)
+                # too bright:
+                # - If saturated AND we're in fixed-gain mode → divide exposure by a constant each step
+                # - Otherwise → normal ratio-based downscale, but don't exceed max step-down
+                if gain_lock and is_saturated:
+                    exp_factor = max_exp_factor_down
+                else:
+                    exp_factor = max(ratio, max_exp_factor_down)
+
 
             new_exposure_value = old_exposure * exp_factor
 
@@ -2879,6 +2909,10 @@ class PueoStarCameraOperation:
                 new_gain_value = min_gain_hw
             else:
                 new_gain_value = int(round(mid_gain))
+                
+            # NEW: fixed-gain mode overrides any recenter/rail logic
+            if gain_lock and (fixed_gain_value is not None):
+                new_gain_value = fixed_gain_value
 
             changed = True
 
@@ -2969,11 +3003,15 @@ class PueoStarCameraOperation:
 
         # --- Apply settings if they changed ---
         if changed:
+            # Gain: always apply (or at least keep it consistent with fixed-gain mode)
             self.camera.set_control_value(asi.ASI_GAIN, new_gain_value)
             self.cfg.set_dynamic(lab_best_gain=new_gain_value)
-            if self.cfg.autogain_mode == 'both':
+
+            # Exposure: apply in BOTH mode, fixed-gain (exposure-only) mode, or when exposure is locked to lab_best
+            if (mode_autogain == 'both') or gain_lock or exposure_lock:
                 self.camera.set_control_value(asi.ASI_EXPOSURE, new_exposure_value)
                 self.cfg.set_dynamic(lab_best_exposure=new_exposure_value)
+
 
     def camera_take_image(self, cmd=None, is_operation=False, is_test=False):
         """

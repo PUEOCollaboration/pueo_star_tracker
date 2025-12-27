@@ -368,7 +368,7 @@ class SourceFinder:
             file.write("\n--- Initial Background Stats ---\n")
             file.write(f"Initial background level mean : {np.mean(initial_local_levels)}\n")
             file.write(f"Initial background level stdev : {np.std(initial_local_levels)}\n")
-            file.write(f"p99.95 Initial background level : {np.percentile(initial_local_levels,99.95)}\n")
+            file.write(f"p99.95 Initial background level : {np.percentile(initial_local_levels,self.cfg.percentile_threshold)}\n")
             file.write(f"Initial background level mean : {np.min(initial_local_levels)}\n")
 
 
@@ -405,7 +405,7 @@ class SourceFinder:
             file.write("\n--- Final Background Stats ---\n")
             file.write(f"Final background level mean : {np.mean(final_local_levels)}\n")
             file.write(f"Final pass background level stdev : {np.std(final_local_levels)}\n")
-            file.write(f"p99.95 Final background level : {np.percentile(final_local_levels,99.95)}\n")
+            file.write(f"p99.95 Final background level : {np.percentile(final_local_levels,self.cfg.percentile_threshold)}\n")
             file.write(f"Final background level mean : {np.min(final_local_levels)}\n")
 
         logit("Estimating noise from leveled image.")

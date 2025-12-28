@@ -156,7 +156,6 @@ class Astrometry:
             R_star=R_star
         )
 
-
     def classify_frame_still_biased(self,
                                     ell,
                                     ar_elong=1.70,
@@ -165,33 +164,53 @@ class Astrometry:
                                     min_R=0.50,
                                     min_frac=0.60,
                                     min_conf=0.65):   # NEW: confidence gate
-        M = self._ellipse_metrics_ar(ell, ar_elong=ar_elong)
-        if M["N"] == 0:
-            return "empty", 0.0, M
+        """
+        Classify a frame as 'still' or 'streaked' based on ellipse metrics.
 
-        is_streaked = (M["N_elong"] >= min_elong and
-                       M["L_med_elong"] >= min_L and
-                       M["R_star"] >= min_R and
-                       M["f_elong"] >= min_frac)
-        label = "streaked" if is_streaked else "still"
+        Confidence is defined such that 1.0 always represents high confidence in
+        the assigned frame_motion, whether the frame is streaked or still.
 
-        s_N    = min(1.0, M["N_elong"]    / max(min_elong, 1))
-        s_L    = min(1.0, M["L_med_elong"]/ max(min_L, 1e-6))
-        s_R    = min(1.0, M["R_star"]     / max(min_R, 1e-6))
-        s_frac = min(1.0, M["f_elong"]    / max(min_frac, 1e-6))
+        Args:
+            ell (list): List of ellipses detected in the frame.
+            ar_elong (float): Minimum aspect ratio to consider elongated.
+            min_elong (int): Minimum number of elongated sources.
+            min_L (float): Minimum median major axis in pixels.
+            min_R (float): Minimum orientation coherence.
+            min_frac (float): Minimum fraction of elongated sources.
+            min_conf (float): Minimum confidence for streaked classification.
 
-        if label == "streaked":
-            conf = float((s_N + s_L + s_R + s_frac) / 4.0)
-        else:
-            conf = float(((1-s_N) + (1-s_L) + (1-s_frac)) / 4.0)
+        Returns:
+            frame_motion (str): "streaked", "still", or "empty".
+            conf (float): Confidence score in range [0.0, 1.0].
+            metrics (dict): Detailed ellipse metrics, including N, N_elong, L_med_elong, R_star, f_elong, and coherence.
+        """
 
-        # NEW: hard gate on minimum confidence
-        if label == "streaked" and conf < float(min_conf):
-            label = "still"
+        metrics = self._ellipse_metrics_ar(ell, ar_elong=ar_elong)
+        if metrics["N"] == 0:
+            return "empty", 0.0, metrics
 
-        M["coherence_R_star"] = M["R_star"]
-        M["min_conf"] = float(min_conf)
-        return label, conf, M
+        is_streaked = (metrics["N_elong"] >= min_elong and
+                       metrics["L_med_elong"] >= min_L and
+                       metrics["R_star"] >= min_R and
+                       metrics["f_elong"] >= min_frac)
+        frame_motion = "streaked" if is_streaked else "still"
+
+        s_N    = min(1.0, metrics["N_elong"]    / max(min_elong, 1))
+        s_L    = min(1.0, metrics["L_med_elong"]/ max(min_L, 1e-6))
+        s_R    = min(1.0, metrics["R_star"]     / max(min_R, 1e-6))
+        s_frac = min(1.0, metrics["f_elong"]    / max(min_frac, 1e-6))
+
+        if frame_motion == "streaked":
+            confidence = (s_N + s_L + s_R + s_frac) / 4.0
+            if confidence < float(min_conf):
+                frame_motion = "still"  # Hard gate
+                confidence = 1.0 - confidence  # Recalculate for still frame
+        else:  # still
+            confidence = ((1 - s_N) + (1 - s_L) + (1 - s_R) + (1 - s_frac)) / 4.0
+
+        metrics["coherence_R_star"] = metrics["R_star"]
+        metrics["min_conf"] = float(min_conf)
+        return frame_motion, confidence, metrics
 
     @staticmethod
     def _estimate_omega_from_ellipses_plate_scale(
@@ -420,6 +439,12 @@ class Astrometry:
           (precomputed_star_centroids, contours_img)
         When return_partial_images=True, saves a still-style overlay and mask to partial_results_path.
         """
+        pcs = {
+            'detected_sources': 0,
+            'filtered_sources': 0,
+            'mean_centroid_diameter': 0.0,
+            'median_centroid_diameter': 0.0
+        }
         ids, xs, ys, fluxes, lengths, angles = compute_centroids_from_trails_ellipse_method(
             image = masked_image,
             sources_mask=sources_mask,
@@ -438,7 +463,7 @@ class Astrometry:
         angles = np.asarray(angles, float)[order]
 
         # --- Build precomputed_star_centroids (N×5: [y, x, flux, std, diameter]) ---
-        if len(ids) == 0: # sames as if ids:
+        if not ids: # no centroids
             precomputed_star_centroids = np.empty((0, 5), dtype=float)
             contours_img = self._draw_trail_overlay_like_still(
                 image=original_image,
@@ -453,7 +478,7 @@ class Astrometry:
                 cv2.imwrite(f"{partial_results_path}/trail_overlay_{tag}.png", contours_img)
                 cv2.imwrite(f"{partial_results_path}/trail_mask_{tag}.png",
                             (sources_mask > 0).astype('uint8') * 255)
-            return precomputed_star_centroids, contours_img
+            return precomputed_star_centroids, contours_img, pcs
 
         xs = np.asarray(xs, dtype=float)
         ys = np.asarray(ys, dtype=float)
@@ -464,6 +489,11 @@ class Astrometry:
         std = np.full_like(fluxes, np.nan, dtype=float)   # preserve shape
         diameter = lengths.astype(float)                   # use major axis as diameter proxy
         precomputed_star_centroids = np.stack([ys, xs, fluxes, std, diameter], axis=1)
+        pcs['detected_sources'] = len(precomputed_star_centroids)
+
+        if len(diameter):
+            pcs['mean_centroid_diameter'] = float(np.mean(diameter))
+            pcs['median_centroid_diameter'] = float(np.median(diameter))
 
         # --- Build still-style overlay (contours + centroids + axes + ellipse outlines) ---
         overlay = self._draw_trail_overlay_like_still(
@@ -494,6 +524,7 @@ class Astrometry:
 
         # Numbering for on-image labels
         blob_idx = 0
+        filtered_sources = 0
         for c in cnts:
             if len(c) < 5:
                 # Not enough points for ellipse fit; annotate anyway with area
@@ -545,7 +576,6 @@ class Astrometry:
             # Pass/fail reason & color
             reason, color = self._blob_reason(area, ar, min_area_px, aspect_ratio_min)
 
-
             #_x = int(np.rint(np.asarray(cx).squeeze()))
             #_y = int(np.rint(np.asarray(cy).squeeze()))
             #cv2.putText(
@@ -559,6 +589,10 @@ class Astrometry:
 
             # If accepted (OK), draw the ellipse outline and also label its accepted ID (nearest centroid)
             if reason == "OK":
+                color_red = (0, 0, 255)
+                color_white = (255, 255, 255)
+                color_orange = (0, 180, 255) # bright orange/coral
+
                 j = nearest_acc_idx(cx, cy, tol_px=6.0)
                 if j < 0:
                     # Base checks passed, but no nearby accepted centroid → draw ellipse anyway in red
@@ -566,12 +600,12 @@ class Astrometry:
                     cv2.putText(
                         overlay, f"{blob_idx}:{reason_nomatch}",
                         (int(cx) + 6, int(cy) - 6),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 255), 1, cv2.LINE_AA
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, color_red, 1, cv2.LINE_AA
                     )
 
                     center = (int(round(cx)), int(round(cy)))
                     axes = (int(round(MA / 2.0)), int(round(ma / 2.0)))
-                    cv2.ellipse(overlay, center, axes, float(ang), 0, 360, (0, 0, 255), 1, cv2.LINE_AA)  # red outline
+                    cv2.ellipse(overlay, center, axes, float(ang), 0, 360, color_red, 1, cv2.LINE_AA)  # red outline
 
                     blob_idx += 1
                     continue
@@ -579,21 +613,27 @@ class Astrometry:
                 # ellipse outline (accepted & matched)
                 center = (int(round(cx)), int(round(cy)))
                 axes = (int(round(MA / 2.0)), int(round(ma / 2.0)))
-                cv2.ellipse(overlay, center, axes, float(ang), 0, 360, (0, 180, 255), 1, cv2.LINE_AA)
+                cv2.ellipse(overlay, center, axes, float(ang), 0, 360, color_orange, 1, cv2.LINE_AA)
+
+                # Draw detected source:
+                # radius of source circles
+                sources_radius = overlay.shape[0] / 80
+                cv2.circle(overlay, center, int(sources_radius * 0.6), color_red, 4)
 
                 # Optional: show matched accepted ID next to the centroid
                 if j >= 0:
+                    filtered_sources += 1
                     cv2.putText(overlay, f"ID{j}", (int(cx) + 6, int(cy) + 14),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1, cv2.LINE_AA)
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.45, color_white, 1, cv2.LINE_AA)
 
+        pcs['filtered_sources'] = filtered_sources
         # Save partial images if requested (mirror still path behavior)
         if return_partial_images:
             tag = frame_tag or "frame"
             cv2.imwrite(f"{partial_results_path}/trail_overlay_{tag}.png", overlay)
-            cv2.imwrite(f"{partial_results_path}/trail_mask_{tag}.png",
-                        (sources_mask > 0).astype('uint8') * 255)
+            cv2.imwrite(f"{partial_results_path}/trail_mask_{tag}.png", (sources_mask > 0).astype('uint8') * 255)
 
-        return precomputed_star_centroids, overlay
+        return precomputed_star_centroids, overlay, pcs
 
     def classify_streaks_axis_axis(
         mask_u8,
@@ -1510,58 +1550,60 @@ class Astrometry:
         p999_original = None
         p999_masked_original = None
         n_mask_pixels = None
+        meta = {
+            # Populated by source_finder
+            'sigma_g': None,
+            'n_mask_pixels': None,
+            'p999_original': None,
+            'p999_masked_original': None,
+            # Populated by: classify_frame_still_biased
+            'frame_motion': None,
+            'frame_motion_conf': None,
+            'frame_motion_metrics': None,
+            # Populated by: compute_star_centroids.py/
+            'detected_sources': 0,
+            'filtered_sources': 0,
+            'mean_centroid_diameter': 0.0,
+            'median_centroid_diameter': 0.0
+        }
         if self.solver in ['solver1', 'solver3']: #  or True:
-            if True:
-                ##### Uncomment the following lines to use the source-finding functions independently
-                # (cleaned_img, background_img), local_exec_time = timed_function(local_levels_background_estimation, img, log_file_path, leveling_filter_downscale_factor, return_partial_images, partial_results_path)    # cleaned_img, background_img = sextractor_background_estimation(img, return_partial_images)
-                # (masked_image, estimated_noise), find_sources_exec_time = timed_function(find_sources, img, background_img,fast, bkg_threshold, local_sigma_cell_size,
-                #                            src_kernal_size_x, src_kernal_size_y, src_sigma_x, src_dst, return_partial_images, partial_results_path)
-                # (masked_image, sources_mask, sources_contours), top_sources_exec_time = timed_function(select_top_sources, img, masked_image, estimated_noise, fast, number_sources=number_sources,
-                #                                                             min_size=min_size, max_size=max_size,
-                #                                                             dilate_mask_iterations=dilate_mask_iterations,
-                #                                                             return_partial_images=return_partial_images, partial_results_path=partial_results_path)
-                # source_finder_exec_time = int(local_exec_time) + int(find_sources_exec_time) + int(top_sources_exec_time)
-                #####
-                # source finder pipeline
-                if True:
-                    # Direct call to show exception on source_finder
-                    source_finder_exec_time = time.monotonic()
-                    masked_image, sources_mask, sources_contours, p999_original, p999_masked_original, n_mask_pixels = self.sf.source_finder(
-                        img,
-                        log_file_path,
-                        leveling_filter_downscale_factor,
-                        fast,
-                        bkg_threshold,
-                        local_sigma_cell_size,
-                        src_kernal_size_x,
-                        src_kernal_size_y,
-                        src_sigma_x,
-                        src_dst,
-                        number_sources,
-                        min_size,
-                        max_size,
-                        dilate_mask_iterations,
-                        is_trail,
-                        return_partial_images,
-                        partial_results_path,
-                        level_filter,
-                        ring_filter_type,
-                        # NEW: pass config
-                        noise_pair_sep_full=int(self.cfg.noise_pair_sep_full),
-                        simple_threshold_k=float(self.cfg.simple_threshold_k),
-                        hyst_k_high=float(self.cfg.hyst_k_high),
-                        hyst_k_low=float(self.cfg.hyst_k_low),
-                        hyst_min_area=int(self.cfg.hyst_min_area),
-                        hyst_close_kernel=int(self.cfg.hyst_close_kernel),
-                        hyst_sigma_gauss=float(self.cfg.hyst_sigma_gauss),
-                        merge_min_area=int(self.cfg.merge_min_area),
-                        merge_gap_along=int(self.cfg.merge_gap_along),
-                        merge_gap_cross=int(self.cfg.merge_gap_cross),
-                        merge_ang_tol=int(self.cfg.merge_ang_tol_deg),
-                    )
-                    # TODO: Windell figure out the image naming (cleaned_img/masked_image)
-                    source_finder_exec_time = time.monotonic() - source_finder_exec_time
-
+                # Direct call to show exception on source_finder
+                source_finder_exec_time = time.monotonic()
+                masked_image, sources_mask, sources_contours, sf = self.sf.source_finder(
+                    img,
+                    log_file_path,
+                    leveling_filter_downscale_factor,
+                    fast,
+                    bkg_threshold,
+                    local_sigma_cell_size,
+                    src_kernal_size_x,
+                    src_kernal_size_y,
+                    src_sigma_x,
+                    src_dst,
+                    number_sources,
+                    min_size,
+                    max_size,
+                    dilate_mask_iterations,
+                    is_trail,
+                    return_partial_images,
+                    partial_results_path,
+                    level_filter,
+                    ring_filter_type,
+                    # NEW: pass config
+                    noise_pair_sep_full=int(self.cfg.noise_pair_sep_full),
+                    simple_threshold_k=float(self.cfg.simple_threshold_k),
+                    hyst_k_high=float(self.cfg.hyst_k_high),
+                    hyst_k_low=float(self.cfg.hyst_k_low),
+                    hyst_min_area=int(self.cfg.hyst_min_area),
+                    hyst_close_kernel=int(self.cfg.hyst_close_kernel),
+                    hyst_sigma_gauss=float(self.cfg.hyst_sigma_gauss),
+                    merge_min_area=int(self.cfg.merge_min_area),
+                    merge_gap_along=int(self.cfg.merge_gap_along),
+                    merge_gap_cross=int(self.cfg.merge_gap_cross),
+                    merge_ang_tol=int(self.cfg.merge_ang_tol_deg),
+                )
+                source_finder_exec_time = time.monotonic() - source_finder_exec_time
+                meta |= sf # Update meta
 ######################
                 # --- Classify using EXISTING mask (no re-threshold) + allow override ---
                 logit(f"--------Running classifier.--------", color='cyan')
@@ -1589,12 +1631,16 @@ class Astrometry:
                         min_frac=self.cfg.min_elongated_fraction,
                         min_conf=self.cfg.min_confidence,
                     )
+                    # Metadata (full detail for pipeline and logging)
+                    meta['frame_motion'] = label
+                    meta['frame_motion_conf'] = conf
+                    meta['frame_motion_metrics'] = M  # full ellipse metrics dict
 
-                    logit(f"[Classifier] label={label}  conf={conf:.2f}  metrics={M}", color='cyan')
+                    logit(f"[Frame Motion] label={label}  conf={conf:.2f}  metrics={M}", color='cyan')
                     logit(f"label: {label}")
 
-                    is_trail = (label == "streaked")
-                    suggest_is_trail = (label == "streaked")
+                    is_trail = label == "streaked"
+                    suggest_is_trail = label == "streaked"
                     mode_str = f"auto (classifier suggests is_trail = {suggest_is_trail})"
                     logit(f"[Astrometry] Centroid mode = {mode} → {mode_str}", color='cyan')
 
@@ -1655,7 +1701,7 @@ class Astrometry:
 
                     # ---- Choose centroid path based on classifier ----
                     if suggest_is_trail:
-                        (precomputed_star_centroids, contours_img), centroids_exec_time = self.utils.timed_function(
+                        (precomputed_star_centroids, contours_img, pcs), centroids_exec_time = self.utils.timed_function(
                             self._trail_ellipse_adapter,
                             masked_image=masked_image,
                             sources_mask=sources_mask,
@@ -1668,7 +1714,7 @@ class Astrometry:
                             partial_results_path=partial_results_path,
                         )
                     else:
-                        (precomputed_star_centroids, contours_img), centroids_exec_time = self.utils.timed_function(
+                        (precomputed_star_centroids, contours_img, pcs), centroids_exec_time = self.utils.timed_function(
                             compute_centroids_from_still,
                             masked_image=masked_image,
                             sources_contours=sources_contours,
@@ -1677,6 +1723,8 @@ class Astrometry:
                             return_partial_images=return_partial_images,
                             partial_results_path=partial_results_path,
                         )
+                    meta |= pcs
+
                 elif mode == "trail":
                     # NO classifier, NO metrics printing outside auto
                     suggest_is_trail = True
@@ -1694,11 +1742,7 @@ class Astrometry:
                         plate_scale_arcsec_per_px = self.cfg.plate_scale_arcsec_per_px
                         exposure_time_s = self.cfg.exposure_time_s
 
-                        if (
-                                plate_scale_arcsec_per_px > 0.0
-                                and exposure_time_s > 0.0
-                                and len(ell) > 0
-                        ):
+                        if plate_scale_arcsec_per_px > 0.0 and exposure_time_s > 0.0 and len(ell) > 0:
                             omega_deg_s, diag_omega = self._estimate_omega_from_ellipses_plate_scale(
                                 ell,
                                 plate_scale_arcsec_per_px=plate_scale_arcsec_per_px,
@@ -1715,9 +1759,7 @@ class Astrometry:
                                     f"[Trail Omega] (forced mode) "
                                     f"plate_scale={plate_scale_arcsec_per_px:.6f} arcsec/px, "
                                     f"texp={exposure_time_s:.4f} s, "
-                                    f"wx={wx_deg:.4f} deg/s, "
-                                    f"wy={wy_deg:.4f} deg/s, "
-                                    f"wz={wz_deg:.4f} deg/s, "
+                                    f"wx={wx_deg:.4f} deg/s, wy={wy_deg:.4f} deg/s, wz={wz_deg:.4f} deg/s, "
                                     f"N={diag_omega.get('N_used', 0)}, "
                                     f"rms={diag_omega.get('resid_rms_deg_s', float('nan')):.4g} deg/s "
                                     f"w_mag_deg_s : {w_mag:.4f}\n"
@@ -1733,18 +1775,12 @@ class Astrometry:
                                     file.write(f"rms={diag_omega.get('resid_rms_deg_s', float('nan')):.4g} deg/s\n")
                                     file.write(f"w_mag_deg_s : {w_mag:.4f}\n")
                             else:
-                                logit(
-                                    "[Trail Omega] (forced mode) "
-                                    "Not enough valid ellipses to solve for angular velocity"
-                                )
+                                logit("[Trail Omega] (forced mode): Not enough valid ellipses to solve for angular velocity")
                         else:
-                            logit(
-                                "[Trail Omega] (forced mode) skipped: "
-                                "missing plate_scale_arcsec_per_px/exposure_time_s or no ellipses"
-                            )
+                            logit("[Trail Omega] (forced mode) skipped: missing plate_scale_arcsec_per_px/exposure_time_s or no ellipses")
                     except Exception as e:
                         logit(f"[Trail Omega] (forced mode) ERROR estimating angular velocity: {e}")
-                    (precomputed_star_centroids, contours_img), centroids_exec_time = self.utils.timed_function(
+                    (precomputed_star_centroids, contours_img, pcs), centroids_exec_time = self.utils.timed_function(
                         self._trail_ellipse_adapter,
                         masked_image=masked_image,
                         sources_mask=sources_mask,
@@ -1756,12 +1792,13 @@ class Astrometry:
                         return_partial_images=return_partial_images,
                         partial_results_path=partial_results_path,
                     )
+                    meta |= pcs
                 elif mode == "still":
                     # NO classifier, NO metrics logiting outside auto
                     suggest_is_trail = False
                     mode_str = "override to still mode"
                     logit(f"[Astrometry] Centroid mode = {mode} → {mode_str}")
-                    (precomputed_star_centroids, contours_img), centroids_exec_time = self.utils.timed_function(
+                    (precomputed_star_centroids, contours_img, pcs), centroids_exec_time = self.utils.timed_function(
                         compute_centroids_from_still,
                         masked_image=masked_image,
                         sources_contours=sources_contours,
@@ -1770,14 +1807,14 @@ class Astrometry:
                         return_partial_images=return_partial_images,
                         partial_results_path=partial_results_path,
                     )
-
+                    meta |= pcs
                 else:
                     # Unknown → behave like still; NO classifier or metrics printing
                     suggest_is_trail = False
                     mode_str = f"unknown '{mode}' → defaulting to still"
                     logit(f"[Astrometry] Centroid mode = {mode} → {mode_str}")
 
-                    (precomputed_star_centroids, contours_img), centroids_exec_time = self.utils.timed_function(
+                    (precomputed_star_centroids, contours_img, pcs), centroids_exec_time = self.utils.timed_function(
                         compute_centroids_from_still,
                         masked_image=masked_image,
                         sources_contours=sources_contours,
@@ -1786,6 +1823,7 @@ class Astrometry:
                         return_partial_images=return_partial_images,
                         partial_results_path=partial_results_path,
                     )
+                    meta |= pcs
 
                 total_exec_time += (
                         float(source_finder_exec_time)
@@ -1877,10 +1915,8 @@ class Astrometry:
             astrometry["solver_exec_time"] = solver_exec_time
             astrometry['solver'] = self.solver
             astrometry['solver_name'] = self.solver_name
-            # This is OK!!!
-            astrometry['p999_original'] = p999_original
-            astrometry['p999_masked_original'] = p999_masked_original
-            astrometry['n_mask_pixels'] = n_mask_pixels
+            # Adding Meta Entries: p999_original, p999_masked_original, n_mask_pixels, sigma_g,
+            astrometry |= meta
 
             logit(f"Astrometry: {str(astrometry)}")
 
@@ -1936,17 +1972,7 @@ class Astrometry:
                     # logit(f"Stack trace:\n{traceback.format_exc()}")
         else:
             logit('No centroids found, skipping astrometry solving.', color='red')
-            astrometry = {}
-            # These are required for the overlay.
-            astrometry['solver'] = self.solver
-            astrometry['solver_name'] = self.solver_name
-            # Regardless of solution we still want to return
-            astrometry['p999_original'] = p999_original
-            astrometry['p999_masked_original'] = p999_masked_original
-            astrometry['n_mask_pixels'] = n_mask_pixels
-            # Example combined:
-            # astrometry['p999'] = (p999_original, p999_masked_original)
-            # Access: p999_original = astrometry['p999'][0]
+            astrometry = {'solver': self.solver, 'solver_name': self.solver_name} | (meta or {})
 
         total_exec_time = time.monotonic() - t0
         astrometry["total_exec_time"] = total_exec_time if astrometry else None

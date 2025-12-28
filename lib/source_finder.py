@@ -336,6 +336,12 @@ class SourceFinder:
                 - sources_mask (numpy.ndarray): A binary mask highlighting the top selected sources, if `is_trail` is True.
                 - top_contours (list): A list of contours for the top selected sources.
         """
+        sf = {
+            'sigma_g': None,
+            'n_mask_pixels': None,
+            'p999_original': None,
+            'p999_masked_original': None,
+        }
         d = int(local_sigma_cell_size)
         if d < 3:
             raise ValueError("d must be >= 3")
@@ -412,7 +418,7 @@ class SourceFinder:
 
         milliseconds0 = int(time.time() * 1000)
         logit("Fast mode noise using estimate_noise_pairs_function")
-        sigma_g = self.estimate_noise_pairs(cleaned_img, sep=int(noise_pair_sep_full))
+        sigma_g = sf['sigma_g'] = self.estimate_noise_pairs(cleaned_img, sep=int(noise_pair_sep_full))
         estimated_noise = np.full_like(cleaned_img, sigma_g, dtype=np.float32)
         with open(log_file_path, "a") as file:
             file.write("\n--- Noise Estimation ---\n")
@@ -509,18 +515,18 @@ class SourceFinder:
         roi_stats_mask_u8[y1:, :] = 0
 
         # Count simple-threshold mask pixels *inside* ROI (optional but consistent)
-        n_mask_pixels = int(np.count_nonzero((simple_sources_mask_u8 > 0) & (roi_stats_mask_u8 > 0)))
+        n_mask_pixels = sf['n_mask_pixels'] = int(np.count_nonzero((simple_sources_mask_u8 > 0) & (roi_stats_mask_u8 > 0)))
 
         roi_img = img[roi_stats_mask_u8 > 0]
         roi_masked = masked_original_image[roi_stats_mask_u8 > 0]
 
-
         # Unmasked: p99.9 of valid (unsaturated) pixels in ROI
         valid_original = roi_img[roi_img < pixel_saturated_value]
         if valid_original.size > 0:
-            p999_original = np.percentile(valid_original, self.cfg.percentile_threshold)  # percentile_threshold = 99.95
+            p999_original = int(np.percentile(valid_original, self.cfg.percentile_threshold))  # percentile_threshold = 99.95
         else:
-            p999_original = np.percentile(roi_img, self.cfg.percentile_threshold)
+            p999_original = int(np.percentile(roi_img, self.cfg.percentile_threshold))
+        sf['p999_original'] = p999_original
 
         # TODO: Create histogram!!!
         # Run: _clean_image_histogram in a thread (don't wait)
@@ -545,10 +551,11 @@ class SourceFinder:
         # Masked: p99.9 of valid (unsaturated) pixels in ROI
         valid_masked = roi_masked[roi_masked < pixel_saturated_value]
         if valid_masked.size > 0:
-            p999_masked_original = np.percentile(valid_masked, self.cfg.percentile_threshold)
+            p999_masked_original = int(np.percentile(valid_masked, self.cfg.percentile_threshold))
         else:
-            p999_masked_original = np.percentile(roi_masked, self.cfg.percentile_threshold)
-            
+            p999_masked_original = int(np.percentile(roi_masked, self.cfg.percentile_threshold))
+        sf['p999_masked_original'] = p999_masked_original
+
         # --- Optional: saturation/headroom stats (ROI) ---
         n_sat_roi = int(np.count_nonzero(roi_img >= pixel_saturated_value))
         sat_frac_roi = n_sat_roi / float(roi_img.size) if roi_img.size else 0.0
@@ -569,8 +576,7 @@ class SourceFinder:
         contours, _ = cv2.findContours(sources_mask_u8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         if return_partial_images:
             bg_vis_16 = initial_local_levels.astype(np.uint16)
-            cv2.imwrite(os.path.join(partial_results_path, "1.3 - Local Estimated Background.png"),
-                            bg_vis_16)
+            cv2.imwrite(os.path.join(partial_results_path, "1.3 - Local Estimated Background.png"), bg_vis_16)
             cv2.imwrite(os.path.join(partial_results_path, "1.4 - Local Background subtracted image.png"), cleaned_img)
             cv2.imwrite(os.path.join(partial_results_path, "1.5 - Masked image STILL.png"), masked_clean_image)
             cv2.imwrite(os.path.join(partial_results_path, "1.7 - Merged Mask.png"), sources_mask_u8)
@@ -653,7 +659,7 @@ class SourceFinder:
                     file.write(f"median_length_px : {float(np.median(lengths)):.1f}\n")
                     file.write(f"median_area_px : {float(np.median([cv2.contourArea(c) for c in contours])):.1f}\n")
 
-        return masked_clean_image, sources_mask, top_contours, p999_original, p999_masked_original, n_mask_pixels
+        return masked_clean_image, sources_mask, top_contours, sf # p999_original, p999_masked_original, n_mask_pixels
 
 
 

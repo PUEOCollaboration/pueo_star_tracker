@@ -235,12 +235,20 @@ def compute_centroids_from_still(
         tuple:
             - np.ndarray: Array of precomputed star centroids with the format `[y-coordinate, x-coordinate, flux, standard deviation, diameter]`.
             - np.ndarray: Image with the detected sources marked by circles.
+            - dict: stats: detected_sources, filtered_sources
     """
+    pcs = {
+        'detected_sources': 0,
+        'filtered_sources': 0,
+        'mean_centroid_diameter': 0.0,
+        'median_centroid_diameter': 0.0
+    }
+
     # radius of source circles
     sources_radius = img.shape[0] / 80
 
     if len(sources_contours) == 0:
-        return np.empty((0, 5)), img
+        return np.empty((0, 5)), img, pcs
 
     # Calculate centroids
     detected_sources = []
@@ -293,18 +301,22 @@ def compute_centroids_from_still(
 
     # filter out spikes from the detected sources
     filtered_sources = filter_spikes(detected_sources, min_potential_source_distance)
+    pcs['detected_sources'] = len(detected_sources)
+    pcs['filtered_sources'] = len(filtered_sources)
 
     # write centroid info to log file
     diameters = []
     for filtered_source in filtered_sources:
         diameters.append(filtered_source["diameter"])
 
+    pcs['mean_centroid_diameter'] = mean_d = float(np.mean(diameters)) if diameters else 0.0
+    pcs['median_centroid_diameter'] = median_d = float(np.median(diameters)) if diameters else 0.0
+
+
     with open(log_file_path, "a") as file:
         file.write(f"number of potential sources : {len(detected_sources)}\n")
         file.write(f"number of filtered sources : {len(filtered_sources)}\n")
         file.write(f"number of rejected sources : {len(detected_sources) - len(filtered_sources)}\n")
-        mean_d = float(np.mean(diameters)) if diameters else 0.0
-        median_d = float(np.median(diameters)) if diameters else 0.0
         file.write(f"mean centroid diameter : {mean_d}\n")
         file.write(f"median centroid diameter : {median_d}\n")
 
@@ -314,16 +326,8 @@ def compute_centroids_from_still(
     # Draw valid sources (blue) circle regardless of return_partial_images:
     if return_partial_images or True:
         for filtered_source in filtered_sources:
-            cv2.circle(
-                img,
-                (int(filtered_source["centroid"][0]), int(filtered_source["centroid"][1])),
-                int(sources_radius*0.9),
-                color_blue,
-                4,
-            )
-            cv2.circle(
-                img, (int(filtered_source["centroid"][0]), int(filtered_source["centroid"][1])), 1, color_blue, -1
-            )
+            cv2.circle(img,(int(filtered_source["centroid"][0]), int(filtered_source["centroid"][1])), int(sources_radius*0.9), color_blue, 4)
+            cv2.circle(img,(int(filtered_source["centroid"][0]), int(filtered_source["centroid"][1])),1, color_blue, -1)
 
     if return_partial_images:
         cv2.imwrite(os.path.join(partial_results_path, "3.1 - Valid Contours image.png"), img)
@@ -372,7 +376,7 @@ def compute_centroids_from_still(
         if return_partial_images:
             cv2.imwrite(os.path.join(partial_results_path, "3.2 - Flux based source mask.png"), flux_mask)
 
-    return np.array(precomputed_star_centroids), img
+    return np.array(precomputed_star_centroids), img, pcs
 
 
 def trail_function(xy_tuple, x0, y0, length, angle, sigma, flux, background):

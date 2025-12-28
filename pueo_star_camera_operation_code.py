@@ -717,7 +717,7 @@ class PueoStarCameraOperation:
         log_msg = 'Capturing image image.' if img is None else 'Using provided/existing image.'
         self.log.debug(log_msg)
         img = self.camera.capture() if img is None else img
-        self.logit(f"Max pixel: {np.max(img)}, Min pixel: {np.min(img)}.")
+        self.logit(f"Min pixel: {np.min(img)}, Max pixel: {np.max(img)}.")
         self.image_list.append(img)
         basename = f"{path}{timestamp_string}_{inserted_string}"
         self.image_filename_list.append(f'{basename}.png')
@@ -3033,7 +3033,9 @@ class PueoStarCameraOperation:
         current_gain = camera_settings['Gain']
         self.logit(f"camera gain (cB) : {current_gain}")
         self.logit(f'curr image length: {len(self.curr_img)} prev image length: {len(self.prev_img)}')
-        self.logit(f"Max pixel: {np.max(self.curr_img)}, Min pixel: {np.min(self.curr_img)}. ")
+        min_pixel = np.min(self.curr_img)
+        max_pixel = np.max(self.curr_img)
+        self.logit(f"Min pixel: {min_pixel}, Max pixel: {max_pixel}. ")
 
         # Write image info to log
         final_daily_path = self.get_daily_path(self.cfg.final_path) if self.cfg.final_path_daily else self.cfg.final_path
@@ -3134,9 +3136,11 @@ class PueoStarCameraOperation:
         # foi ~ Final Overlay Image
         if is_operation or True:
             self.log.debug('Adding overlay.')
+            astrometry = self.astrometry | {'min_pixel': min_pixel, 'max_pixel': max_pixel}
             self.foi_name, self.foi_info, self.foi_scaled_name, self.foi_scaled_info = self.utils.display_overlay_info(
                 self.contours_img, timestamp_string,
-                self.astrometry, self.omega, False,
+                astrometry,
+                self.omega, False,
                 self.curr_image_name,
                 final_daily_path,
                 self.cfg.partial_results_path,

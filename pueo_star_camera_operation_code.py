@@ -919,18 +919,18 @@ class PueoStarCameraOperation:
         loop_counts = 1
 
         # 2) Clamp initial gain into allowed range
-        min_gain = int(self.cfg.min_gain_setting)
-        max_gain = int(self.cfg.max_gain_setting)
+        min_gain = int(self.cfg.min_gain)
+        max_gain = int(self.cfg.max_gain)
         new_gain_value = int(initial_gain_value)
         if new_gain_value < min_gain:
             self.logit(
-                f"Initial gain {new_gain_value} < min_gain_setting={min_gain}. Clamping.",
+                f"Initial gain {new_gain_value} < min_gain={min_gain}. Clamping.",
                 color='yellow'
             )
             new_gain_value = min_gain
         elif new_gain_value > max_gain:
             self.logit(
-                f"Initial gain {new_gain_value} > max_gain_setting={max_gain}. Clamping.",
+                f"Initial gain {new_gain_value} > max_gain={max_gain}. Clamping.",
                 color='yellow'
             )
             new_gain_value = max_gain
@@ -1189,47 +1189,23 @@ class PueoStarCameraOperation:
 
             # If the gain rails out at min/max, recommend exposure adjustment in the log.
             if new_gain_value < min_gain:
-                self.logit(
-                    f"Requested gain {new_gain_value} < min_gain_setting={min_gain}. "
-                    f"Clamping.",
-                    color='yellow'
-                )
+                self.logit(f"Requested gain {new_gain_value} < min_gain={min_gain}. Clamping.", color='yellow')
                 new_gain_value = min_gain
 
                 # Recommendation based on brightness state
                 if counts_too_high:
-                    self.logit(
-                        "Gain has railed at MIN and image is still too bright. "
-                        "Recommend DECREASING exposure time.",
-                        color='red'
-                    )
+                    self.logit("Gain has railed at MIN and image is still too bright. Recommend DECREASING exposure time.", color='red')
                 else:
-                    self.logit(
-                        "Gain has railed at MIN but image is too dim. "
-                        "Recommend INCREASING exposure time (check configuration).",
-                        color='red'
-                    )
+                    self.logit("Gain has railed at MIN but image is too dim. Recommend INCREASING exposure time (check configuration).", color='red')
 
             elif new_gain_value > max_gain:
-                self.logit(
-                    f"Requested gain {new_gain_value} > max_gain_setting={max_gain}. "
-                    f"Clamping.",
-                    color='yellow'
-                )
+                self.logit(f"Requested gain {new_gain_value} > max_gain={max_gain}. Clamping.", color='yellow')
                 new_gain_value = max_gain
 
                 if counts_too_high:
-                    self.logit(
-                        "Gain has railed at MAX and image is too bright. "
-                        "Recommend DECREASING exposure time.",
-                        color='red'
-                    )
+                    self.logit("Gain has railed at MAX and image is too bright. Recommend DECREASING exposure time.", color='red')
                 else:
-                    self.logit(
-                        "Gain has railed at MAX and image is still too dim. "
-                        "Recommend INCREASING exposure time.",
-                        color='red'
-                    )
+                    self.logit("Gain has railed at MAX and image is still too dim. Recommend INCREASING exposure time.", color='red')
 
             self.logit(f'Old/New Gain Value: {old_gain_value}/{new_gain_value}')
             self.camera.set_control_value(asi.ASI_GAIN, new_gain_value)
@@ -1323,18 +1299,11 @@ class PueoStarCameraOperation:
                 self.log.error(f'Failed to save final histogram plot: {e}')
 
         # 5) Summary
-        self.logit(
-            "##########################Auto Gain Routine Summary Results: "
-            "###############################",
-            color='green'
-        )
+        self.logit("##########################Auto Gain Routine Summary Results: ###############################", color='green')
         self.logit(f'desired_max_pix_value: {desired_max_pix_value} [counts]')
 
         if last_control_value is not None:
-            self.logit(
-                f'final control_value ({last_metric_source}): '
-                f'{last_control_value:.1f} [counts]'
-            )
+            self.logit(f'final control_value ({last_metric_source}): {last_control_value:.1f} [counts]')
         if last_high_pix_value is not None:
             self.logit(f'final max_pixel_value: {last_high_pix_value} [counts]')
 
@@ -1344,12 +1313,7 @@ class PueoStarCameraOperation:
 
         return int(new_gain_value)
 
-    def software_gain_from_metric(
-            self,
-            bright_value: int | None,
-            old_gain_value: int,
-            min_gain_step: int | None = None,
-    ) -> int:
+    def software_gain_from_metric(self, bright_value: int | None, old_gain_value: int, min_gain_step: int | None = None) -> int:
         """
         Convert a brightness metric (e.g. sw_bright_value from source_finder)
         into a new gain value using calculate_gain_adjustment().
@@ -1367,8 +1331,6 @@ class PueoStarCameraOperation:
         int
             New gain value (or old_gain_value if no change / invalid input).
         """
-
-        cfg = self.cfg
 
         # If metric is missing, bail out
         if bright_value is None:
@@ -1396,14 +1358,11 @@ class PueoStarCameraOperation:
                 desired_max_pix_value=float(desired_max_pix_value),
             )
         except Exception as e:
-            self.logit(
-                f"software_gain_from_metric: calculate_gain_adjustment failed ({e}); "
-                "keeping current gain."
-            )
+            self.logit(f"software_gain_from_metric: calculate_gain_adjustment failed ({e}); keeping current gain.")
             return int(old_gain_value)
 
         # Clamp to allowed range
-        new_gain = int(max(cfg.min_gain_setting, min(cfg.max_gain_setting, int(new_gain))))
+        new_gain = int(max(self.cfg.min_gain, min(self.cfg.max_gain, int(new_gain))))
 
         # Choose min step
         if min_gain_step is None:
@@ -1414,9 +1373,7 @@ class PueoStarCameraOperation:
         # Deadband in gain space
         step = new_gain - int(old_gain_value)
         if abs(step) < min_gain_step:
-            self.logit(
-                f"software_gain_from_metric: gain change {step} < {min_gain_step}; skipping."
-            )
+            self.logit(f"software_gain_from_metric: gain change {step} < {min_gain_step}; skipping.")
             return int(old_gain_value)
 
         # Actually set the camera gain here
@@ -1426,26 +1383,24 @@ class PueoStarCameraOperation:
             current_gain = camera_settings['Gain']
             self.logit(f"Software adjust NEW camera gain (cB) : {current_gain}")
         except Exception as e:
-            self.logit(
-                f"software_gain_from_metric: failed to set camera gain ({e}); "
-                "keeping old gain."
-            )
+            self.logit(f"software_gain_from_metric: failed to set camera gain ({e}); keeping old gain.")
             return int(old_gain_value)
 
         self.logit(f"software_gain_from_metric: gain {old_gain_value} -> {new_gain}")
         return int(new_gain)
 
     def calculate_gain_adjustment(self, old_gain_value, high_pix_value, desired_max_pix_value):
+        """Calculate Gain Adjustment"""
         # Constants from config
-        max_gain = self.cfg.max_gain_setting  # e.g., 570
-        min_gain = self.cfg.min_gain_setting
+        max_gain = self.cfg.max_gain  # e.g., 570
+        min_gain = self.cfg.min_gain
 
         try:
             # Step 1: Calculate old gain in electrons/ADU
-            old_electrons_per_ADU_gain = 6.0037 * math.exp(-0.013 * old_gain_value)
-            old_ADU_per_electrons_gain = 1 / old_electrons_per_ADU_gain
-            self.logit(f"old_electrons_per_ADU_gain: {old_electrons_per_ADU_gain}")
-            self.logit(f"old_ADU_per_electrons_gain: {old_ADU_per_electrons_gain}")
+            old_electrons_per_adu_gain = 6.0037 * math.exp(-0.013 * old_gain_value)
+            old_adu_per_electrons_gain = 1 / old_electrons_per_adu_gain
+            self.logit(f"old_electrons_per_adu_gain: {old_electrons_per_adu_gain}")
+            self.logit(f"old_adu_per_electrons_gain: {old_adu_per_electrons_gain}")
 
             high_pix_value = max(high_pix_value, 1e-6)
 
@@ -1454,8 +1409,7 @@ class PueoStarCameraOperation:
             self.logit(f"gain_multiplier: {gain_multiplier}")
 
             # Step 3: Compute new gain values
-            # TODO: Rename the vars with upper letters; Don't use upper case at all cost!
-            new_ADU_per_electrons_gain = gain_multiplier * old_ADU_per_electrons_gain
+            new_ADU_per_electrons_gain = gain_multiplier * old_adu_per_electrons_gain
             new_electrons_per_ADU_gain = 1 / new_ADU_per_electrons_gain
             self.logit(f"new_electrons_per_ADU_gain: {new_electrons_per_ADU_gain}")
 
@@ -1465,12 +1419,10 @@ class PueoStarCameraOperation:
 
             # Step 5: Clamp gain and warn if limits are hit
             if new_gain_value < min_gain:
-                self.logit(
-                    f"WARNING: Calculated gain {new_gain_value} is below minimum {min_gain}. Clamping to minimum.")
+                self.logit(f"WARNING: Calculated gain {new_gain_value} is below minimum {min_gain}. Clamping to minimum.")
                 new_gain_value = min_gain
             elif new_gain_value > max_gain:
-                self.logit(
-                    f"WARNING: Calculated gain {new_gain_value} exceeds maximum {max_gain}. Clamping to maximum.")
+                self.logit(f"WARNING: Calculated gain {new_gain_value} exceeds maximum {max_gain}. Clamping to maximum.")
                 new_gain_value = max_gain
             else:
                 self.logit(f"Clamped new_gain_value: {new_gain_value}")
@@ -1571,14 +1523,14 @@ class PueoStarCameraOperation:
                 # calculate & make gain adjustment
                 self.logit(f'Image not saturated.')
                 new_exposure_value = (old_exposure_value/high_pix_value)*desired_max_pix_value
-                if new_exposure_value < self.cfg.min_exposure_setting:
-                    self.logit(f"New exposure too low. Setting exposure={self.cfg.min_exposure_setting}. Recommend decreasing gain.")
-                    new_exposure_value = self.cfg.min_exposure_setting
+                if new_exposure_value < self.cfg.min_exposure:
+                    self.logit(f"New exposure too low. Setting exposure={self.cfg.min_exposure}. Recommend decreasing gain.")
+                    new_exposure_value = self.cfg.min_exposure
 
-                elif new_exposure_value >= self.cfg.max_exposure_setting:
+                elif new_exposure_value >= self.cfg.max_exposure:
                     self.logit(
-                        f"New gain too high. Setting gain={self.cfg.max_exposure_setting}. Recomend increasing gain.")
-                    new_exposure_value = self.cfg.max_exposure_setting
+                        f"New gain too high. Setting gain={self.cfg.max_exposure}. Recomend increasing gain.")
+                    new_exposure_value = self.cfg.max_exposure
 
                 self.logit(f'Old Exposure Value: {old_exposure_value}')
                 self.logit(f'New Exposure Value: {new_exposure_value}')
@@ -1586,10 +1538,10 @@ class PueoStarCameraOperation:
             else:
                 self.logit(f'Image Saturated.')
                 new_exposure_value = 0.5 * old_exposure_value
-                if new_exposure_value < self.cfg.min_exposure_setting:
+                if new_exposure_value < self.cfg.min_exposure:
                     self.logit(
-                        f"New exposure too low. Setting exposure={self.cfg.min_exposure_setting}. Recommend decreasing gain.")
-                    new_exposure_value = self.cfg.min_exposure_setting
+                        f"New exposure too low. Setting exposure={self.cfg.min_exposure}. Recommend decreasing gain.")
+                    new_exposure_value = self.cfg.min_exposure
                 self.logit(f'Old Exposure Value: {old_exposure_value}')
                 self.logit(f'New Exposure Value: {new_exposure_value}')
                 self.camera.set_control_value(asi.ASI_EXPOSURE, new_exposure_value)
@@ -1987,7 +1939,7 @@ class PueoStarCameraOperation:
             os.mkdir(auto_gain_image_path)
 
             #setting to minimum gain since starting from scratch and gain should increase to meet target.
-            gain_value = self.cfg.min_gain_setting
+            gain_value = self.cfg.min_gain
 
             # first move to the lab best focus position.
             self.focuser.move_focus_position(self.cfg.lab_best_focus)
@@ -2656,8 +2608,8 @@ class PueoStarCameraOperation:
 
         All configuration comes from [CAMERA]:
 
-            self.cfg.min_gain_setting
-            self.cfg.max_gain_setting
+            self.cfg.min_gain
+            self.cfg.max_gain
             self.cfg.camera_exposure_min_us
             self.cfg.camera_exposure_max_us
 
@@ -2732,15 +2684,8 @@ class PueoStarCameraOperation:
 
         # --- Sanity check on brightness metrics and target ---
         # NOTE: high_pix_value == 0.0 is allowed (means "no signal yet", very dark).
-        if (
-                high_pix_value is None or
-                desired_max_pix_value is None or
-                desired_max_pix_value <= 0
-        ):
-            self.logit(f"autogain/autoexposure: status:HUNTING, action:invalid_p999", color='cyan')
-            self.logit(f"  src: {src_name} mode: {mode}({mode_str}) use_masked: {use_masked} n_mask_pixels: {n_mask_pixels}",  color='yellow')
-            self.logit(f"  p999: {high_pix_value}, target: {desired_max_pix_value}", color='yellow')
-            self.logit(f"Note: no_change_applied", color='white')
+        if high_pix_value is None or desired_max_pix_value is None or desired_max_pix_value <= 0:
+            self.logit(f"autogain/autoexposure: status:HUNTING, action:invalid_p999 | src:{src_name} mode:{mode}({mode_str}) use_masked:{use_masked} n_mask_pixels:{n_mask_pixels} | p999:{high_pix_value}, target:{desired_max_pix_value} | Note:no_change_applied", color='yellow')
             return
 
         # --- 2. Current camera settings ---
@@ -2751,38 +2696,31 @@ class PueoStarCameraOperation:
         # --- 3. Limits and knobs from [CAMERA] ---
 
         # Gain hardware limits
-        max_gain_hw = self.cfg.max_gain_setting
-        min_gain_hw = self.cfg.min_gain_setting
+        max_gain_hw = self.cfg.max_gain
+        min_gain_hw = self.cfg.min_gain
 
         # Exposure limits (µs)
         exp_min = self.cfg.camera_exposure_min_us
         exp_max = self.cfg.camera_exposure_max_us
 
         # Autogain behavior parameters
-        mid_gain = self.cfg.autogain_mid_gain_setting
+        mid_gain = self.autogain_mid_gain
         min_gain_step = self.cfg.autogain_min_gain_step
         max_exp_factor_up = self.cfg.autogain_max_exp_factor_up
         max_exp_factor_down = self.cfg.autogain_max_exp_factor_down
 
         # --- 3a. Exposure lock detection and lab_best exposure ---
-
-        # max_exp_factor_up == max_exp_factor_down == 1.0 → lock exposure to lab_best
-        # exposure_lock = (
-        #         abs(max_exp_factor_up - 1.0) < 1e-6 and
-        #         abs(max_exp_factor_down - 1.0) < 1e-6
-        # )
-
         mode_autogain = str(self.cfg.autogain_mode).lower().strip()
 
-        #lock exposure when doing gain-only mode
-        exposure_lock = (mode_autogain == 'gain')
+        # Lock exposure when doing gain-only mode
+        exposure_lock = mode_autogain == 'gain'
 
-        #lock gain when doing exposure-only mode
-        gain_lock = (mode_autogain == 'exposure')
+        # Lock gain when doing exposure-only mode
+        gain_lock = mode_autogain == 'exposure'
 
         fixed_gain_value = None
         if gain_lock:
-            fixed_gain_value = int(round(self.cfg.lab_best_gain))
+            fixed_gain_value = self.cfg.lab_best_gain  # lab_best_gain is an integer
             if fixed_gain_value > max_gain_hw:
                 fixed_gain_value = int(round(max_gain_hw))
             elif fixed_gain_value < min_gain_hw:
@@ -2931,10 +2869,10 @@ class PueoStarCameraOperation:
             """
             try:
                 if vmax <= vmin:
-                    return "(---------------------------------------------)", 0.0
+                    return f"({'-'*45})", 0.0
                 frac = (val - vmin) / float(vmax - vmin)
             except Exception:
-                return "(---------------------------------------------)", 0.0
+                return f"({'-'*45})", 0.0
 
             if frac < 0.0:
                 frac = 0.0
@@ -2968,38 +2906,12 @@ class PueoStarCameraOperation:
         new_gain_value = int(round(new_gain_value))
         new_exposure_value = int(round(new_exposure_value))
 
-        # Logging MUST be single line
-        self.logit(
-            f"autogain/autoexposure: status:{status}, brightness:{brightness_state}, "
-            f"action:{action}, exp_lock:{exposure_lock}",
-            color='yellow'
-        )
-
-        self.logit(
-            f"src:{src_name}, mode:{mode}({mode_str}), use_masked:{use_masked}, "
-            f"n_mask_pixels:{n_mask_pixels}, "
-            f"p999:{high_pix_value:.1f}, target:{desired_max_pix_value:.1f}, "
-            f"ratio:{ratio_str}, exp_factor:{exp_factor_str}",
-            color='yellow'
-        )
-
-        self.logit(
-            f"gain_old:{old_gain_value} cB, gain_new:{new_gain_value} cB, "
-            f"exp_old:{old_exp_ms:.3f} ms, exp_new_ms:{new_exp_ms:.3f} ms, "
-            f"epn_new:{new_exposure_value}, "
-            f"gain_range:[{min_gain_hw},{max_gain_hw}] cB, "
-            f"exp_range:[{exp_min_ms:.3f},{exp_max_ms:.3f}] ms, "
-            f"changed:{changed}",
-            color='yellow'
-        )
-
-        self.logit(
-            f"bars: exp:[{exp_min_ms:.3f} ms]{exp_bar}[{exp_max_ms:.3f} ms], "
-            f"pos:{new_exp_ms:.3f} ms,{exp_pct_str}, "
-            f"gain:[{min_gain_hw} cB]{gain_bar}[{max_gain_hw} cB], "
-            f"pos:{new_gain_value} cB,{gain_pct_str}",
-            color='yellow'
-        )
+        # @formatter:off
+        self.logit(f"autogain/autoexposure: status:{status}, brightness:{brightness_state}, action:{action}, exp_lock:{exposure_lock}", color='yellow')
+        self.logit(f"src:{src_name}, mode:{mode}({mode_str}), use_masked:{use_masked}, n_mask_pixels:{n_mask_pixels}, p999:{high_pix_value:.1f}, target:{desired_max_pix_value:.1f}, ratio:{ratio_str}, exp_factor:{exp_factor_str}", color='yellow')
+        self.logit(f"gain_old:{old_gain_value} cB, gain_new:{new_gain_value} cB, exp_old:{old_exp_ms:.3f} ms, exp_new_ms:{new_exp_ms:.3f} ms, epn_new:{new_exposure_value}, gain_range:[{min_gain_hw},{max_gain_hw}] cB, exp_range:[{exp_min_ms:.3f},{exp_max_ms:.3f}] ms, changed:{changed}", color='yellow')
+        self.logit(f"bars: exp:[{exp_min_ms:.3f} ms]{exp_bar}[{exp_max_ms:.3f} ms], pos:{new_exp_ms:.3f} ms,{exp_pct_str}, gain:[{min_gain_hw} cB]{gain_bar}[{max_gain_hw} cB], pos:{new_gain_value} cB,{gain_pct_str}", color='yellow')
+        # @formatter:on
 
         # --- Apply settings if they changed ---
         if changed:
@@ -3008,10 +2920,9 @@ class PueoStarCameraOperation:
             self.cfg.set_dynamic(lab_best_gain=new_gain_value)
 
             # Exposure: apply in BOTH mode, fixed-gain (exposure-only) mode, or when exposure is locked to lab_best
-            if (mode_autogain == 'both') or gain_lock or exposure_lock:
+            if mode_autogain == 'both' or gain_lock or exposure_lock:
                 self.camera.set_control_value(asi.ASI_EXPOSURE, new_exposure_value)
                 self.cfg.set_dynamic(lab_best_exposure=new_exposure_value)
-
 
     def camera_take_image(self, cmd=None, is_operation=False, is_test=False):
         """

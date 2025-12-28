@@ -674,8 +674,9 @@ class PueoStarCamera(Camera):
         return usb_info
 
     def set_camera_defaults(self):
-        # Set some sensible defaults. They will need adjusting depending upon
-        # the sensitivity, lens and lighting conditions used.
+        """Set some sensible defaults. They will need adjusting depending upon
+        the sensitivity, lens and lighting conditions used.
+        """
         logit(f'Setting camera defaults', color='green')
         self.set_control_value(asi.ASI_GAMMA, self.cfg.asi_gama)  # nominally 50 so leaving.
         logit(f'{"ASI_GAMMA":>23s}: {self.cfg.asi_gama}', color='yellow')
@@ -703,8 +704,8 @@ class PueoStarCamera(Camera):
         logit(f'{"ASI_BANDWIDTHOVERLOAD:":>23s} {asi_bandwidthoverload_custom_value}', color='yellow')
 
         # set initial gains & exposure value. These were best measured in the lab.
-        self.set_control_value(asi.ASI_GAIN, self.cfg.min_gain_setting)
-        logit(f'{"ASI_GAIN:":>23s} {self.cfg.min_gain_setting}', color='yellow')
+        self.set_control_value(asi.ASI_GAIN, self.cfg.min_gain)
+        logit(f'{"ASI_GAIN:":>23s} {self.cfg.min_gain}', color='yellow')
         self.set_control_value(asi.ASI_EXPOSURE, self.cfg.exposure_time)  # units microseconds,
         logit(f'{"ASI_EXPOSURE:":>23s} {self.cfg.exposure_time}', color='yellow')
         self.set_image_type(asi.ASI_IMG_RAW8)

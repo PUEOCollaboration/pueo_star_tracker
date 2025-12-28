@@ -57,14 +57,14 @@ class Config(Dynamic):
     autoexposure_num_bins = 100
     max_autogain_iterations = 10
     max_autoexposure_iterations = 10
-    max_gain_setting = 570
-    min_gain_setting = 120
+    max_gain = 570
+    min_gain = 120
 
     # microseconds
     # 200000 = 200ms
     #  50000 =  50ms
-    max_exposure_setting = 200000
-    min_exposure_setting = 50000
+    max_exposure = 200000
+    min_exposure = 50000
 
     lab_best_aperture_position = 0
     lab_best_focus = 8352
@@ -137,7 +137,7 @@ class Config(Dynamic):
     percentile_threshold = 99.95
 
     # Preferred "center" gain when exposure changes
-    autogain_mid_gain_setting = 300
+    autogain_mid_gain = 300
 
     # Minimum gain delta (in gain units) to actually apply
     autogain_min_gain_step = 5.0
@@ -546,11 +546,11 @@ class Config(Dynamic):
         self.max_autogain_iterations = self._config.getint('LENS_FOCUS_CONSTANTS', 'max_autogain_iterations', fallback=self.max_autogain_iterations)
         self.max_autoexposure_iterations = self._config.getint('LENS_FOCUS_CONSTANTS', 'max_autoexposure_iterations', fallback=self.max_autoexposure_iterations)
 
-        self.max_gain_setting = self._config.getint('LENS_FOCUS_CONSTANTS', 'max_gain_setting', fallback=self.max_gain_setting)
-        self.min_gain_setting = self._config.getint('LENS_FOCUS_CONSTANTS', 'min_gain_setting', fallback=self.min_gain_setting)
+        self.max_gain = self._config.getint('LENS_FOCUS_CONSTANTS', 'max_gain', fallback=self.max_gain)
+        self.min_gain = self._config.getint('LENS_FOCUS_CONSTANTS', 'min_gain', fallback=self.min_gain)
 
-        self.max_exposure_setting = self._config.getint('LENS_FOCUS_CONSTANTS', 'max_exposure_setting', fallback=self.max_exposure_setting)
-        self.min_exposure_setting = self._config.getint('LENS_FOCUS_CONSTANTS', 'min_exposure_setting', fallback=self.min_exposure_setting)
+        self.max_exposure = self._config.getint('LENS_FOCUS_CONSTANTS', 'max_exposure', fallback=self.max_exposure)
+        self.min_exposure = self._config.getint('LENS_FOCUS_CONSTANTS', 'min_exposure', fallback=self.min_exposure)
 
         self.autogain_desired_max_pixel_value = self._config.getint('LENS_FOCUS_CONSTANTS', 'autogain_desired_max_pixel_value', fallback=self.autogain_desired_max_pixel_value)
 
@@ -615,9 +615,7 @@ class Config(Dynamic):
         # Autogain / autoexposure knobs
         self.autogain_mode = self._config.get('CAMERA', 'autogain_mode', fallback=self.autogain_mode)
 
-        # TODO: This is a derived value, should not be here!!! autogain_mid_gain_setting is not defined in config.ini!!!
-        self.autogain_mid_gain_setting = self._config.getfloat('CAMERA', 'autogain_mid_gain_setting', fallback=(self.min_gain_setting + self.max_gain_setting) / 2.0)
-
+        self.autogain_mid_gain = self._config.getfloat('CAMERA', 'autogain_mid_gain', fallback=self.autogain_mid_gain)
         self.autogain_min_gain_step = self._config.getfloat('CAMERA', 'autogain_min_gain_step', fallback=self.autogain_min_gain_step)
 
         self.autogain_max_exp_factor_up = self._config.getfloat('CAMERA', 'autogain_max_exp_factor_up', fallback=self.autogain_max_exp_factor_up)

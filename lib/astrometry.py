@@ -383,7 +383,7 @@ class Astrometry:
 
         metrics = self._ellipse_metrics_ar(ell, ar_elong=ar_elong)
         if metrics["N"] == 0:
-            return "empty", 0.0, metrics
+            return "still", 0.0, metrics
 
         is_streaked = (metrics["N_elong"] >= min_elong and
                        metrics["L_med_elong"] >= min_L and

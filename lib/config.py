@@ -136,7 +136,7 @@ class Config(Dynamic):
     autogain_desired_max_pixel_value = 49150
     
     #flag to use background levels for exposure control.
-    autoexposure_use_masked_bkg_p999 = true
+    autoexposure_use_masked_bkg_p999 = True
     #want this to be >5x the cell size for background.
     autoexposure_bkg_sigma_px = 100.0
     #bkg_ percentile

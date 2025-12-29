@@ -207,7 +207,7 @@ class Config(Dynamic):
     roi_frac_y = 0.75
     
     # vignette correction parameters
-    vignette_enable = true
+    vignette_enable = True
     vignette_smooth_sigma_px = 100
     vignette_profile_bins = 200
     vignette_poly_deg = 5

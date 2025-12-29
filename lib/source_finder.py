@@ -377,7 +377,6 @@ class SourceFinder:
             file.write(f"p99.95 Initial background level : {np.percentile(initial_local_levels,self.cfg.percentile_threshold)}\n")
             file.write(f"Initial background level mean : {np.min(initial_local_levels)}\n")
 
-
         logit("Leveling image.")
         # --- Build cleaned image once (residual) ---
         #######
@@ -500,32 +499,37 @@ class SourceFinder:
         roi_circle_diam_frac_w = float(self.cfg.roi_circle_diam_frac_w)  # e.g. 0.85
         roi_strip_frac_y = float(self.cfg.roi_strip_frac_y)              # e.g. 0.05
 
-        h, w = img.shape[:2]
-        roi_stats_mask_u8 = np.zeros((h, w), dtype=np.uint8)
+        def get_roi_stats_mask_u8(img):
+            """Get stats_mask_u8 helper function"""
+            h, w = img.shape[:2]
+            _roi_stats_mask_u8 = np.zeros((h, w), dtype=np.uint8)
 
-        # 1) Big circle (allowed to clip at top/bottom)
-        cx, cy = w // 2, h // 2
-        r = int(round(0.5 * roi_circle_diam_frac_w * w))
-        cv2.circle(roi_stats_mask_u8, (cx, cy), r, 255, thickness=-1)
+            # 1) Big circle (allowed to clip at top/bottom)
+            cx, cy = w // 2, h // 2
+            r = int(round(0.5 * roi_circle_diam_frac_w * w))
+            cv2.circle(_roi_stats_mask_u8, (cx, cy), r, 255, thickness=-1)
 
-        # 2) Remove top/bottom strips
-        y0 = int(round(roi_strip_frac_y * h))
-        y1 = int(round((1.0 - roi_strip_frac_y) * h))
-        roi_stats_mask_u8[:y0, :] = 0
-        roi_stats_mask_u8[y1:, :] = 0
+            # 2) Remove top/bottom strips
+            y0 = int(round(roi_strip_frac_y * h))
+            y1 = int(round((1.0 - roi_strip_frac_y) * h))
+            _roi_stats_mask_u8[:y0, :] = 0
+            _roi_stats_mask_u8[y1:, :] = 0
+            return _roi_stats_mask_u8
 
+        roi_stats_mask_u8 = get_roi_stats_mask_u8(img)
         # Count simple-threshold mask pixels *inside* ROI (optional but consistent)
         n_mask_pixels = sf['n_mask_pixels'] = int(np.count_nonzero((simple_sources_mask_u8 > 0) & (roi_stats_mask_u8 > 0)))
 
-        roi_img = img[roi_stats_mask_u8 > 0]
-        roi_masked = masked_original_image[roi_stats_mask_u8 > 0]
-
         # Unmasked: p99.9 of valid (unsaturated) pixels in ROI
-        valid_original = roi_img[roi_img < pixel_saturated_value]
-        if valid_original.size > 0:
-            p999_original = int(np.percentile(valid_original, self.cfg.percentile_threshold))  # percentile_threshold = 99.95
+        # Using original RAW image that has no preprocessing (no vignetting correction)
+        raw_roi_stats_mask_u8 = get_roi_stats_mask_u8(self.server.curr_img)
+        raw_roi_img = self.server.curr_img[raw_roi_stats_mask_u8 > 0]
+        raw_valid_original = raw_roi_img[raw_roi_img < pixel_saturated_value] # p999_original
+        # valid_masked = roi_masked[roi_masked < pixel_saturated_value] # p999_masked_original
+        if raw_valid_original.size > 0:
+            p999_original = int(np.percentile(raw_valid_original, self.cfg.percentile_threshold))  # percentile_threshold = 99.95
         else:
-            p999_original = int(np.percentile(roi_img, self.cfg.percentile_threshold))
+            p999_original = int(np.percentile(raw_roi_img, self.cfg.percentile_threshold))
         sf['p999_original'] = p999_original
 
         # TODO: Create histogram!!!
@@ -549,7 +553,11 @@ class SourceFinder:
         threading.Thread(target=_clean_image_histogram, daemon=True).start()
 
         # Masked: p99.9 of valid (unsaturated) pixels in ROI
+        roi_img = img[roi_stats_mask_u8 > 0]
+        roi_masked = masked_original_image[roi_stats_mask_u8 > 0]
         valid_masked = roi_masked[roi_masked < pixel_saturated_value]
+        # ORIGINAL: roi_masked = masked_original_image[roi_stats_mask_u8 > 0]
+
         if valid_masked.size > 0:
             p999_masked_original = int(np.percentile(valid_masked, self.cfg.percentile_threshold))
         else:

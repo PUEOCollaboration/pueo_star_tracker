@@ -2641,7 +2641,7 @@ class PueoStarCameraOperation:
 
             self.cfg.autogain_enable
             self.cfg.autogain_desired_max_pixel_value
-            self.cfg.autogain_mid_gain_setting
+            self.cfg.autogain_mid_gain
             self.cfg.autogain_min_gain_step
             self.cfg.autogain_max_exp_factor_up    # if both up & down are 1.0 → exposure lock
             self.cfg.autogain_max_exp_factor_down  # "
@@ -2766,7 +2766,7 @@ class PueoStarCameraOperation:
         exp_max = self.cfg.camera_exposure_max_us
 
         # Autogain behavior parameters
-        mid_gain = self.autogain_mid_gain
+        mid_gain = self.cfg.autogain_mid_gain
         min_gain_step = self.cfg.autogain_min_gain_step
         max_exp_factor_up = self.cfg.autogain_max_exp_factor_up
         max_exp_factor_down = self.cfg.autogain_max_exp_factor_down
@@ -2787,7 +2787,6 @@ class PueoStarCameraOperation:
                 fixed_gain_value = int(round(max_gain_hw))
             elif fixed_gain_value < min_gain_hw:
                 fixed_gain_value = int(round(min_gain_hw))
-
 
         lab_best_exposure = None
         if exposure_lock:

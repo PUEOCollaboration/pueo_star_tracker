@@ -185,6 +185,8 @@ class PueoStarCameraOperation:
         self.stdev = None
         self.best_focus = None
 
+        self._vignette_cache = {} #   # Lazy cache
+
         # Example: 251130_142512.123456
         # self.timestamp_fmt = "%y%m%d_%H%M%S.%f"  # File name timestamp friendly format
 
@@ -467,10 +469,6 @@ class PueoStarCameraOperation:
         if img.ndim != 2:
             raise ValueError("vignette_correct_image expects a 2D grayscale image")
 
-        # Lazy cache
-        if not hasattr(self, "_vignette_cache"):
-            self._vignette_cache = {}
-
         h, w = img.shape
         shape_key = (h, w)
 
@@ -510,7 +508,7 @@ class PueoStarCameraOperation:
             self._vignette_cache["shape"] = shape_key
             self._vignette_cache["frame_counter"] = 0
 
-            try:
+            with suppress(Exception):
                 cx, cy = meta["center_xy"]
                 self.logit(
                     f"Vignette fit: center=(x={cx}, y={cy}), "
@@ -519,8 +517,6 @@ class PueoStarCameraOperation:
                     f"poly_deg={deg}"
                 )
                 self.logit(f"Vignette poly coefs: {meta['poly_coefs']}")
-            except Exception:
-                pass
 
         corr = self._vignette_cache["corr"]
         meta = self._vignette_cache.get("meta", None)
@@ -532,8 +528,6 @@ class PueoStarCameraOperation:
         out_img = out_f.astype(img.dtype, copy=False)
 
         return out_img, meta
-
-        
 
     def _vignette_fit_poly_from_roi(
         self,
@@ -2123,10 +2117,10 @@ class PueoStarCameraOperation:
             self.camera.set_image_type(asi.ASI_IMG_RAW16)
             self.camera.set_roi(bins=self.cfg.roi_bins)
 
-            #set definition of pixel saturated value bases on camera settings
+            # set definition of pixel saturated value bases on camera settings
             self.pixel_saturated_value = self.cfg.pixel_saturated_value_raw16
 
-            #define the target max pixel value and the tolerance of this target
+            # define the target max pixel value and the tolerance of this target
             self.desired_max_pix_value = int(0.90 * self.pixel_saturated_value)
             self.pixel_count_tolerance = int(2 * (self.pixel_saturated_value - self.desired_max_pix_value))
 
@@ -2140,7 +2134,7 @@ class PueoStarCameraOperation:
             auto_gain_image_path = self.cfg.auto_gain_image_path_tmpl.format(timestamp_string=timestamp_string)
             os.mkdir(auto_gain_image_path)
 
-            #setting to minimum gain since starting from scratch and gain should increase to meet target.
+            # setting to minimum gain since starting from scratch and gain should increase to meet target.
             gain_value = self.cfg.min_gain
 
             # first move to the lab best focus position.
@@ -2166,7 +2160,7 @@ class PueoStarCameraOperation:
         self.camera.set_roi(bins=self.cfg.roi_bins)
 
         # if self.arduino_serial and self.arduino_serial.isOpen():
-        #get the current focuser position.
+        # get the current focuser position.
         if self.focuser.is_open():
             # Home the lens.
             self.min_focus_position, self.max_focus_position = self.focuser.home_lens_focus()
@@ -2212,7 +2206,7 @@ class PueoStarCameraOperation:
         # focus_image_path = '/home/windell/PycharmProjects/version_5/' + timestamp_string + '_coarse_focus_images/'
         # focus_image_path_tmpl = r'/home/windell/PycharmProjects/version_5/{timestamp_string}_coarse_focus_images/'
 
-        #create the autofocus routine directory
+        # create the autofocus routine directory
         timestamp_string = current_timestamp("%y%m%d_%H%M%S.%f")
         self.focus_image_path = self.cfg.focus_image_path_tmpl.format(timestamp_string=timestamp_string)
         os.mkdir(self.focus_image_path)
@@ -2237,7 +2231,7 @@ class PueoStarCameraOperation:
         # Saving Autofocus images (in flight mode only)
         self.save_images(self.image_filename_list)
 
-        #reinitialize the image_list and filename_lists
+        # reinitialize the image_list and filename_lists
         self.image_list = []
         self.image_filename_list = []
 
@@ -2246,16 +2240,16 @@ class PueoStarCameraOperation:
         self.camera.set_image_type(asi.ASI_IMG_RAW16)
         self.camera.set_roi(bins=self.cfg.roi_bins)
 
-        #define the 16 bit depth
+        # define the 16 bit depth
         self.pixel_saturated_value = self.cfg.pixel_saturated_value_raw16
 
-        #make autogain path
+        # make autogain path
         timestamp_string = current_timestamp(self.timestamp_fmt)
         auto_gain_image_path = self.cfg.auto_gain_image_path_tmpl.format(timestamp_string=timestamp_string)
         os.mkdir(auto_gain_image_path)
 
-        #set gain value to what is the best known currently
-        gain_value = self.best_gain_value   #this is the best gain from the iterations
+        # set gain value to what is the best known currently
+        gain_value = self.best_gain_value   # this is the best gain from the iterations
 
         # Find best gain value
         if enable_autogain:
@@ -2405,7 +2399,7 @@ class PueoStarCameraOperation:
         Comment by Windell: dont only want to do this when in autonomous mode. It should be done whenever it is asked to.
         Checking for autonomous mode should happen earlier.
         """
-        #make sure camera is set to correct settings for resolution and dynamic range.
+        # make sure camera is set to correct settings for resolution and dynamic range.
         self.camera.set_image_type(asi.ASI_IMG_RAW16)
         self.camera.set_roi(bins=self.cfg.roi_bins)
 
@@ -2518,22 +2512,28 @@ class PueoStarCameraOperation:
 
         self.log.debug(f'Saved image info in {get_dt(t0)}.')
         
-    def info_add_vignette_info(self, vign_meta):
-        if not vign_meta:
+    def info_add_vignette_info(self, v_meta: dict):
+        """
+        Append vignette correction metadata to the info file.
+
+        Writes key vignette parameters (center, polynomial model, smoothing,
+        masking and ROI settings) to the info log if metadata is provided.
+        """
+        if not v_meta:
             return
 
-        cx, cy = vign_meta.get("center_xy", (float("nan"), float("nan")))
+        cx, cy = v_meta.get("center_xy", (float("nan"), float("nan")))
 
         with open(self.info_file, "a", encoding="utf-8", buffering=8192) as f:
             f.write("\n=== VIGNETTE CORRECTION ===\n")
             f.write(f"vignette_center_px : {cx:.2f}, {cy:.2f}\n")
-            f.write(f"vignette_center_est (ADU) : {vign_meta['center_est']:.2f}\n")
-            f.write(f"vignette_poly_deg : {vign_meta['poly_deg']}\n")
-            f.write("vignette_poly_coefs : " + ", ".join(f"{c:.10g}" for c in vign_meta["poly_coefs"]) + "\n")
-            f.write(f"vignette_smooth_sigma_px : {vign_meta['smooth_sigma_px']}\n")
-            f.write(f"vignette_profile_bins : {vign_meta['profile_bins']}\n")
-            f.write(f"vignette_mask_hi_percentile : {vign_meta['mask_hi_percentile']}\n")
-            f.write(f"roi_frac_x/roi_frac_y : {vign_meta['roi_frac_x']}, {vign_meta['roi_frac_y']}\n")
+            f.write(f"vignette_center_est (ADU) : {v_meta['center_est']:.2f}\n")
+            f.write(f"vignette_poly_deg : {v_meta['poly_deg']}\n")
+            f.write("vignette_poly_coefs : " + ", ".join(f"{c:.10g}" for c in v_meta["poly_coefs"]) + "\n")
+            f.write(f"vignette_smooth_sigma_px : {v_meta.get('smooth_sigma_px', self.cfg.vignette_smooth_sigma_px)}\n")
+            f.write(f"vignette_profile_bins : {v_meta.get('profile_bins', self.cfg.vignette_profile_bins)}\n")
+            f.write(f"vignette_mask_hi_percentile : {v_meta.get('mask_hi_percentile', self.cfg.vignette_mask_hi_percentile)}\n")
+            f.write(f"roi_frac_x/roi_frac_y : {v_meta.get('roi_frac_x', self.cfg.roi_frac_x)}, {v_meta.get('roi_frac_y', self.cfg.roi_frac_y)}\n")
 
     def get_disk_usage(self, path: str = "/"):
         """

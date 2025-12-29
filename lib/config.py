@@ -318,6 +318,8 @@ class Config(Dynamic):
     flight_mode = 'flight'
     solver = 'solver1'
     time_interval = 1000000  # Microseconds
+    phase_offset = 500000  # 5s
+    phase_host_order = "erin01 erin03"
     max_processes = 4
     operation_timeout = 60
     current_timeout = 200.0 # Angular velocity timeout
@@ -838,6 +840,11 @@ class Config(Dynamic):
         self.flight_mode = self._config.get('GENERAL', 'flight_mode', fallback=self.flight_mode)
         self.solver = self._config.get('GENERAL', 'solver', fallback=self.solver)
         self.time_interval = self._config.getint('GENERAL', 'time_interval', fallback=self.time_interval)
+        self.phase_offset = self._config.getint('GENERAL', 'phase_offset', fallback=self.phase_offset)
+        _phase_host_order = self._config.get('GENERAL', 'phase_host_order', fallback=self.phase_host_order)
+        self.phase_host_order = [h.strip() for h in _phase_host_order.split()]
+
+
         self.max_processes = self._config.getint('GENERAL', 'max_processes', fallback=self.max_processes)
         self.operation_timeout = self._config.getint('GENERAL', 'operation_timeout', fallback=self.operation_timeout)
         self.current_timeout = self._config.getfloat('GENERAL', 'current_timeout', fallback=self.current_timeout)

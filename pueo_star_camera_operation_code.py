@@ -25,6 +25,9 @@ import os
 import io
 import pstats
 import shutil
+import socket
+import hashlib
+# import random
 # from shutil import disk_usage
 # import usb.core
 # from os import listdir
@@ -108,6 +111,9 @@ class PueoStarCameraOperation:
         self.sf = SourceFinder(self.cfg, self.log, self)  # Passing SERVER for parent access.
         # Params
         self.start_t0 = time.monotonic()
+        self.hostname = socket.gethostname()
+        self.phase_offset_s = self._compute_phase_offset(self.hostname)
+
         self.status = 'Initializing'
         self.operation_enabled = self.cfg.run_autonomous
         self.img_cnt = 0 # Capture image counter!
@@ -3775,6 +3781,30 @@ class PueoStarCameraOperation:
         self.wrapup_profiler(profiler)
         logit(f'Test Run Completed successfully in {get_dt(tm)}.', color='green')
 
+    def _compute_phase_offset(self, hostname: str) -> float:
+        """
+        Compute host-specific phase offset in seconds.
+
+        Rules:
+            - Listed hosts (phase_host_order) get offset = index * phase_offset
+            - Non-listed hosts pick either slot 0 or 1 (0s or phase_offset)
+            - Returns a float in seconds
+        """
+        hosts = self.cfg.phase_host_order
+        phase_offset_s = self.cfg.phase_offset / 1e6  # convert microseconds to seconds
+
+        if hostname in hosts:
+            index = hosts.index(hostname)
+            offset = index * phase_offset_s
+            self.log.info(f"[{hostname}] Assigned deterministic phase_offset: {offset:.2f}s index: {index}")
+            return offset
+
+        # Non-listed hosts: pick slot 0 or 1 deterministically
+        choice = int(hashlib.sha256(hostname.encode()).hexdigest(), 16) % 2
+        offset = choice * phase_offset_s
+        self.log.info(f"[{hostname}] Non-listed host assigned phase_offset: {offset:.2f}s choice: {choice}")
+        return offset
+
     def main_loop(self):
         if self.cfg.run_test:
             self.run_test()
@@ -3790,44 +3820,48 @@ class PueoStarCameraOperation:
             time.sleep(1)
 
     def camera_operation(self):
-        """Controls timed camera capture operations with precise interval timing.
+        """
+        Perform a timed camera capture with wall-clock-aligned slots.
 
-        This method manages periodic image capture according to a configured time interval.
-        If not enough time has passed since the last capture, it sleeps for the remaining
-        duration before returning. Ensures precise timing between consecutive captures.
+        Each host captures images on fixed intervals, offset by a
+        host-specific phase to ensure deterministic separation.
+        If a scheduled slot is missed, execution waits for the next
+        valid wall-clock-aligned window. Logs a single line
+        with the host, phase offset, and cadence.
 
-        The timing logic:
-        1. Checks if operation is enabled
-        2. Calculates elapsed time since last capture (μs)
-        3. If interval not met: sleeps remaining time
-        4. If interval met: triggers new capture and updates timing reference
-
-        Note:
-            Uses monotonic time for drift-resistant interval calculations.
-
-        Side Effects:
-            - May sleep to maintain timing precision
-            - Calls camera_take_image() when interval expires
-            - Updates self.prev_time after successful captures
-
-        Returns:
-            None: Always returns None, either after sleeping or capturing
+        Rules:
+            - cadence = self.cfg.time_interval
+            - phase separation = self.phase_offset_s
+            - slot 0: 0, interval, 2*interval...
+            - slot 1: phase_offset, interval+phase_offset...
+            - if a scheduled window is missed, wait until next aligned slot
+            - hosts may start randomly
+            - logging uses single-line <varname>: <value>
         """
         if not self.operation_enabled:
             return
 
-        # Take new image every self.cfg.time_interval microseconds
-        self.curr_time = time.monotonic()
-        elapsed = int((self.curr_time - self.prev_time) * 1e6)  # microseconds
+        interval_s = self.cfg.time_interval / 1e6  # convert microseconds to seconds
+        now = time.time()  # wall-clock time
 
-        if elapsed < self.time_interval:
-            # Calculate remaining time in seconds and sleep
-            remaining_time = (self.time_interval - elapsed) / 1e6  # convert to seconds
-            time.sleep(max(0, remaining_time))  # ensure non-negative sleep time
+        # Compute seconds past the interval
+        seconds_past = now % interval_s
 
+        # Sleep until next aligned slot for this host
+        sleep_s = interval_s - (seconds_past - self.phase_offset_s)
+        if sleep_s < 0:
+            sleep_s += interval_s
+
+        time.sleep(sleep_s)
+
+        # Capture
         self.curr_time = time.monotonic()
+        self.log.info(f"[{self.hostname}] Executing camera capture phase_offset: {self.phase_offset_s:.2f}s cadence: {interval_s:.1f}s")
         self.camera_take_image(is_operation=True)
-        self.prev_time = self.curr_time  # Critical: Update timing reference AFTER capture
+
+        # Update last capture time
+        self.prev_time = self.curr_time
+
 
 def init():
     """

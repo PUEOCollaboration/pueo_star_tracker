@@ -130,11 +130,23 @@ class Config(Dynamic):
     camera_exposure_max_us = 5000000
 
     # Master switch for software autogain/autoexposure
-    autogain_mode = 'gain' # gain or both
-    autogain_desired_max_pixel_value = 32767
+    # gain or both
+    autogain_mode = 'gain' 
+    #75% of full well depth
+    autogain_desired_max_pixel_value = 49150
+    
+    #flag to use background levels for exposure control.
+    autoexposure_use_masked_bkg_p999 = true
+    #want this to be >5x the cell size for background.
+    autoexposure_bkg_sigma_px = 100.0
+    #bkg_ percentile
+    autoexposure_bkg_percentile = 99.5
 
     # Autogain/Autoexposure target threshold level
     percentile_threshold = 99.95
+    
+    # Autogain/Autoexposure saturation threshold (fraction of pixel_saturated_value_raw16)
+    autogain_saturation_frac = 0.95
 
     # Preferred "center" gain when exposure changes
     autogain_mid_gain = 300
@@ -191,8 +203,16 @@ class Config(Dynamic):
     roi_keep_frac_y = 0.90
 
     # Autogain/autoexposure ROI (center-rectangle version)
-    roi_frac_x = 0.60
-    roi_frac_y = 0.60
+    roi_frac_x = 0.75
+    roi_frac_y = 0.75
+    
+    # vignette correction parameters
+    vignette_enable = true
+    vignette_smooth_sigma_px = 100
+    vignette_profile_bins = 200
+    vignette_poly_deg = 5
+    vignette_mask_hi_percentile = 99.95
+    vignette_refit_every_n = 0
 
     # Autogain/autoexposure ROI (composite circle + top/bottom strip version)
     roi_circle_diam_frac_w = 0.85
@@ -553,8 +573,14 @@ class Config(Dynamic):
         self.min_exposure = self._config.getint('LENS_FOCUS_CONSTANTS', 'min_exposure', fallback=self.min_exposure)
 
         self.autogain_desired_max_pixel_value = self._config.getint('LENS_FOCUS_CONSTANTS', 'autogain_desired_max_pixel_value', fallback=self.autogain_desired_max_pixel_value)
-
+        
+        self.autoexposure_use_masked_bkg_p999 = self._config.getboolean('LENS_FOCUS_CONSTANTS', 'autoexposure_use_masked_bkg_p999', fallback=self.autoexposure_use_masked_bkg_p999)
+        self.autoexposure_bkg_sigma_px = self._config.getint('LENS_FOCUS_CONSTANTS', 'autoexposure_bkg_sigma_px', fallback=self.autoexposure_bkg_sigma_px)
+        self.autoexposure_bkg_percentile = self._config.getfloat('LENS_FOCUS_CONSTANTS', 'autoexposure_bkg_percentile', fallback=self.autoexposure_bkg_percentile)
+        
         self.percentile_threshold = self._config.getfloat('LENS_FOCUS_CONSTANTS', 'percentile_threshold', fallback=self.percentile_threshold)
+        self.autogain_saturation_frac = self._config.getfloat('LENS_FOCUS_CONSTANTS', 'autogain_saturation_frac', fallback=self.autogain_saturation_frac)
+
 
         self.lab_best_aperture_position = self._config.getint('LENS_FOCUS_CONSTANTS', 'lab_best_aperture_position', fallback=self.lab_best_aperture_position)
         self.lab_best_focus = self._config.getint('LENS_FOCUS_CONSTANTS', 'lab_best_focus', fallback=self.lab_best_focus)
@@ -664,6 +690,14 @@ class Config(Dynamic):
         # Autogain/autoexposure ROI (center-rectangle version)
         self.roi_frac_x = self._config.getfloat('SOURCES', 'roi_frac_x', fallback=self.roi_frac_x)
         self.roi_frac_y = self._config.getfloat('SOURCES', 'roi_frac_y', fallback=self.roi_frac_y)
+        
+        # vignette correction parameters
+        self.vignette_enable = self._config.getboolean('SOURCES', 'vignette_enable', fallback=self.vignette_enable)
+        self.vignette_smooth_sigma_px = self._config.getfloat('SOURCES', 'vignette_smooth_sigma_px', fallback=self.vignette_smooth_sigma_px)
+        self.vignette_profile_bins = self._config.getint('SOURCES', 'vignette_profile_bins', fallback=self.vignette_profile_bins)
+        self.vignette_poly_deg = self._config.getint('SOURCES', 'vignette_poly_deg', fallback=self.vignette_poly_deg)
+        self.vignette_mask_hi_percentile = self._config.getfloat('SOURCES', 'vignette_mask_hi_percentile', fallback=self.vignette_mask_hi_percentile)
+        self.vignette_refit_every_n = self._config.getint('SOURCES', 'vignette_refit_every_n', fallback=self.vignette_refit_every_n)
 
         # Autogain/autoexposure ROI (composite circle + top/bottom strip version)
         self.roi_circle_diam_frac_w = self._config.getfloat('SOURCES', 'roi_circle_diam_frac_w', fallback=self.roi_circle_diam_frac_w)

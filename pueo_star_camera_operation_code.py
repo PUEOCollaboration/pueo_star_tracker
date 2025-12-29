@@ -451,6 +451,204 @@ class PueoStarCameraOperation:
         plt.savefig(image_file)
         plt.close()
         self.server.write(image_file, data_type='image_file', is_preserve=is_preserve)
+        
+    def vignette_correct_image(self, img: np.ndarray):
+        """
+        Apply vignette correction to an image.
+        Fits using cfg.roi_frac_x / cfg.roi_frac_y and caches the correction map.
+        Returns SAME dtype as input (integer).
+        """
+        if not self.cfg.vignette_enable:
+            return img
+
+        if img is None:
+            return img
+
+        if img.ndim != 2:
+            raise ValueError("vignette_correct_image expects a 2D grayscale image")
+
+        # Lazy cache
+        if not hasattr(self, "_vignette_cache"):
+            self._vignette_cache = {}
+
+        h, w = img.shape
+        shape_key = (h, w)
+
+        # --- DIRECT cfg fields (no getattr) ---
+        roi_fx = float(self.cfg.roi_frac_x)
+        roi_fy = float(self.cfg.roi_frac_y)
+
+        smooth_sigma = float(self.cfg.vignette_smooth_sigma_px)
+        bins         = int(self.cfg.vignette_profile_bins)
+        deg          = int(self.cfg.vignette_poly_deg)
+        hip          = float(self.cfg.vignette_mask_hi_percentile)
+        refit_every  = int(self.cfg.vignette_refit_every_n)   # 0 => only refit when shape changes
+
+        need_refit = (
+            ("corr" not in self._vignette_cache) or
+            (self._vignette_cache.get("shape") != shape_key)
+        )
+
+        # Optional periodic refit
+        if (not need_refit) and (refit_every > 0):
+            k = int(self._vignette_cache.get("frame_counter", 0)) + 1
+            self._vignette_cache["frame_counter"] = k
+            if (k % refit_every) == 0:
+                need_refit = True
+
+        if need_refit:
+            corr, meta = self._vignette_fit_poly_from_roi(
+                img,
+                roi_fx, roi_fy,
+                smooth_sigma_px=smooth_sigma,
+                profile_bins=bins,
+                poly_deg=deg,
+                hi_percentile=hip,
+            )
+            self._vignette_cache["corr"] = corr
+            self._vignette_cache["meta"] = meta
+            self._vignette_cache["shape"] = shape_key
+            self._vignette_cache["frame_counter"] = 0
+
+            try:
+                cx, cy = meta["center_xy"]
+                self.logit(
+                    f"Vignette fit: center=(x={cx}, y={cy}), "
+                    f"center_est={meta['center_est']:.2f}, "
+                    f"r_fit_max={meta['rnorm_fit_max']:.3f}, "
+                    f"poly_deg={deg}"
+                )
+                self.logit(f"Vignette poly coefs: {meta['poly_coefs']}")
+            except Exception:
+                pass
+
+        corr = self._vignette_cache["corr"]
+
+        # Float math, then cast back to SAME integer dtype
+        out_f = img.astype(np.float32, copy=False) * corr
+        info = np.iinfo(img.dtype)
+        out_f = np.clip(out_f, info.min, info.max)
+        return out_f.astype(img.dtype, copy=False)
+        
+
+    def _vignette_fit_poly_from_roi(
+        self,
+        img: np.ndarray,
+        roi_frac_x: float,
+        roi_frac_y: float,
+        *,
+        smooth_sigma_px: float = 100.0,
+        profile_bins: int = 200,
+        poly_deg: int = 5,
+        hi_percentile: float = 99.99,
+        border_px: int = 5,
+        min_illum: float = 1.0,
+    ):
+        """
+        Fit a radial vignetting model on a CENTER ROI, then build a FULL-FRAME correction map.
+
+        Returns:
+            corr_map (float32): multiply image by this
+            meta (dict): fit info for logging/debug
+        """
+        if img.ndim != 2:
+            raise ValueError("Expected 2D grayscale image")
+
+        h, w = img.shape
+        img_f = img.astype(np.float32, copy=False)
+
+        # --- center ROI bounds ---
+        roi_frac_x = float(np.clip(roi_frac_x, 0.05, 1.0))
+        roi_frac_y = float(np.clip(roi_frac_y, 0.05, 1.0))
+        rw = max(16, min(w, int(round(w * roi_frac_x))))
+        rh = max(16, min(h, int(round(h * roi_frac_y))))
+        x0 = (w - rw) // 2
+        y0 = (h - rh) // 2
+        x1 = x0 + rw
+        y1 = y0 + rh
+
+        roi = img_f[y0:y1, x0:x1]
+
+        # --- estimate vignette center (blur ROI so stars vanish) ---
+        blur = cv2.GaussianBlur(roi, (0, 0), float(smooth_sigma_px))
+        ry, rx = np.unravel_index(int(np.argmax(blur)), blur.shape)
+        cx = int(x0 + rx)  # full-frame
+        cy = int(y0 + ry)
+
+        # --- rmax from farthest corner ---
+        corners = np.array([[0, 0], [w - 1, 0], [0, h - 1], [w - 1, h - 1]], dtype=np.float32)
+        rmax = float(np.max(np.sqrt((corners[:, 0] - cx) ** 2 + (corners[:, 1] - cy) ** 2)))
+        rmax = max(rmax, 1.0)
+
+        # --- ROI radii (computed in full-frame coords) ---
+        yy_roi, xx_roi = np.indices(roi.shape, dtype=np.float32)
+        xx_full = xx_roi + x0
+        yy_full = yy_roi + y0
+        r_roi = np.sqrt((xx_full - cx) ** 2 + (yy_full - cy) ** 2)
+        rnorm_roi = r_roi / rmax
+        rnorm_fit_max = float(np.max(rnorm_roi))
+
+        # --- mask ROI border + bright outliers ---
+        mask = np.zeros_like(roi, dtype=bool)
+        bp = int(max(0, border_px))
+        if bp > 0:
+            mask[:bp, :] = True
+            mask[-bp:, :] = True
+            mask[:, :bp] = True
+            mask[:, -bp:] = True
+
+        if np.any(~mask):
+            thr = float(np.percentile(roi[~mask], float(hi_percentile)))
+            mask |= (roi > thr)
+
+        # --- radial median profile ---
+        nb = int(max(50, profile_bins))
+        bins = np.linspace(0.0, rnorm_fit_max, nb + 1, dtype=np.float32)
+        rm = 0.5 * (bins[:-1] + bins[1:])
+        prof = np.full(nb, np.nan, dtype=np.float64)
+
+        for i in range(nb):
+            sel = (rnorm_roi >= bins[i]) & (rnorm_roi < bins[i + 1]) & (~mask)
+            if int(np.count_nonzero(sel)) > 50:
+                prof[i] = float(np.median(roi[sel]))
+
+        ok = np.isfinite(prof)
+        if int(np.count_nonzero(ok)) < max(12, poly_deg + 2):
+            corr = np.ones((h, w), dtype=np.float32)
+            meta = {
+                "center_xy": (cx, cy),
+                "center_est": float(np.nan),
+                "poly_deg": int(poly_deg),
+                "poly_coefs": [],
+                "rnorm_fit_max": rnorm_fit_max,
+                "note": "Too few valid radial bins; returned unity correction.",
+            }
+            return corr, meta
+
+        # Fit in r^2 space (vignetting is often close to polynomial in r^2)
+        x = (rm[ok] ** 2).astype(np.float64)
+        y = prof[ok].astype(np.float64)
+        coefs = np.polyfit(x, y, int(poly_deg))
+        p = np.poly1d(coefs)
+        center_est = float(p(0.0))
+
+        # --- build full-frame correction map ---
+        yy, xx = np.indices((h, w), dtype=np.float32)
+        r = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2)
+        rnorm = r / rmax
+
+        illum = p((rnorm ** 2).astype(np.float64)).astype(np.float32)
+        illum = np.maximum(illum, float(min_illum))
+        corr = (center_est / illum).astype(np.float32)
+
+        meta = {
+            "center_xy": (cx, cy),
+            "center_est": center_est,
+            "poly_deg": int(poly_deg),
+            "poly_coefs": [float(c) for c in coefs],
+            "rnorm_fit_max": rnorm_fit_max,
+        }
+        return corr, meta
 
     def fit_best_focus(self, focus_image_path, focus_positions, focus_scores,
                        diameter_scores, max_focus_position, focus_method):
@@ -2315,6 +2513,18 @@ class PueoStarCameraOperation:
             file.write("\n")
 
         self.log.debug(f'Saved image info in {get_dt(t0)}.')
+        
+    def info_add_vignette_info(self, vign_meta):
+        with open(self.info_file, "a", encoding="utf-8", buffering=8192) as f:
+            f.write("\n=== VIGNETTE CORRECTION ===\n")
+            f.write(f"vignette_center_px : {vign_meta['x0']:.2f}, {vign_meta['y0']:.2f}\n")
+            f.write(f"vignette_center_est (ADU) : {vign_meta['center_est']:.2f}\n")
+            f.write(f"vignette_poly_deg : {vign_meta['poly_deg']}\n")
+            f.write("vignette_poly_coefs : " + ", ".join(f"{c:.10g}" for c in vign_meta["poly_coefs"]) + "\n")
+            f.write(f"vignette_smooth_sigma_px : {vign_meta['smooth_sigma_px']}\n")
+            f.write(f"vignette_profile_bins : {vign_meta['profile_bins']}\n")
+            f.write(f"vignette_mask_hi_percentile : {vign_meta['mask_hi_percentile']}\n")
+            f.write(f"roi_frac_x/roi_frac_y : {vign_meta['roi_frac_x']}, {vign_meta['roi_frac_y']}\n")
 
     def get_disk_usage(self, path: str = "/"):
         """
@@ -2462,6 +2672,7 @@ class PueoStarCameraOperation:
 
     def do_astrometry(self, is_multiprocessing=True):
         """astro.do_astrometry wrapper function."""
+        
         args = (
             self.curr_img,                              # img,
             self.is_array,                              # is_array=True,
@@ -2672,13 +2883,51 @@ class PueoStarCameraOperation:
                 if (n_mask_pixels is not None) and (n_mask_pixels >= min_mask_pixels):
                     use_masked = True
             # mode == 0 -> never use masked
+        
+        # ===================== ANCHOR_AUTOGAIN_P999_MASKED_BKG_CALC_BEGIN =====================
+        # Optional background metric: pXX of a large-gaussian-smoothed ROI.
+        # If your astrometry dict ever includes "masked_original_image", we'll prefer that;
+        # otherwise we fall back to self.curr_img.
+        use_masked_bkg = bool(self.cfg.autoexposure_use_masked_bkg_p999)
+        p999_masked_bkg = None
 
+        if use_masked_bkg:
+            metric_img = astrometry.get("masked_original_image", None)
+            if metric_img is None:
+                metric_img = self.curr_img
+
+            # Center ROI crop (uses existing cfg.roi_frac_x/y)
+            roi_frac_x = float(self.cfg.roi_frac_x)
+            roi_frac_y = float(self.cfg.roi_frac_y)
+
+            h, w = metric_img.shape[:2]
+            rw = max(1, int(round(w * roi_frac_x)))
+            rh = max(1, int(round(h * roi_frac_y)))
+            x0 = max(0, (w - rw) // 2)
+            y0 = max(0, (h - rh) // 2)
+            roi_metric = metric_img[y0:y0 + rh, x0:x0 + rw]
+
+            # Smooth + percentile
+            roi_f32 = roi_metric.astype(np.float32, copy=False)
+            sigma_px = float(self.cfg.autoexposure_bkg_sigma_px)
+            if sigma_px > 0:
+                roi_f32 = cv2.GaussianBlur(roi_f32, (0, 0), sigmaX=sigma_px, sigmaY=sigma_px)
+
+            pct = float(self.cfg.autoexposure_bkg_percentile)  # e.g. 99.0
+            p999_masked_bkg = float(np.percentile(roi_f32, pct))
+        # ===================== ANCHOR_AUTOGAIN_P999_MASKED_BKG_CALC_END =====================
+
+        # ===================== ANCHOR_AUTOGAIN_HIGHPIX_VALUE_SELECT_BEGIN =====================
         if use_masked:
             high_pix_value = p999_masked
             src_name = "p999_masked_original"
+        elif use_masked_bkg and (p999_masked_bkg is not None):
+            high_pix_value = p999_masked_bkg
+            src_name = "p999_masked_bkg"
         else:
             high_pix_value = p999_original
             src_name = "p999_original"
+        # ===================== ANCHOR_AUTOGAIN_HIGHPIX_VALUE_SELECT_END =====================
 
         desired_max_pix_value = self.cfg.autogain_desired_max_pixel_value
 
@@ -2810,7 +3059,10 @@ class PueoStarCameraOperation:
             ratio = desired_max_pix_value / float(high_for_ratio)  # >1 => too dark, <1 => too bright
             
             # Saturation test based on the ROI p999 value (high_pix_value)
-            is_saturated = high_pix_value > desired_max_pix_value
+            # Define saturation as: control metric >= 95% of ADC full-scale
+            sat_thresh = float(self.cfg.autogain_saturation_frac) * float(self.cfg.pixel_saturated_value_raw16)
+            is_saturated = float(high_pix_value) >= sat_thresh
+
 
             if ratio > 1.0:
                 # too dark → scale up (capped)
@@ -3085,6 +3337,11 @@ class PueoStarCameraOperation:
             if False:
                 self.logit(f'Fetching Astrometry (multiprocessing) @{get_dt(t0)}.', color='green')
                 astrometry_result = None if is_raw else self.do_astrometry()
+                
+        # --- Step 2: Vignette correction (for astrometry/processing; raw files still saved unmodified) ---
+        if self.cfg.vignette_enable:
+            self.curr_img, vign_meta = self.vignette_correct_image(self.curr_img)
+            self.info_add_vignette_info(vign_meta)
 
         # Step 3: Do Astrometry
         if not is_raw:

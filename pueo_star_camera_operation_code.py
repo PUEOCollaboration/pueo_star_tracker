@@ -459,10 +459,10 @@ class PueoStarCameraOperation:
         Returns SAME dtype as input (integer).
         """
         if not self.cfg.vignette_enable:
-            return img
+            return img, None
 
         if img is None:
-            return img
+            return img, None
 
         if img.ndim != 2:
             raise ValueError("vignette_correct_image expects a 2D grayscale image")
@@ -523,12 +523,16 @@ class PueoStarCameraOperation:
                 pass
 
         corr = self._vignette_cache["corr"]
+        meta = self._vignette_cache.get("meta", None)
 
         # Float math, then cast back to SAME integer dtype
         out_f = img.astype(np.float32, copy=False) * corr
         info = np.iinfo(img.dtype)
         out_f = np.clip(out_f, info.min, info.max)
-        return out_f.astype(img.dtype, copy=False)
+        out_img = out_f.astype(img.dtype, copy=False)
+
+        return out_img, meta
+
         
 
     def _vignette_fit_poly_from_roi(
@@ -2515,9 +2519,14 @@ class PueoStarCameraOperation:
         self.log.debug(f'Saved image info in {get_dt(t0)}.')
         
     def info_add_vignette_info(self, vign_meta):
+        if not vign_meta:
+            return
+
+        cx, cy = vign_meta.get("center_xy", (float("nan"), float("nan")))
+
         with open(self.info_file, "a", encoding="utf-8", buffering=8192) as f:
             f.write("\n=== VIGNETTE CORRECTION ===\n")
-            f.write(f"vignette_center_px : {vign_meta['x0']:.2f}, {vign_meta['y0']:.2f}\n")
+            f.write(f"vignette_center_px : {cx:.2f}, {cy:.2f}\n")
             f.write(f"vignette_center_est (ADU) : {vign_meta['center_est']:.2f}\n")
             f.write(f"vignette_poly_deg : {vign_meta['poly_deg']}\n")
             f.write("vignette_poly_coefs : " + ", ".join(f"{c:.10g}" for c in vign_meta["poly_coefs"]) + "\n")

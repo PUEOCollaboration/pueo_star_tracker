@@ -278,7 +278,7 @@ class PueoSocketClient:
 
         # Set Auto gain mode command
         set_autogain_parser = subparsers.add_parser('set_autogain_mode', help='Set autogain mode')
-        set_autogain_parser.add_argument('mode', choices=['off', 'gain', 'both'], help='Autogain mode to set')
+        set_autogain_parser.add_argument('mode', choices=['off', 'gain', 'both', 'exposure'], help='Autogain mode to set')
         set_autogain_parser.add_argument('desired_max_pixel_value', nargs='?', type=int, default=self.cfg.autogain_desired_max_pixel_value, help='Auto gain desired max pixel value (default: %(default)s)')
 
         # Take image command

@@ -375,7 +375,7 @@ class Command:
             'params': {
                 'mode': {
                     'type': 'list',
-                    'values': ['off', 'gain', 'both'],
+                    'values': ['off', 'gain', 'both', 'exposure'],
                     'default': 'gain'
                 },
                 'desired_max_pixel_value': {

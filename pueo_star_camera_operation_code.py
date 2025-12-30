@@ -2703,14 +2703,14 @@ class PueoStarCameraOperation:
                     use_masked = True
             # mode == 0 -> never use masked
         
-        # ===================== ANCHOR_AUTOGAIN_P999_MASKED_BKG_CALC_BEGIN =====================
+        # ===================== ANCHOR_AUTOGAIN_P999_BKG_CALC_BEGIN =====================
         # Optional background metric: pXX of a large-gaussian-smoothed ROI.
         # If your astrometry dict ever includes "masked_original_image", we'll prefer that;
         # otherwise we fall back to self.curr_img.
-        use_masked_bkg = bool(self.cfg.autoexposure_use_masked_bkg_p999)
-        p999_masked_bkg = None
+        use_bkg = bool(self.cfg.autoexposure_use_bkg_p999)
+        p999_bkg = None
 
-        if use_masked_bkg:
+        if use_bkg:
             metric_img = astrometry.get("masked_original_image", None)
             if metric_img is None:
                 metric_img = self.curr_img
@@ -2733,16 +2733,16 @@ class PueoStarCameraOperation:
                 roi_f32 = cv2.GaussianBlur(roi_f32, (0, 0), sigmaX=sigma_px, sigmaY=sigma_px)
 
             pct = float(self.cfg.autoexposure_bkg_percentile)  # e.g. 99.0
-            p999_masked_bkg = float(np.percentile(roi_f32, pct))
-        # ===================== ANCHOR_AUTOGAIN_P999_MASKED_BKG_CALC_END =====================
+            p999_bkg = float(np.percentile(roi_f32, pct))
+        # ===================== ANCHOR_AUTOGAIN_P999_BKG_CALC_END =====================
 
         # ===================== ANCHOR_AUTOGAIN_HIGHPIX_VALUE_SELECT_BEGIN =====================
         if use_masked:
             high_pix_value = p999_masked
             src_name = "p999_masked_original"
-        elif use_masked_bkg and (p999_masked_bkg is not None):
-            high_pix_value = p999_masked_bkg
-            src_name = "p999_masked_bkg"
+        elif use_bkg and (p999_bkg is not None):
+            high_pix_value = p999_bkg
+            src_name = "p999_bkg"
         else:
             high_pix_value = p999_original
             src_name = "p999_original"
@@ -2812,7 +2812,7 @@ class PueoStarCameraOperation:
             desired_max_pix_value
         )
 
-        pix_deadband = max(1.0, deadband * float(desired_max_pix_value))
+        pix_deadband = max(1.0, self.cfg. * float(desired_max_pix_value))
         too_dark = high_pix_value < (desired_max_pix_value - pix_deadband)
         too_bright = high_pix_value > (desired_max_pix_value + pix_deadband)
 

@@ -136,7 +136,7 @@ class Config(Dynamic):
     autogain_desired_max_pixel_value = 49150
     
     #flag to use background levels for exposure control.
-    autoexposure_use_masked_bkg_p999 = True
+    autoexposure_use_bkg_p999 = True
     #want this to be >5x the cell size for background.
     autoexposure_bkg_sigma_px = 100.0
     #bkg_ percentile
@@ -579,7 +579,7 @@ class Config(Dynamic):
 
         self.autogain_desired_max_pixel_value = self._config.getint('LENS_FOCUS_CONSTANTS', 'autogain_desired_max_pixel_value', fallback=self.autogain_desired_max_pixel_value)
         
-        self.autoexposure_use_masked_bkg_p999 = self._config.getboolean('LENS_FOCUS_CONSTANTS', 'autoexposure_use_masked_bkg_p999', fallback=self.autoexposure_use_masked_bkg_p999)
+        self.autoexposure_use_bkg_p999 = self._config.getboolean('LENS_FOCUS_CONSTANTS', 'autoexposure_use_bkg_p999', fallback=self.autoexposure_use_bkg_p999)
         self.autoexposure_bkg_sigma_px = self._config.getint('LENS_FOCUS_CONSTANTS', 'autoexposure_bkg_sigma_px', fallback=self.autoexposure_bkg_sigma_px)
         self.autoexposure_bkg_percentile = self._config.getfloat('LENS_FOCUS_CONSTANTS', 'autoexposure_bkg_percentile', fallback=self.autoexposure_bkg_percentile)
         self.autogain_exposure_ratio_deadband = self._config.getfloat('LENS_FOCUS_CONSTANTS', 'autogain_exposure_ratio_deadband', fallback=self.autogain_exposure_ratio_deadband)

@@ -2307,6 +2307,7 @@ class PueoStarCameraOperation:
             file.write("\n=== IMAGE METADATA ===\n")
 
             # Compute start, mid, and end times (UTC)
+            capture_mode = 'autonomous' if self.operation_enabled else 'manual'
             exp_us = int(camera_settings.get("Exposure", 0) or 0)
             t_start = datetime.datetime.fromtimestamp(curr_utc_timestamp, tz=timezone.utc)
             t_mid = t_start + datetime.timedelta(microseconds=exp_us // 2)
@@ -2315,6 +2316,7 @@ class PueoStarCameraOperation:
             file.write(f"capture_start_utc : {t_start.isoformat()}\n")
             file.write(f"mid_exposure_utc : {t_mid.isoformat()}\n")
             file.write(f"capture_end_utc : {t_end.isoformat()}\n")
+            file.write(f"capture_mode : {capture_mode}\n")
             file.write(f"exposure_time_us : {exp_us}\n")
 
             file.writelines(file_content)

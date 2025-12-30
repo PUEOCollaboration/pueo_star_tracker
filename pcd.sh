@@ -184,6 +184,19 @@ with_newest_subdir_or_root() {
     fi
 }
 
+# with_root <base> <callback> [args...]
+with_root() {
+    local base="$1" cb="$2"; shift 2
+
+    [[ -d "$base" ]] || {
+        msg "$YELLOW" "  WARN: Missing dir: $base"
+        return
+    }
+
+    msg "$YELLOW" "  Using root folder only: $base"
+    "$cb" "$base" "root" "$@"
+}
+
 # collect_output_files <dir> <tag>
 collect_output_files() { copy_newest_files "$1" "output" 2 --tag "$2"; }
 
@@ -241,7 +254,8 @@ for cmd in "${PC_COMMANDS[@]}"; do
 done
 
 msg "$BLUE" "Collecting output artifacts..."
-with_newest_subdir_or_root "$OUTPUT_ROOT" collect_output_files
+# with_newest_subdir_or_root "$OUTPUT_ROOT" collect_output_files
+with_root "$OUTPUT_ROOT" collect_output_files
 
 collect_inspection_images "$INSPECTION_DIR"
 collect_course_focus_images

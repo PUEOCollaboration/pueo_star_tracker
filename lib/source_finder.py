@@ -535,6 +535,7 @@ class SourceFinder:
         else:
             p999_original = int(np.percentile(raw_roi_img, self.cfg.percentile_threshold))
         sf['p999_original'] = p999_original
+        
 
         # TODO: Create histogram!!!
         # Run: _clean_image_histogram in a thread (don't wait)
@@ -574,6 +575,10 @@ class SourceFinder:
 
         valid_roi = roi_img[roi_img < pixel_saturated_value]
         max_valid_roi = int(valid_roi.max()) if valid_roi.size else int(roi_img.max())
+        
+        with open(log_file_path, "a") as file:
+            file.write(f"p999_original: {p999_original)}\n")
+            file.write(f"p999_masked_original: {p999_masked_original)}\n")
 
         logit(f"sat_frac_roi: {sat_frac_roi:.6g}  n_sat_roi: {n_sat_roi}")
         logit(f"max_valid_roi: {max_valid_roi}  headroom: {int(pixel_saturated_value - max_valid_roi)} counts")
@@ -672,6 +677,4 @@ class SourceFinder:
                     file.write(f"median_area_px : {float(np.median([cv2.contourArea(c) for c in contours])):.1f}\n")
 
         return masked_clean_image, sources_mask, top_contours, sf # p999_original, p999_masked_original, n_mask_pixels
-
-
 

@@ -74,17 +74,18 @@ class SourceFinder:
             strong_u8 = strong.astype(np.uint8) * 255
             weak_u8 = weak.astype(np.uint8) * 255
 
-            k = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-            rec = strong_u8.copy()
-            while True:
-                prev = rec
-                rec = cv2.dilate(rec, k, iterations=1)
-                rec = cv2.bitwise_and(rec, weak_u8)  # grow only inside weak
-                rec = cv2.bitwise_or(rec, strong_u8)  # keep seeds on
-                if cv2.countNonZero(cv2.absdiff(rec, prev)) == 0:
-                    break
-
-            mask = rec > 0
+            # assume strong_u8 and weak_u8 are uint8 0/255
+            num_labels, labels = cv2.connectedComponents(weak_u8, connectivity=8)
+            # find label ids that overlap any strong pixels
+            strong_label_ids = np.unique(labels[strong_u8 > 0])
+            # build mask keeping those labels (exclude background label 0)
+            keep_mask = np.isin(labels, strong_label_ids)
+            if 0 in strong_label_ids:
+                keep_mask &= (labels != 0)
+            # ensure strong pixels outside weak are kept (if that can happen)
+            out_mask = keep_mask.copy()
+            out_mask[strong_u8 > 0] = True
+            mask = out_mask.astype(bool)
 
         # Morphological close to fill tiny gaps
         if close_kernel and close_kernel > 1:

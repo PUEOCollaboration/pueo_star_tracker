@@ -419,6 +419,21 @@ class Config(Dynamic):
     images_keep = 5  # Number of images to keep
     log_reverse = False  # # Set ti Tru to have the Server Log shown in reverse
 
+    # [STATS]
+    # ---- Stats persistence ----
+    stats_csv_path = "logs/stats.csv"
+
+    # Save cadence (wall clock)
+    stats_save_every_sec = 60
+
+    # ---- XLSX export ----
+    stats_xlsx_enabled = True
+    stats_xlsx_save_every_sec = 300
+
+    # ---- HTML ----
+    stats_html_path = 'logs/stats.html'
+    stats_html_days = 14
+    stats_html_reload_sec = 10
 
     # Member functions
     def _get_tristate_boolean(self, cfg, section, option, *, fallback=None):
@@ -914,6 +929,17 @@ class Config(Dynamic):
         self.enable_gui_data_exchange = self._config.getboolean('GUI', 'enable_gui_data_exchange', fallback=self.enable_gui_data_exchange)
         self.images_keep = self._config.getint('GUI', 'images_keep', fallback=self.images_keep)
         self.log_reverse = self._config.getboolean('GUI', 'log_reverse', fallback=self.log_reverse)
+
+        # [STATS]
+        self.stats_csv_path = self._config.get('STATS', 'stats_csv_path', fallback=self.stats_csv_path)
+        self.stats_save_every_sec = self._config.getint('STATS', 'stats_save_every_sec', fallback=self.stats_save_every_sec)
+
+        self.stats_xlsx_enabled = self._config.getboolean('STATS', 'stats_xlsx_enabled', fallback=self.stats_xlsx_enabled)
+        self.stats_xlsx_save_every_sec = self._config.getint('STATS', 'stats_xlsx_save_every_sec', fallback=self.stats_xlsx_save_every_sec)
+
+        self.stats_html_path = self._config.get('STATS', 'stats_html_path', fallback=self.stats_html_path)
+        self.stats_html_days = self._config.getint('STATS', 'stats_html_days', fallback=self.stats_html_days)
+        self.stats_html_reload_sec = self._config.getint('STATS', 'stats_html_reload_sec', fallback=self.stats_html_reload_sec)
 
         # @formatter:on
 

@@ -68,6 +68,7 @@ from lib.source_finder import SourceFinder
 from lib.telemetry import Telemetry
 from lib.commands import Command
 from lib.fs_monitor import FSMonitor, MonitorCfg
+from lib.stats import Stats
 
 # CONFIG - [GLOBAL]
 config_file = 'config.ini'  # Note this file can only be changed HERE!!! IT is still config.ini, but just for ref.
@@ -222,6 +223,9 @@ class PueoStarCameraOperation:
 
         # Create/update symlink to astro.json file
         self.utils.create_symlink(self.cfg.web_path, self.cfg.astro_path, 'astro.json')
+
+        # Initialize statistics
+        self.stats = Stats(self.cfg, self)
 
         # Board API (VersaLogic)
         self.versa_api = VersaAPI()
@@ -3285,6 +3289,13 @@ class PueoStarCameraOperation:
                 self.logit(f"Error saving info file to ssd: {e}", color="red")
         # Create/update symlink to last info file
         self.utils.create_symlink(self.cfg.web_path, self.info_file, 'last_info_file.txt')
+
+        # Safe Update stats
+        try:
+            self.stats.update(self.info_file)
+        except Exception:
+            # last-resort shield: stats must never kill the cycle
+            self.log.exception(f"Stats update HARD_FAIL file: {self.info_file}")
 
         self.logit(f'camera_take_image completed in {get_dt(t0)}.', color='green')
         return position

@@ -1377,7 +1377,7 @@ class Utils:
 
         try:
             os.makedirs(full_path, mode=mode, exist_ok=exist_ok)
-            self.log.info(f"Created directory: {full_path}")
+            # self.log.info(f"Created directory: {full_path}")
             return True
 
         except FileExistsError:

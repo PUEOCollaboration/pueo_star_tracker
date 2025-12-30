@@ -203,9 +203,25 @@ class Astrometry:
 
         # --- estimate vignette center (blur ROI so stars vanish) ---
         blur = cv2.GaussianBlur(roi, (0, 0), float(smooth_sigma_px))
-        ry, rx = np.unravel_index(int(np.argmax(blur)), blur.shape)
-        cx = int(x0 + rx)  # full-frame
-        cy = int(y0 + ry)
+
+        # robust center: weighted centroid of top percentile of blur
+        top_p = 99.5
+        thr = float(np.percentile(blur, top_p))
+        m = blur >= thr
+
+        if int(np.count_nonzero(m)) >= 25:
+            yy_m, xx_m = np.nonzero(m)
+            wts = blur[m].astype(np.float64)
+            rx = float(np.sum(xx_m * wts) / np.sum(wts))
+            ry = float(np.sum(yy_m * wts) / np.sum(wts))
+        else:
+            # fallback: geometric center of ROI (or full image)
+            rx = (blur.shape[1] - 1) * 0.5
+            ry = (blur.shape[0] - 1) * 0.5
+
+        cx = int(round(x0 + rx))
+        cy = int(round(y0 + ry))
+
 
         # --- rmax from farthest corner ---
         corners = np.array([[0, 0], [w - 1, 0], [0, h - 1], [w - 1, h - 1]], dtype=np.float32)
@@ -242,7 +258,7 @@ class Astrometry:
         for i in range(nb):
             sel = (rnorm_roi >= bins[i]) & (rnorm_roi < bins[i + 1]) & (~mask)
             if int(np.count_nonzero(sel)) > 50:
-                prof[i] = float(np.median(roi[sel]))
+                prof[i] = float(np.median(blur[sel]))
 
         ok = np.isfinite(prof)
         if int(np.count_nonzero(ok)) < max(12, poly_deg + 2):

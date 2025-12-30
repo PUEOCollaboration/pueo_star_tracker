@@ -2874,13 +2874,14 @@ class PueoStarCameraOperation:
 
             # Use a floor so we don't divide by zero; keep actual high_pix_value for logs.
             high_for_ratio = max(high_pix_value, 1.0)
-            ratio = desired_max_pix_value / float(high_for_ratio)  # >1 => too dark, <1 => too bright
+            ratio = desired_max_pix_value / float(high_for_ratio)  # >1 => too dark, <1 => too bright          
             
-            # Saturation test based on the ROI p999 value (high_pix_value)
-            # Define saturation as: control metric >= 95% of ADC full-scale
+            # Saturation test MUST be based on a RAW metric (not the possibly blurred/background control metric)
             sat_thresh = float(self.cfg.autogain_saturation_frac) * float(self.cfg.pixel_saturated_value_raw16)
-            is_saturated = float(high_pix_value) >= sat_thresh
 
+            # Use raw ROI percentile for saturation (prefer original/unblurred)
+            sat_metric = float(p999_original)
+            is_saturated = sat_metric >= sat_thresh
 
             if ratio > 1.0:
                 # too dark → scale up (capped)

@@ -48,7 +48,7 @@ PC_CMD="./pc.sh"
 # ---------- Logs / Configs / Commands ----------
 LOG_TAIL_LINES=100
 LOGS=("${LOG_DIR}/pueo_console.log" "${LOG_DIR}/debug-server.log" "${LOG_DIR}/telemetry.log")
-CONFIG_FILES=("${CONF_DIR}/config.ini" "${CONF_DIR}/dynamic.ini")
+CONFIG_FILES=("${CONF_DIR}/config.ini" "${CONF_DIR}/dynamic.ini" "${LOG_DIR}/stats.csv" "${LOG_DIR}/stats.html")
 PC_COMMANDS=("get_settings" "get_flight_telemetry")   # add more if needed
 
 # ---------- Timestamp / Staging ----------
@@ -83,14 +83,14 @@ collect_log_tails() {
 # Copy config files into staging/conf
 copy_config_files() {
     local files=("$@")
-    msg "$BLUE" "Copying configuration files..."
+    msg "$BLUE" "Copying configuration and other files..."
     for f in "${files[@]}"; do
         if [[ -f "$f" ]]; then
             cp -a -- "$f" "$staging/conf/"
             msg "$GREEN" "  + $(basename "$f")"
         else
             msg "$YELLOW" "  WARN: Missing config file: $f"
-            echo "Missing config file: $f" > "$staging/conf/$(basename "$f").MISSING.txt"
+            echo "Missing file: $f" > "$staging/conf/$(basename "$f").MISSING.txt"
         fi
     done
 }

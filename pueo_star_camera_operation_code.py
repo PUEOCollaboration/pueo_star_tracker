@@ -2812,7 +2812,7 @@ class PueoStarCameraOperation:
             desired_max_pix_value
         )
 
-        pix_deadband = max(1.0, self.cfg. * float(desired_max_pix_value))
+        pix_deadband = max(1.0, self.cfg.autogain_exposure_ratio_deadband* float(desired_max_pix_value))
         too_dark = high_pix_value < (desired_max_pix_value - pix_deadband)
         too_bright = high_pix_value > (desired_max_pix_value + pix_deadband)
 

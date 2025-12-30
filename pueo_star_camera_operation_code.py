@@ -2812,8 +2812,10 @@ class PueoStarCameraOperation:
             desired_max_pix_value
         )
 
-        too_dark = high_pix_value < desired_max_pix_value
-        too_bright = high_pix_value > desired_max_pix_value
+        pix_deadband = max(1.0, deadband * float(desired_max_pix_value))
+        too_dark = high_pix_value < (desired_max_pix_value - pix_deadband)
+        too_bright = high_pix_value > (desired_max_pix_value + pix_deadband)
+
 
         # Initial brightness classification
         if too_bright:
@@ -2883,18 +2885,24 @@ class PueoStarCameraOperation:
             sat_metric = float(p999_original)
             is_saturated = sat_metric >= sat_thresh
 
-            if ratio > 1.0:
-                # too dark → scale up (capped)
-                exp_factor = min(ratio, max_exp_factor_up)
-            else:
-                # too bright:
-                # - If saturated AND we're in fixed-gain mode → divide exposure by a constant each step
-                # - Otherwise → normal ratio-based downscale, but don't exceed max step-down
-                if gain_lock and is_saturated:
-                    exp_factor = max_exp_factor_down
-                else:
-                    exp_factor = max(ratio, max_exp_factor_down)
+            # --- Deadband (ratio-space) ---
+            # If we're within ±deadband of target, don't touch exposure.
+            ratio_deadband = self.cfg.autogain_exposure_ratio_deadband
 
+            if (ratio_deadband > 0.0) and (abs(ratio - 1.0) <= ratio_deadband) and (not (gain_lock and is_saturated)):
+                exp_factor = 1.0
+            else:
+                if ratio > 1.0:
+                    # too dark → scale up (capped)
+                    exp_factor = min(ratio, max_exp_factor_up)
+                else:
+                    # too bright:
+                    # - If saturated AND we're in fixed-gain mode → divide exposure by a constant each step
+                    # - Otherwise → normal ratio-based downscale, but don't exceed max step-down
+                    if gain_lock and is_saturated:
+                        exp_factor = max_exp_factor_down
+                    else:
+                        exp_factor = max(ratio, max_exp_factor_down)
 
             new_exposure_value = old_exposure * exp_factor
 
@@ -2923,7 +2931,8 @@ class PueoStarCameraOperation:
             if gain_lock and (fixed_gain_value is not None):
                 new_gain_value = fixed_gain_value
 
-            changed = True
+            # Only mark changed if something *actually* changed
+            changed = (int(new_exposure_value) != int(old_exposure)) or (int(new_gain_value) != int(old_gain_value))
 
         # --- Decide HUNTING vs CONVERGED ---
         status = "CONVERGED" if not changed else "HUNTING"

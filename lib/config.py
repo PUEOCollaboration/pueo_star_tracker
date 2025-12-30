@@ -141,6 +141,9 @@ class Config(Dynamic):
     autoexposure_bkg_sigma_px = 100.0
     #bkg_ percentile
     autoexposure_bkg_percentile = 99.5
+    
+    # Exposure servo deadband (ratio space). 0.03 = ±3% around target => no exposure change.
+    autogain_exposure_ratio_deadband = 0.03
 
     # Autogain/Autoexposure target threshold level
     percentile_threshold = 99.95
@@ -579,6 +582,7 @@ class Config(Dynamic):
         self.autoexposure_use_masked_bkg_p999 = self._config.getboolean('LENS_FOCUS_CONSTANTS', 'autoexposure_use_masked_bkg_p999', fallback=self.autoexposure_use_masked_bkg_p999)
         self.autoexposure_bkg_sigma_px = self._config.getint('LENS_FOCUS_CONSTANTS', 'autoexposure_bkg_sigma_px', fallback=self.autoexposure_bkg_sigma_px)
         self.autoexposure_bkg_percentile = self._config.getfloat('LENS_FOCUS_CONSTANTS', 'autoexposure_bkg_percentile', fallback=self.autoexposure_bkg_percentile)
+        self.autogain_exposure_ratio_deadband = self._config.getfloat('LENS_FOCUS_CONSTANTS', 'autogain_exposure_ratio_deadband', fallback=self.autogain_exposure_ratio_deadband)
         
         self.percentile_threshold = self._config.getfloat('LENS_FOCUS_CONSTANTS', 'percentile_threshold', fallback=self.percentile_threshold)
         self.autogain_saturation_frac = self._config.getfloat('LENS_FOCUS_CONSTANTS', 'autogain_saturation_frac', fallback=self.autogain_saturation_frac)

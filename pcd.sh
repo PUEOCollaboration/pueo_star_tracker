@@ -39,6 +39,7 @@ OUT_DIR="${PCC_ROOT}/logs"
 LOG_DIR="${PCC_ROOT}/logs"
 CONF_DIR="${PCC_ROOT}/conf"
 OUTPUT_ROOT="${PCC_ROOT}/output"
+PARTIAL_DIR="${PCC_ROOT}/partial_results"
 SDCARD_ROOT="${PCC_ROOT}/sd_card_path"
 INSPECTION_DIR="${PCC_ROOT}/inspection_images"
 AUTOGAIN_DIR="${PCC_ROOT}/autogain"
@@ -51,12 +52,15 @@ LOGS=("${LOG_DIR}/pueo_console.log" "${LOG_DIR}/debug-server.log" "${LOG_DIR}/te
 CONFIG_FILES=("${CONF_DIR}/config.ini" "${CONF_DIR}/dynamic.ini" "${LOG_DIR}/stats.csv" "${LOG_DIR}/stats.html")
 PC_COMMANDS=("get_settings" "get_flight_telemetry")   # add more if needed
 
+PARTIAL_FILES=("${PARTIAL_DIR}/1.3 - Local Estimated Background.png" "${PARTIAL_DIR}/1.4 - Local Background subtracted image.png" "${PARTIAL_DIR}/1.5 - Masked image STILL.png" "${PARTIAL_DIR}/hyst_sources_mask.png" "${PARTIAL_DIR}/3.1 - Valid Contours image.png")
+PARTIAL_MAX_AGE_MIN=15
+
 # ---------- Timestamp / Staging ----------
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 staging="$(mktemp -d)"
 cleanup() { rm -rf "$staging"; }
 trap cleanup EXIT  # ensures staging is removed on any exit
-mkdir -p "$staging/logs" "$staging/latest_files" "$staging/commands" "$staging/conf"
+mkdir -p "$staging/logs" "$staging/latest_files" "$staging/commands" "$staging/conf" "$staging/partial_results"
 
 zip_path="${OUT_DIR}/pcd_bundle_${timestamp}.zip"
 
@@ -91,6 +95,30 @@ copy_config_files() {
         else
             msg "$YELLOW" "  WARN: Missing config file: $f"
             echo "Missing file: $f" > "$staging/conf/$(basename "$f").MISSING.txt"
+        fi
+    done
+}
+
+# copy_partial_files <file1> <file2> ...
+# Copy partial files into staging/partial_results
+# Only copy files modified within the last PARTIAL_MAX_AGE_MIN minutes
+copy_partial_files() {
+    local files=("$@")
+    local max_age_min="${PARTIAL_MAX_AGE_MIN:-15}"
+
+    msg "$BLUE" "Copying partial results files (max age: ${max_age_min} min)..."
+
+    for f in "${files[@]}"; do
+        if [[ -f "$f" ]]; then
+            if find "$f" -maxdepth 0 -mmin "-$max_age_min" >/dev/null 2>&1; then
+                cp -a -- "$f" "$staging/partial_results/"
+                msg "$GREEN" "  + $(basename "$f")"
+            else
+                msg "$YELLOW" "  SKIP: Stale partial file (> ${max_age_min} min): $f"
+            fi
+        else
+            msg "$YELLOW" "  WARN: Missing partial results file: $f"
+            echo "Missing file: $f" > "$staging/partial_results/$(basename "$f").MISSING.txt"
         fi
     done
 }
@@ -187,15 +215,18 @@ with_newest_subdir_or_root() {
 # with_root <base> <callback> [args...]
 with_root() {
     local base="$1" cb="$2"; shift 2
+    local resolved
 
-    [[ -d "$base" ]] || {
-        msg "$YELLOW" "  WARN: Missing dir: $base"
+    # Resolve symlink / canonicalize path
+    if ! resolved="$(cd -P -- "$base" 2>/dev/null && pwd -P)"; then
+        msg "$YELLOW" "  WARN: Missing or invalid dir (incl. symlink): $base"
         return
-    }
+    fi
 
-    msg "$YELLOW" "  Using root folder only: $base"
-    "$cb" "$base" "root" "$@"
+    msg "$YELLOW" "  Using root folder only: $resolved"
+    "$cb" "$resolved" "root" "$@"
 }
+
 
 # collect_output_files <dir> <tag>
 collect_output_files() { copy_newest_files "$1" "output" 2 --tag "$2"; }
@@ -247,6 +278,7 @@ collect_course_focus_images() {
 
 collect_log_tails "$LOG_TAIL_LINES" "${LOGS[@]}"
 copy_config_files "${CONFIG_FILES[@]}"
+copy_partial_files "${PARTIAL_FILES[@]}"
 
 for cmd in "${PC_COMMANDS[@]}"; do
     read -r -a args <<< "$cmd"

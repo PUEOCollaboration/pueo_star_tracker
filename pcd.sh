@@ -200,17 +200,25 @@ collect_latest_pair() {
 # with_newest_subdir_or_root <base> <callback> [args...]
 with_newest_subdir_or_root() {
     local base="$1" cb="$2"; shift 2
-    [[ -d "$base" ]] || { msg "$YELLOW" "  WARN: Missing dir: $base"; return; }
-    local newest
-    newest="$(newest_dir "$base" || true)"
+    local resolved newest
+
+    # Resolve symlink / canonicalize base directory
+    if ! resolved="$(cd -P -- "$base" 2>/dev/null && pwd -P)"; then
+        msg "$YELLOW" "  WARN: Missing or invalid dir (incl. symlink): $base"
+        return
+    fi
+
+    newest="$(newest_dir "$resolved" || true)"
+
     if [[ -n "$newest" ]]; then
         msg "$YELLOW" "  Using newest subfolder: $newest"
         "$cb" "$newest" "$(basename "$newest")" "$@"
     else
-        msg "$YELLOW" "  Using root folder: $base"
-        "$cb" "$base" "root" "$@"
+        msg "$YELLOW" "  Using root folder: $resolved"
+        "$cb" "$resolved" "root" "$@"
     fi
 }
+
 
 # with_root <base> <callback> [args...]
 with_root() {
